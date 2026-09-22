@@ -1,6 +1,6 @@
 # Claude Code hook: appends one CSV line per UserPromptSubmit / Stop event.
 # Reads the hook JSON from stdin. Never fails the hook (exit 0 always).
-param([string]$Event = "prompt")
+param([string]$Kind = "prompt")
 
 $ErrorActionPreference = "SilentlyContinue"
 try {
@@ -28,6 +28,6 @@ try {
     }
     if (-not $ticket) { $ticket = "UNKNOWN" }
 
-    "$((Get-Date).ToString('HH:mm:ss')),$Event,$ticket,$session,$cwd,$prompt" | Add-Content $file
+    "$((Get-Date).ToString('HH:mm:ss')),$Kind,$ticket,$session,$cwd,$prompt" | Add-Content $file
 } catch { }
 exit 0
