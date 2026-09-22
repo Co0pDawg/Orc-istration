@@ -4,8 +4,8 @@ Logs which ticket each Claude Code session works on, with start and end times, s
 
 ## How it works
 
-- `log-event.ps1` runs as a Claude Code hook on **UserPromptSubmit** (`-Event prompt`) and **Stop** (`-Event stop`). Each run appends one CSV line to `~/.claude/worklog/<yyyy-MM-dd>.csv`: `time,event,ticket,session,cwd,prompt-snippet`.
-- Ticket resolution order: git branch name of the session cwd (`feature/17403-...` → `PET-17403`) → `PET-NNNNN` or `#NNNNN` in the prompt → last ticket seen for this session → `UNKNOWN`.
+- `log-event.ps1` runs as a Claude Code hook on **UserPromptSubmit** (`-Kind prompt`) and **Stop** (`-Kind stop`). Each run appends one CSV line to `~/.claude/worklog/<yyyy-MM-dd>.csv`: `time,event,ticket,session,cwd,prompt-snippet`.
+- Ticket resolution order: `PET-NNNNN` or `#NNNNN` (five digits) in the prompt → git branch name of the session cwd (`feature/17403-...` → `PET-17403`) → last ticket seen for this session → `UNKNOWN`.
 - `worklog.ps1 [date] [-GapMinutes 30]` rolls the day into portal-shaped blocks: contiguous same-ticket events form one block; a new prompt more than `GapMinutes` after the last event starts a new block; each block rounds up to 0.25 h (minimum 0.25).
 
 ```
@@ -22,11 +22,11 @@ Add to `hooks` in `~/.claude/settings.json`:
 ```json
 "UserPromptSubmit": [
   { "matcher": "", "hooks": [ { "type": "command", "async": true, "timeout": 10,
-    "command": "powershell -NoProfile -NonInteractive -File \"C:\\Development\\worklog\\log-event.ps1\" -Event prompt" } ] }
+    "command": "powershell -NoProfile -NonInteractive -File \"C:\\Development\\worklog\\log-event.ps1\" -Kind prompt" } ] }
 ],
 "Stop": [
   { "matcher": "", "hooks": [ { "type": "command", "async": true, "timeout": 10,
-    "command": "powershell -NoProfile -NonInteractive -File \"C:\\Development\\worklog\\log-event.ps1\" -Event stop" } ] }
+    "command": "powershell -NoProfile -NonInteractive -File \"C:\\Development\\worklog\\log-event.ps1\" -Kind stop" } ] }
 ]
 ```
 
