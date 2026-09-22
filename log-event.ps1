@@ -14,11 +14,14 @@ try {
     New-Item -ItemType Directory -Force $logDir | Out-Null
     $file = Join-Path $logDir ((Get-Date).ToString("yyyy-MM-dd") + ".csv")
 
-    # Ticket: branch name -> prompt text -> last ticket seen for this session -> UNKNOWN
+    # Ticket: explicit in prompt -> branch name -> last ticket seen for this session -> UNKNOWN.
+    # Prompt wins so a ticket named in the message overrides the branch. Five digits only: PR ids are four.
     $ticket = $null
-    $branch = git -C $cwd branch --show-current 2>$null
-    if ($branch -match '(\d{4,6})') { $ticket = "PET-$($Matches[1])" }
-    if (-not $ticket -and $prompt -match '(?:PET-|#)(\d{4,6})') { $ticket = "PET-$($Matches[1])" }
+    if ($prompt -match '(?:PET-|#)(\d{5})\b') { $ticket = "PET-$($Matches[1])" }
+    if (-not $ticket) {
+        $branch = git -C $cwd branch --show-current 2>$null
+        if ($branch -match '(\d{5})') { $ticket = "PET-$($Matches[1])" }
+    }
     if (-not $ticket -and (Test-Path $file)) {
         $last = Get-Content $file | Where-Object { $_ -like "*,$session,*" } | Select-Object -Last 1
         if ($last) { $ticket = ($last -split ',')[2] }
