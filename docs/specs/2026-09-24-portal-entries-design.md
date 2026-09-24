@@ -76,3 +76,13 @@ Portal push, weekly view, in-place editing (edit the `.txt`).
 
 - The mutating-verb regex is a heuristic: a read command whose text happens to contain `add`/`update` as a word (e.g. in a WIQL string) counts as mutating. Tighten to the subcommand position if it misfires.
 - Commits come from each block's cwd. A worktree the session `cd`s into but never logged as cwd is missed.
+
+## Amendments after the first trial run (2026-09-24)
+
+- **az detection:** `az` counts only in command position (start, or after an unescaped `;` `|` `&` `(` `=` or newline). The word inside a sed, grep or commit message is ignored.
+- **Mutating check:** verbs and `--http-method` are checked on the az command's own segment (up to the next `;` `|` `&` or newline). A REST call anywhere in the command with `-Method`/`-X` POST/PATCH/PUT/DELETE (az token + Invoke-RestMethod/curl) also counts.
+- **Fold:** a block with no `prompt` event, starting within `GapMinutes` of the previous block, folds into it; so does a following same-ticket block. Facts only use events whose ticket matches the block's, so a folded-in az from another session stays out of the description.
+- **1-hour cap:** `-MaxHours 1` (the portal's limit is 2 h). Blocks split into consecutive chunks; a chunk with no facts of its own uses the whole block's facts.
+- **No ids to Haiku:** `PET-`/`#` + 4-5 digit numbers are stripped from facts before the summary call, so descriptions cannot mention ticket or PR ids.
+- **Quarter-hour times:** start snaps down and end snaps up to :00/:15/:30/:45; an entry starts no earlier than the previous one ends and lasts 15 minutes to `MaxHours`; hours are the snapped span (replaces "round up to 0.25"). Times print as `h:mm AM/PM`.
+- **Summary quality (task-based billing style):** each distinct ticket's `System.WorkItemType` and `System.Title` come from `az boards work-item show` (skipped with `WORKLOG_NOSUMMARY`; a failed lookup warns and leaves them blank). A new `TYPE` column shows the work item type (`Bug`, `Task`, `User Story`, or `-`). The prompt groups entries by block under the ticket's type and title, requires `<Category>: <verb> <object>; <verb> <object>.` with Category from Development, Code review, Testing, Planning, Documentation, DevOps, Support, bans vague words (worked on, continued, various, progressed, advanced, phase, ongoing, efforts, tasks, items), and tells the model that entries in one block are consecutive slots that must not repeat each other. The model is `sonnet` with `haiku` as fallback, each with a 120 s timeout; a wrong line count warns and tries the next, then falls back to raw facts.

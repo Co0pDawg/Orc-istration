@@ -19,13 +19,17 @@ try {
         elseif ($text -match '(?:PET-|#)(\d{5})\b') { $explicit = $Matches[1] }
     } elseif ($Kind -eq "tool") {
         $cmd = "$($json.tool_input.command)"
-        $az = [regex]::Match($cmd, '\baz\b')
+        # az as the command itself (start, or after ; | & ( = or a newline), not the word inside a sed, grep or commit message.
+        $az = [regex]::Match($cmd, '(?:^|(?<!\\)[;&|(=\r\n])\s*(?<az>az\s+[a-z])').Groups['az']
         if ($json.tool_name -eq "Agent") {
             $Kind = "agent"; $text = "$($json.tool_input.subagent_type): $($json.tool_input.description)"
         } elseif ($json.tool_name -in "Bash", "PowerShell" -and $az.Success) {
             $Kind = "az"; $text = $cmd.Substring($az.Index); $max = 120
             # Only a mutating command names the ticket being worked; a read (show/list/query/GET) just looks around.
-            if ($text -match '\b(create|update|delete|add|set-vote)\b|--http-method\s+(POST|PATCH|PUT|DELETE)' -and $text -match '\b(\d{5})\b') { $explicit = $Matches[1] }
+            # Verbs are checked on the az command's own segment; a REST call with an az token counts by its method.
+            $seg = ($text -split '[;|&\r\n]')[0]
+            $mutating = $seg -match '\b(create|update|delete|add|set-vote)\b|--http-method\s+(POST|PATCH|PUT|DELETE)' -or $text -match '-(Method|X)\s+(POST|PATCH|PUT|DELETE)\b'
+            if ($mutating -and $text -match '\b(\d{5})\b') { $explicit = $Matches[1] }
         } else { exit 0 }
     }
     $text = $text -replace '[\r\n,]+', ' '

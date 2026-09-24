@@ -4,7 +4,8 @@
 $ErrorActionPreference = "Stop"
 $fails = 0
 function Check($name, $ok) { if ($ok) { "ok   $name" } else { "FAIL $name"; $script:fails++ } }
-function Rows($out) { @($out | Where-Object { $_ -match '^\d\d:\d\d  ' } | ForEach-Object { , ($_ -split '\s+', 5) }) }
+# Row fields: 0 start, 1 end, 2 hours, 3 ticket, 4 description, 5 type.
+function Rows($out) { @($out | Where-Object { $_ -match '^\s*(\d{1,2}:\d\d [AP]M)\s+(\d{1,2}:\d\d [AP]M)\s+(\S+)\s+(\S+)\s+(User Story|\S+)\s+(.*)$' } | ForEach-Object { , @($Matches[1], $Matches[2], $Matches[3], $Matches[4], $Matches[6], $Matches[5]) }) }
 
 $dir = Join-Path ([IO.Path]::GetTempPath()) "worklog-test-$([guid]::NewGuid())"
 $repo = Join-Path $dir "repo"
@@ -39,10 +40,18 @@ Hook tool @{ tool_name = "Read"; tool_input = @{ file_path = "x" } }
 Hook stop @{}
 Hook prompt @{ prompt = "PET-12333, other thing" }
 $env:WORKLOG_DISABLE = "1"; Hook prompt @{ prompt = "guarded" }; $env:WORKLOG_DISABLE = $null
+Hook tool @{ tool_name = "Bash"; tool_input = @{ command = "sed -i 's|az/agent capture|x|' README.md; grep -n `"az \|curl`" f" } }
+Hook tool @{ tool_name = "Bash"; tool_input = @{ command = "git commit -m `"Log az commands`"" } }
+Hook tool @{ tool_name = "PowerShell"; tool_input = @{ command = "`$prs = az repos pr list --status active" } }
+Hook tool @{ tool_name = "PowerShell"; tool_input = @{ command = "`$t = az account get-access-token --query accessToken -o tsv`nInvoke-RestMethod -Method Patch -Uri https://x/_apis/wit/workitems/17458" } }
+Hook tool @{ tool_name = "Bash"; tool_input = @{ command = "az boards work-item show --id 17401; git commit -m `"update docs`"" } }
 
 $today = (Get-Date).ToString("yyyy-MM-dd")
 $csv = @(Get-Content (Join-Path $dir "$today.csv") | ForEach-Object { $p = $_ -split ',', 6; "$($p[1]),$($p[2]),$($p[5])" })
-Check "9 lines logged (non-az Bash, Read, guarded prompt skipped)" ($csv.Count -eq 9)
+Check "12 lines logged (non-az Bash, Read, guarded prompt, az-as-a-word skipped)" ($csv.Count -eq 12)
+Check "az after = is logged, read-only" ($csv[9] -eq "az,PET-12333,az repos pr list --status active")
+Check "REST PATCH after az token is explicit" ($csv[10] -like "az,PET-17458*,az account get-access-token*")
+Check "mutating word outside the az segment is not explicit" ($csv[11] -like "az,PET-17458,az boards work-item show --id 17401*")
 Check "prompt from branch, text cut to 200" ($csv[0] -eq "prompt,PET-12351,$($long.Substring(0, 200))")
 Check "notification logged as notify, no text" ($csv[1] -eq "notify,PET-12351,")
 Check "read-only az keeps branch ticket" ($csv[2] -eq "az,PET-12351,az boards work-item show --id 17400")
@@ -74,13 +83,32 @@ $out = & $exe -NoProfile -File "$PSScriptRoot\worklog.ps1" 2026-01-01
 $rows = Rows $out
 Check "3 blocks (* ignored in grouping, gap splits UNKNOWN)" ($rows.Count -eq 3)
 Check "ticket column bare digits or -----" (($rows | ForEach-Object { $_[3] }) -join "," -eq "12351,-----,-----")
-Check "hours round up to 0.25, minimum 0.25" (($rows | ForEach-Object { $_[2] }) -join "," -eq "0.50,0.25,0.25")
+Check "type column is - without an ADO lookup" (($rows | ForEach-Object { $_[5] }) -join "," -eq "-,-,-")
+Check "start snaps down, end up, no overlap, minimum 15 min" (($rows | ForEach-Object { "$($_[0])-$($_[1])" }) -join "," -eq "9:00 AM-9:30 AM,9:30 AM-9:45 AM,10:30 AM-10:45 AM")
+Check "hours follow the snapped times" (($rows | ForEach-Object { $_[2] }) -join "," -eq "0.50,0.25,0.25")
 Check "total" ($out[-1] -eq "Total: 1.00 hours")
 Check "notify text never in a description" (-not ($out -like "*notify-secret*"))
 Check "fallback descriptions end in (raw)" (@($rows | Where-Object { $_[4] -notlike "*(raw)" }).Count -eq 0)
 Check "commits in the block window are facts" ($rows[0][4] -like "*Fixture commit*")
 Check "other authors' commits are not facts" ($rows[0][4] -notlike "*Someone else*")
 Check ".txt written" ((Get-Content (Join-Path $dir "2026-01-01.txt")) -join "`n" -eq ($out -join "`n"))
+
+# --- fold and 1-hour cap: another session's az-only block folds in; a 2h05 block splits 1.00 / 1.00 / 0.25 ---
+@"
+09:00:00,prompt,PET-12351,s1,$repo,Long work
+09:30:00,az,PET-17457*,s2,$repo,az boards work-item update --id 17457
+09:31:00,stop,PET-12351,s1,$repo,
+09:50:00,prompt,PET-12351,s1,$repo,Still going
+10:15:00,prompt,PET-12351,s1,$repo,More
+11:05:00,stop,PET-12351,s1,$repo,
+"@ | Set-Content (Join-Path $dir "2026-01-02.csv")
+$out = & $exe -NoProfile -File "$PSScriptRoot\worklog.ps1" 2026-01-02
+$rows = Rows $out
+Check "prompt-less other-ticket block folds in" (($rows | ForEach-Object { $_[3] }) -join "," -eq "12351,12351,12351")
+Check "entries capped at 1 hour" (($rows | ForEach-Object { $_[2] }) -join "," -eq "1.00,1.00,0.25")
+Check "chunk starts are consecutive" (($rows | ForEach-Object { $_[0] }) -join "," -eq "9:00 AM,10:00 AM,11:00 AM")
+Check "folded az from another ticket stays out of facts" (-not ($out -like "*17457*"))
+Check "empty chunk uses the block's facts" ($rows[2][4] -like "*Long work*")
 
 Remove-Item -Recurse -Force $dir
 if ($fails) { "$fails FAILED"; exit 1 } else { "all passed" }
