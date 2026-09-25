@@ -40,12 +40,14 @@ if ($cur) { $blocks += $cur }
 
 # Parallel sessions interleave, so a block with no prompt of its own (stops, notifications, another session's az) folds into the
 # block before it, as does a same-ticket block that follows; otherwise each flip would round up to its own 0.25 h sliver.
+# A prompt-less block with nothing near to fold into (agent notifications arriving while away) is not time worked: dropped.
 $folded = @()
 foreach ($b in $blocks) {
     $prev = if ($folded) { $folded[-1] } else { $null }
     $near = $prev -and ($b.Start - $prev.End).TotalMinutes -le $GapMinutes
-    if ($near -and ($b.Ticket -eq $prev.Ticket -or -not ($b.Events | Where-Object Event -eq "prompt"))) { $prev.End = $b.End; $prev.Events += $b.Events }
-    else { $folded += $b }
+    $prompted = [bool]($b.Events | Where-Object Event -eq "prompt")
+    if ($near -and ($b.Ticket -eq $prev.Ticket -or -not $prompted)) { $prev.End = $b.End; $prev.Events += $b.Events }
+    elseif ($prompted) { $folded += $b }
 }
 
 # The portal caps an entry at 2 h; cut blocks into consecutive chunks of at most $MaxHours.
@@ -158,7 +160,7 @@ foreach ($b in $blocks) {
         $d = $b.Facts -join "; "
         if ($d.Length -gt 144) { $d = $d.Substring(0, 144) }
         $d = "$d (raw)".TrimStart()
-    } elseif ($d.Length -gt 150) { $d = $d.Substring(0, 150) }
+    } elseif ($d.Length -gt 150) { $d = $d.Substring(0, $d.LastIndexOf(' ', 149)).TrimEnd(';', ',', ':') }  # whole words only
     $ticket = if ($b.Ticket -eq "UNKNOWN") { "-----" } else { $b.Ticket -replace '^PET-', '' }
     $ci = [Globalization.CultureInfo]::InvariantCulture
     $type = if ($info[$b.Ticket].Type) { $info[$b.Ticket].Type } else { "-" }
