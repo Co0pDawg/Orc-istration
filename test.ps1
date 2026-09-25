@@ -95,15 +95,19 @@ Check ".txt written" ((Get-Content (Join-Path $dir "2026-01-01.txt")) -join "`n"
 
 # --- fold and 1-hour cap: another session's az-only block folds in; a 2h05 block splits 1.00 / 1.00 / 0.25 ---
 @"
+03:15:00,notify,PET-17457,s3,$repo,
+03:16:00,stop,PET-17457,s3,$repo,
 09:00:00,prompt,PET-12351,s1,$repo,Long work
 09:30:00,az,PET-17457*,s2,$repo,az boards work-item update --id 17457
 09:31:00,stop,PET-12351,s1,$repo,
 09:50:00,prompt,PET-12351,s1,$repo,Still going
 10:15:00,prompt,PET-12351,s1,$repo,More
 11:05:00,stop,PET-12351,s1,$repo,
+13:00:00,notify,PET-12351,s1,$repo,
 "@ | Set-Content (Join-Path $dir "2026-01-02.csv")
 $out = & $exe -NoProfile -File "$PSScriptRoot\worklog.ps1" 2026-01-02
 $rows = Rows $out
+Check "isolated prompt-less blocks (away-time notifications) are dropped" ($rows.Count -eq 3)
 Check "prompt-less other-ticket block folds in" (($rows | ForEach-Object { $_[3] }) -join "," -eq "12351,12351,12351")
 Check "entries capped at 1 hour" (($rows | ForEach-Object { $_[2] }) -join "," -eq "1.00,1.00,0.25")
 Check "chunk starts are consecutive" (($rows | ForEach-Object { $_[0] }) -join "," -eq "9:00 AM,10:00 AM,11:00 AM")
