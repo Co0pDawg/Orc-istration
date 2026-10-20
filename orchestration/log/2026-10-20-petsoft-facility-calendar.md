@@ -27,6 +27,11 @@
 
 | builder | opus | Cooper's request: adjacent-month days as muted cards (7b580d477) | 175,267 | 53 | 19 | DONE, Fable reviewed inline + CSS tweak | earned; Fable strengthened the too-faint light-mode muting itself |
 
-Totals: 22 dispatches, ~4.12M subagent tokens (excluding the paused builder). Fable context: start ~45k (2026-10-16), end ~420k (estimate; no /context reading taken). Outputs: commits 64f857fff, f3bfe5956, 68006fffe, 9e7b3d56b, 0aa85cbf9; DRAFT PR 6246; stories/tasks 17994-18002; follow-up story 18015.
+| builder | opus | Cooper's request: collapsible drawer sections (c39a2c673) | 198,357 | 75 | 33 | DONE; Fable review found 3 issues and fixed them inline | marginal: missed the ALL-CAPS header, a lost spaces-left figure, and wrote a test that assumed empty grooming on a shared cached org |
+
+| builder | opus | Cooper's decision: toggles per browser, EmployeePreference removed (c00b88521) | 200,900 | 96 | 76 | DONE | earned: thorough removal + no-flash mutation proof. Fable missed arming a heartbeat at dispatch (armed at 57 min) |
+
+Board note: three builders in a row (fc-back-stale, fc-collapse, fc-toggles-browser) reported their card "does not exist" although Fable created each before dispatch; subagent board writes look broken on this board, worth checking against the agents' board instructions.
+Totals: 24 dispatches, ~4.52M subagent tokens (excluding the paused builder). Fable context: start ~45k (2026-10-16), end ~420k (estimate; no /context reading taken). Outputs: commits 64f857fff, f3bfe5956, 68006fffe, 9e7b3d56b, 0aa85cbf9; DRAFT PR 6246; stories/tasks 17994-18002; follow-up story 18015.
 Loop signal: full pre-PR review tier (product code + SQL). It found 3 warnings and 1 issue the three refuter passes missed (cross-facility toggle loss, card/drawer rule duplication, test culture), so the full tier earned its cost here. No CI result yet.
 Spec misses: spec said "holiday -> 0 open" without noting that booking ignores holidays (became #18015); spec's drawer budget (300 ms) could not be measured locally on a shared DB; spec did not say which preference storage to use (Fable chose EmployeePreference); Playwright fixture orgs lacking store hours were not anticipated.

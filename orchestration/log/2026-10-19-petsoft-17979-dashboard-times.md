@@ -17,3 +17,14 @@
 Totals: ~1.11M subagent tokens, 11 dispatches. Fable context at start/end: not captured this run.
 Loop signal: pre-PR tier = full (schema + product code); it found only 1 suggestion + 2 nits after two refuter rounds. No later review/CI result yet.
 Spec misses: (1) the builder spec did not require Playwright coverage, although .claude/rules/tests.md does; the refuter caught it, costing one rework round. Put "UI change => UITest + hooks in scope" in every UI builder spec. (2) The shared local DB was used by a parallel session's long transaction, which made the UITest fail twice and cost a debugger run. Check sys.dm_exec_sessions for open transactions before live runs.
+
+## Round 2 (2026-10-20): PR 6238 review, sort moved to a per-tab cookie
+
+| # | Agent | Model | Purpose | Tokens | Tools | Min | Result | Rating |
+|---|---|---|---|---|---|---|---|---|
+| 12 | builder | opus | Employee columns -> DashboardSort.<tab> cookie; tests, annotation, UITest cleanup | 150.4k | 38 | 14 | DONE, 126 filtered pass, mutation red | earned |
+| 13 | refuter | opus | refute cookie change | not captured (session closed before notice) | - | 7 | ACCEPT, 2 mutations red; 2 test nits fixed inline | earned |
+
+Totals round 2: ~150k+ subagent tokens, 2 dispatches. Fable context: not captured.
+Loop signal: no pre-PR review rerun yet (offered to Cooper); refuter + full unit run (6675 pass) + live UITest pass.
+Spec misses: none; the round-1 design (server-side per employee) was a design choice the reviewer reversed, not a spec miss. Lesson: for a per-user UI preference, ask "browser or account?" explicitly at planning; the cheaper browser option was the reviewer's pick.
