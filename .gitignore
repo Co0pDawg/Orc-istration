@@ -1,0 +1,30 @@
+# Allow-list: everything in ~/.claude is ignored unless named below. This keeps transcripts,
+# .credentials.json, caches, plugins, memory and logs out of the repo by default.
+/*
+
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/CLAUDE.md
+!/settings.json
+
+# The agent roster
+!/agents/
+/agents/*
+!/agents/*.md
+
+# Orchestration rules and cost logs (the board in orchestration/board is its own repo: Co0pDawg/Orc-Dashboard)
+!/orchestration/
+/orchestration/*
+!/orchestration/README.md
+!/orchestration/log/
+/orchestration/log/*
+!/orchestration/log/*.md
+
+# Own skills only (synced and plugin skills reinstall themselves)
+!/skills/
+/skills/*
+!/skills/peer-review/
+
+# Setup docs: restore guide and outlines for ops automation and project memory
+!/docs/
