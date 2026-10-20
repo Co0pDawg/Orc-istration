@@ -89,6 +89,10 @@ The refuter already reran the work, checked conventions and proved each test can
 - Live app runs share one dev database. Run at most two apps at once, and stagger a refuter's rerun after the builder's. A test that fails in Arrange on a load timeout or a closed browser gets one rerun before it counts as a failure, and both results are reported.
 - Open PRs that edit a shared doc (a map or index) get their merge status checked whenever the base branch moves. Resolve conflicts in the base branch's current format.
 
+## Versioning the setup
+
+`~/.claude` is a git repo (private GitHub `Co0pDawg/Orc-istration`) with an allow-list `.gitignore`. This file, `settings.json`, `agents/*.md`, `orchestration/README.md`, the cost logs and `skills/peer-review/` are tracked, and transcripts, credentials, memory and plugins are not. After changing a tracked file, commit and push it in the same session; `README.md` there covers restoring and tracking a new file. The board is its own repo (`orchestration/board`, `Co0pDawg/Orc-Dashboard`).
+
 ## Orchestration cost log
 
 Every orchestrated task writes one record to `~/.claude/orchestration/log/<date>-<project>-<slug>.md` before Fable reports done: one row per dispatch (agent, model, purpose, tokens, tool uses, minutes, result, `earned`/`marginal`/`waste` + reason), then Totals, Loop signal, and Spec misses. The Loop signal line names the pre-PR review tier used (light or full) and whether a later review or CI caught anything that tier missed, so the tier rule can be tuned from evidence. Totals also carries Fable's own context: the session context size at task start and at the record's writing (from the status line or `/context`), so a review can compare orchestrator spend against subagent spend. Format and review questions are in `~/.claude/orchestration/README.md`. Token figures come from each agent's completion notification; a resumed agent logs its delta, not the cumulative figure.
