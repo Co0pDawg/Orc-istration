@@ -1,4 +1,4 @@
-# 2026-10-20 Petsoft: Admin landing page (#18028 / Task #18029) -> branch pushed (stacked on 18018), PR not opened
+# 2026-10-20 Petsoft: Admin landing page (#18028 / Task #18029) -> merged into PR 6254 (developer decision)
 
 | Agent | Model | Purpose | Tokens | Tool uses | Min | Result | Value |
 |---|---|---|---|---|---|---|---|
@@ -14,6 +14,6 @@
 | code-simplifier | session (opus) | pre-PR review | 117,105 | 11 | 3 | 2 suggestion, 1 nit | earned (cheap view de-dup) |
 | builder (resumed) | opus | 11 review fixes + tests | ~62k delta | 47 | 50 | DONE | earned; Fable reviewed inline (builder over 300k, no Opus refuter) |
 
-Totals: 11 dispatches (+3 Explore), ~1.77M subagent tokens. Fable context: not measured. Outputs: Story 18028, Task 18029, commits 808fe4264, 7404159c4 on feature/18028-admin-landing-page (stacked on 18018), worktree C:\Development\Petsoft-18028.
+Totals: 11 dispatches (+3 Explore), ~1.77M subagent tokens. Fable context: not measured. Outputs: Story 18028, Task 18029, commits 808fe4264, 7404159c4, cd2a33a31 (maintenance tile dropped, inline) fast-forwarded into feature/18018-modernize-office-portal-tab-strips / PR 6254, worktree C:\Development\Petsoft-18028.
 Loop signal: full pre-PR review tier (product code, money-path refactor, job handler). It found 2 real warnings the refuter missed (job failure window, maintenance overlap rule), so the full tier earned its cost; refuter focused on the money path and proved it. No CI result yet.
 Spec misses: Fable's spec keyed failed jobs on CREATED and hand-rolled the maintenance selection instead of naming MaintenanceStatus.From; spec did not mention the runtime-compilation view rule (added to ui.md mid-session; views checked, compliant). Ops: port 7099 held by another worktree's app (17994) at the end; test app run on 7499.
