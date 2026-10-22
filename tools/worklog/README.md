@@ -88,7 +88,7 @@ A Claude session uploads each pending file in `~/.claude/timeline-sync/pending/`
 2. ArtifactData `set` with the same url, collection and doc_id, `file_path` = the pending file, and `if_version` = the version from step 1 when the doc exists.
 3. Delete the pending file.
 
-Fable sessions do this at the start of every orchestrated task. Any session does it when Cooper says "sync my timeline".
+Orchestrator sessions do this at the start of every orchestrated task. Any session does it when Cooper says "sync my timeline".
 
 ## Known ceilings
 
