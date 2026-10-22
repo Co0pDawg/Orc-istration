@@ -200,7 +200,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Development\\worklog\\log-event.ps1\" -Kind stop",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\tools\\worklog\\log-event.ps1\" -Kind stop",
             "timeout": 10,
             "async": true
           }
@@ -331,7 +331,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Development\\worklog\\log-event.ps1\" -Kind prompt",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\tools\\worklog\\log-event.ps1\" -Kind prompt",
             "timeout": 10,
             "async": true
           }
@@ -344,7 +344,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Development\\worklog\\log-event.ps1\" -Kind tool",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\tools\\worklog\\log-event.ps1\" -Kind tool",
             "timeout": 10,
             "async": true
           }
