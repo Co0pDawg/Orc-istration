@@ -86,3 +86,34 @@ Portal push, weekly view, in-place editing (edit the `.txt`).
 - **No ids to Haiku:** `PET-`/`#` + 4-5 digit numbers are stripped from facts before the summary call, so descriptions cannot mention ticket or PR ids.
 - **Quarter-hour times:** start snaps down and end snaps up to :00/:15/:30/:45; an entry starts no earlier than the previous one ends and lasts 15 minutes to `MaxHours`; hours are the snapped span (replaces "round up to 0.25"). Times print as `h:mm AM/PM`.
 - **Summary quality (task-based billing style):** each distinct ticket's `System.WorkItemType` and `System.Title` come from `az boards work-item show` (skipped with `WORKLOG_NOSUMMARY`; a failed lookup warns and leaves them blank). A new `TYPE` column shows the work item type (`Bug`, `Task`, `User Story`, or `-`). The prompt groups entries by block under the ticket's type and title, requires `<Category>: <verb> <object>; <verb> <object>.` with Category from Development, Code review, Testing, Planning, Documentation, DevOps, Support, bans vague words (worked on, continued, various, progressed, advanced, phase, ongoing, efforts, tasks, items), and tells the model that entries in one block are consecutive slots that must not repeat each other. The model is `sonnet` with `haiku` as fallback, each with a 120 s timeout; a wrong line count warns and tries the next, then falls back to raw facts.
+
+## Hybrid attribution (2026-09-29)
+
+Local prompts say *when*; ADO actions, PR links and commits say *which ticket*. Attribution moves from capture time to roll-up time.
+
+**Capture (`log-event.ps1`)**
+- `ado.ps1` calls (Petsoft's ADO helper, `.claude/scripts/ado.ps1 <verb>`) are logged as event `ado`, detected in command position like `az`; text = first 120 chars from `ado.ps1` onward.
+- Mutating ado verbs: `wi-update wi-link wi-link-branch wi-attach comment-add comment-edit pr-create pr-update pr-link pr-attach` (never with `-WhatIf`). Ticket: `-Id NNNNN` -> `PET-NNNNN*`; `-WorkItems N,...` -> first id; `-Pr NNNN` -> `PR-NNNN*`.
+- `az repos pr ... --id NNNN` (mutating) and a prompt naming a PR (`pr 6025`, `PR #6025`, `pull request 6025`) also record `PR-NNNN*`.
+- Capture writes only: explicit ticket (`*`) -> branch ticket -> `UNKNOWN`. The session-inheritance rules (last explicit, last of any origin) are removed; the roll-up does that job with evidence.
+
+**Roll-up (`worklog.ps1`)**
+1. Per session, an evidence timeline of (time, ticket): `*` events (PR ids resolved via `ado.ps1 pr-get -Pr N -IncludeWorkItems`, preferring a linked Task, then Bug, then User Story, then any), plus own non-merge commits in the session's cwds within its first..last event window whose subject has `#NNNNN`.
+2. Every event in the session takes the latest evidence ticket at or before its time; before the first evidence, the session's first evidence ticket (back-fill); a session with no evidence keeps its captured branch ticket (non-`*`), else `UNKNOWN`.
+3. `<logDir>/<date>.map` overrides: lines `<session-id-prefix> <NNNNN|->`; `-` drops the session. Applied last.
+4. Blocks, fold, split, snapping and summaries run unchanged on the re-ticketed events.
+5. After the table (console only, not the `.txt`): a `Sessions:` list (`<8-char id>  <ticket>  <first real prompt, 60 chars>`) for writing the map, and `Touched in ADO, no time logged: ...` from one WIQL (`[System.ChangedBy] = @Me` and `[System.ChangedDate]` within the date) minus tickets already in the table.
+6. ADO calls (PR resolution, type/title lookup, WIQL) go through `ado.ps1` at `$env:WORKLOG_ADO` (default `C:\Development\Petsoft\.claude\scripts\ado.ps1`), all skipped with `WORKLOG_NOSUMMARY=1`; a failed call warns and leaves that evidence unresolved.
+
+## Quarter-hour allocation, parent roll-up, global map (2026-10-05)
+
+Replaces block/fold/split/snap in the roll-up. Attribution (evidence re-ticketing, `.map`) runs first, unchanged.
+
+1. **Global map:** `<logDir>/sessions.map` (same format as `<date>.map`) applies to every date, before the date's own map. Seeded with `2abeee8d -` (the worklog conversation itself).
+2. **Parent roll-up:** a ticket whose ADO `System.CreatedDate` (local date) is the roll-up date and that has a `System.Parent` is re-ticketed to its parent, repeated while the parent was also created that day (max 3 hops). Applied after the maps; uses the cached `wi-get` lookup (extend `Info` with CreatedDate and Parent). Skipped with `WORKLOG_NOSUMMARY`.
+3. **Session segments:** per session, consecutive events with a gap of at most `GapMinutes` form a segment. A segment with no `prompt` event is not time worked (dropped, as the old isolated prompt-less rule).
+4. **Slots:** the day is cut into 15-minute slots on the clock grid. Each kept segment covers the slots from floor(first event) to the slot holding its last event, inclusive; per slot it adds weight to the ticket the segment's session held at that time: 1 for coverage, plus 3 per `prompt`, 2 per `ado`/`az`/`commit`/`agent` event in that slot (stop/notify add nothing beyond coverage).
+5. **Winner:** each covered slot goes to the highest-weight ticket; a tie keeps the previous slot's ticket if it is among the tied, else the lowest ticket string. Uncovered slots are idle.
+6. **Entries:** consecutive slots with the same ticket merge into one entry, split into chunks of at most `MaxHours`. Start/end are slot boundaries (h:mm AM/PM), hours = slots x 0.25. Idle gaps separate entries.
+7. **Facts and summaries** come from the events inside each entry's time range whose (final) ticket is the entry's ticket; an entry with none uses the facts of all same-ticket events in the day. Summary prompt, time echo and fallbacks unchanged.
+8. **Touched in ADO** excludes work items created on the roll-up date (`[System.CreatedDate] < '<date>'` in the WIQL), so filing tickets no longer floods it.

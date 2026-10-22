@@ -1,5 +1,5 @@
 # Claude Code hook: appends one CSV line per UserPromptSubmit (-Kind prompt), Stop (-Kind stop)
-# or PostToolUse (-Kind tool: logs `az` commands and Agent dispatches, ignores every other tool).
+# or PostToolUse (-Kind tool: logs `az`, `ado.ps1` and `git commit` commands and Agent dispatches, ignores every other tool).
 # Reads the hook JSON from stdin. Never fails the hook (exit 0 always). WORKLOG_DISABLE=1 skips logging.
 param([string]$Kind = "prompt")
 
@@ -16,20 +16,36 @@ try {
     if ($Kind -eq "prompt") {
         $text = "$($json.prompt)"
         if ($text -match '^\s*<(task-notification|agent-message|system-reminder)') { $Kind = "notify"; $text = "" }
-        elseif ($text -match '(?:PET-|#)(\d{5})\b') { $explicit = $Matches[1] }
+        elseif ($text -match '(?:PET-|#)(\d{5})\b') { $explicit = "PET-$($Matches[1])" }
+        elseif ($text -match '\b(?:pr|pull request)\s*#?(\d{4})\b') { $explicit = "PR-$($Matches[1])" }  # ponytail: PR ids are four digits until PR 10000
     } elseif ($Kind -eq "tool") {
         $cmd = "$($json.tool_input.command)"
-        # az as the command itself (start, or after ; | & ( = or a newline), not the word inside a sed, grep or commit message.
+        # az / ado.ps1 / git commit as the command itself (start, or after ; | & ( = or a newline), not the word inside a sed, grep or commit message.
         $az = [regex]::Match($cmd, '(?:^|(?<!\\)[;&|(=\r\n])\s*(?<az>az\s+[a-z])').Groups['az']
+        $ado = [regex]::Match($cmd, '(?:^|(?<!\\)[;&|(=\r\n])\s*(?:(?:pwsh|powershell)(?:\.exe)?\s+(?:-\S+\s+)*)?["'']?[^\s"'';|&]*?(?<ado>ado\.ps1)["'']?\s+[a-z]').Groups['ado']
+        $commit = [regex]::Match($cmd, '(?:^|(?<!\\)[;&|(=\r\n])\s*(?<git>git(?:\s+-[Cc]\s+\S+)*\s+commit\b)').Groups['git']
         if ($json.tool_name -eq "Agent") {
             $Kind = "agent"; $text = "$($json.tool_input.subagent_type): $($json.tool_input.description)"
+        } elseif ($json.tool_name -in "Bash", "PowerShell" -and $ado.Success) {
+            $Kind = "ado"; $text = $cmd.Substring($ado.Index); $max = 120
+            # A mutating verb names the ticket (-Id, then -WorkItems) or PR (-Pr) being worked; -WhatIf only prints the request.
+            $seg = ($text -split '[;|&\r\n]')[0]
+            if ($seg -match '^ado\.ps1["'']?\s+(wi-update|wi-link|wi-link-branch|wi-attach|comment-add|comment-edit|pr-create|pr-update|pr-link|pr-attach)\b' -and $seg -notmatch '-WhatIf\b') {
+                if ($seg -match '-Id\s+(\d{5})\b' -or $seg -match '-WorkItems\s+(\d{5})\b') { $explicit = "PET-$($Matches[1])" }
+                elseif ($seg -match '-Pr\s+(\d+)\b') { $explicit = "PR-$($Matches[1])" }
+            }
         } elseif ($json.tool_name -in "Bash", "PowerShell" -and $az.Success) {
             $Kind = "az"; $text = $cmd.Substring($az.Index); $max = 120
             # Only a mutating command names the ticket being worked; a read (show/list/query/GET) just looks around.
             # Verbs are checked on the az command's own segment; a REST call with an az token counts by its method.
             $seg = ($text -split '[;|&\r\n]')[0]
             $mutating = $seg -match '\b(create|update|delete|add|set-vote)\b|--http-method\s+(POST|PATCH|PUT|DELETE)' -or $text -match '-(Method|X)\s+(POST|PATCH|PUT|DELETE)\b'
-            if ($mutating -and $text -match '\b(\d{5})\b') { $explicit = $Matches[1] }
+            if ($mutating -and $text -match '\b(\d{5})\b') { $explicit = "PET-$($Matches[1])" }
+            elseif ($mutating -and $seg -match '^az\s+repos\s+pr\b.*--id\s+(\d+)') { $explicit = "PR-$($Matches[1])" }
+        } elseif ($json.tool_name -in "Bash", "PowerShell" -and $commit.Success) {
+            # The session that runs the commit owns it; the message (-m, -F heredoc) can span lines, so all of it is searched.
+            $Kind = "commit"; $text = $cmd.Substring($commit.Index); $max = 120
+            if ($text -match '#(\d{5})\b') { $explicit = "PET-$($Matches[1])" }
         } else { exit 0 }
     }
     $text = $text -replace '[\r\n,]+', ' '
@@ -39,21 +55,11 @@ try {
     New-Item -ItemType Directory -Force $logDir | Out-Null
     $file = Join-Path $logDir ((Get-Date).ToString("yyyy-MM-dd") + ".csv")
 
-    # Ticket: explicit in this event (written PET-NNNNN*) -> session's last explicit ticket -> branch name
-    # -> session's last ticket of any origin -> UNKNOWN. Five digits only: PR ids are four.
-    $ticket = $null
-    if ($explicit) { $ticket = "PET-$explicit*" }
-    else {
-        $tickets = @(if (Test-Path $file) { Get-Content $file | Where-Object { $_ -like "*,$session,*" } | ForEach-Object { ($_ -split ',')[2] } })
-        $last = $tickets | Where-Object { $_.EndsWith('*') } | Select-Object -Last 1
-        if ($last) { $ticket = $last.TrimEnd('*') }
-        if (-not $ticket) {
-            $branch = git -C $cwd branch --show-current 2>$null
-            if ($branch -match '(\d{5})') { $ticket = "PET-$($Matches[1])" }
-        }
-        if (-not $ticket -and $tickets) { $ticket = $tickets[-1].TrimEnd('*') }
-        if (-not $ticket) { $ticket = "UNKNOWN" }
-    }
+    # Ticket: explicit in this event (written PET-NNNNN* or PR-NNNN*) -> branch name -> UNKNOWN. Five digits for tickets:
+    # PR ids are four. Which ticket a session was on between explicit events is decided at roll-up from evidence (worklog.ps1).
+    $ticket = "UNKNOWN"
+    if ($explicit) { $ticket = "$explicit*" }
+    elseif ((git -C $cwd branch --show-current 2>$null) -match '(\d{5})') { $ticket = "PET-$($Matches[1])" }
 
     "$((Get-Date).ToString('HH:mm:ss')),$Kind,$ticket,$session,$cwd,$text" | Add-Content $file
 } catch { }
