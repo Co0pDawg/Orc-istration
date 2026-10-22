@@ -31,3 +31,4 @@
 
 # Own tools (source only; their data folders stay ignored)
 !/tools/
+!/CODEOWNERS

@@ -58,3 +58,7 @@ Back up any existing `CLAUDE.md` or `settings.json` first, because `checkout -f`
 - Scheduled tasks and their scripts (`scripts/`, `cleanup/`, `buildwatch/`): not tracked; see `docs/ops-automation.md`. Task Scheduler entries must be recreated by hand.
 - Absolute paths in `settings.json` contain the user name; edit them if the new account differs. That includes the three worklog hooks (`tools/worklog/log-event.ps1`).
 - The worklog's 15-minute sync task: run `pwsh -NoProfile -File ~/.claude/tools/worklog/register-timeline-task.ps1` once. It and `worklog.ps1` look for `ado.ps1` at `C:DevelopmentPetsoft.claudescriptsado.ps1`; set `WORKLOG_ADO` if your Petsoft checkout lives elsewhere.
+
+## Contributing
+
+Teammates: push a branch and open a pull request against `main`. `main` is protected: a PR needs one approving review from the code owner (`CODEOWNERS`), and the owner pushes directly. Report bugs and ideas in [Issues](https://github.com/Co0pDawg/Orc-istration/issues).
