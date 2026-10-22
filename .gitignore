@@ -28,3 +28,6 @@
 
 # Setup docs: restore guide and outlines for ops automation and project memory
 !/docs/
+
+# Own tools (source only; their data folders stay ignored)
+!/tools/
