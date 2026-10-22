@@ -1,0 +1,7 @@
+09:00:00,prompt,PET-17619*,e1,C:\x\Petsoft,Fix PET-17619 please
+09:05:00,prompt,PET-17619,e1,C:\x\Petsoft,<task-notification> export-secret
+09:10:00,agent,PET-17619,e1,C:\x\Petsoft,scout: Find call sites
+09:20:00,stop,PET-17619,e1,C:\x\Petsoft,
+10:00:00,prompt,UNKNOWN,e2,C:\x\Petsoft-6213,/peer-review 6213
+10:10:00,stop,UNKNOWN,e2,C:\x\Petsoft-6213,
+11:00:00,prompt,PET-17111,e3drop,C:\x\Other,Drop me
