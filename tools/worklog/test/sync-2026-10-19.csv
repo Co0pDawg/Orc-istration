@@ -1,0 +1,5 @@
+10:00:00,prompt,APP-17983,a1,C:\x\AcmeApp,Build the search sync-secret
+10:05:00,agent,APP-17983,a1,C:\x\AcmeApp,scout: Find call sites
+10:20:00,stop,APP-17983,a1,C:\x\AcmeApp,
+11:00:00,prompt,APP-17291*,a2,C:\x\AcmeApp-hotfix,Fix APP-17291
+11:10:00,stop,APP-17291,a2,C:\x\AcmeApp-hotfix,
