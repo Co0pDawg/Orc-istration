@@ -17,9 +17,7 @@
 !/orchestration/
 /orchestration/*
 !/orchestration/README.md
-!/orchestration/log/
-/orchestration/log/*
-!/orchestration/log/*.md
+# Cost logs stay local: the repo is public and they carry ticket and PR detail.
 
 # Own skills only (synced and plugin skills reinstall themselves)
 !/skills/

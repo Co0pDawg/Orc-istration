@@ -84,7 +84,7 @@ pwsh -NoProfile -File sync-timeline.ps1 -Date 2026-10-19 -DryRun C:\temp\tl   # 
 
 A Claude session uploads each pending file in `~/.claude/timeline-sync/pending/`:
 
-1. ArtifactData `get` with url `https://claude.ai/artifact/GJS9SUHY6eiX4bp32G65z1`, collection `timeline`, doc_id = the file's date.
+1. ArtifactData `get` with url your board's URL (`~/.claude/board.local.md`), collection `timeline`, doc_id = the file's date.
 2. ArtifactData `set` with the same url, collection and doc_id, `file_path` = the pending file, and `if_version` = the version from step 1 when the doc exists.
 3. Delete the pending file.
 
