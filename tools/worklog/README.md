@@ -22,8 +22,8 @@ Total: 2.00 hours
 ```
 
 ```
-pwsh C:\Development\worklog\worklog.ps1            # today
-pwsh C:\Development\worklog\worklog.ps1 2026-09-22
+pwsh ~/.claude/tools/worklog/worklog.ps1            # today
+pwsh ~/.claude/tools/worklog/worklog.ps1 2026-09-22
 ```
 
 After the table (console only, not the `.txt`) come `Sessions:` (`<8-char id>  <tickets>  <first prompt>`, for writing the `.map`) and `Touched in ADO, no time logged: ...` (work items you changed that day but did not create that day, from one WIQL, minus the table's tickets).

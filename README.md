@@ -14,6 +14,7 @@ Private repo (`Co0pDawg/Orc-istration`) rooted at `~/.claude`. It holds the Clau
 | `skills/peer-review/` | Own skill (SKILL.md, score.sh); synced and plugin skills are not tracked |
 | `docs/ops-automation.md` | Outline for unattended `claude -p` jobs |
 | `docs/project-memory.md` | Outline for per-project memory |
+| `tools/worklog/` | Time tracking: the hooks' `log-event.ps1`, the `worklog.ps1` roll-up, the board's `sync-timeline.ps1` and its scheduled-task script, with tests. Its data (`~/.claude/worklog/`) stays untracked. Imported with history by `git subtree` |
 
 `orchestration/board/` is a separate repo, https://github.com/Co0pDawg/Orc-Dashboard (the live board page and its notes). It is ignored here; clone it on its own.
 
@@ -55,4 +56,5 @@ Back up any existing `CLAUDE.md` or `settings.json` first, because `checkout -f`
 - Credentials: log in again (`/login`); also `az login` and `gh auth login` if used.
 - Project memory: `projects/<project>/memory/` is not tracked. See `docs/project-memory.md`.
 - Scheduled tasks and their scripts (`scripts/`, `cleanup/`, `buildwatch/`): not tracked; see `docs/ops-automation.md`. Task Scheduler entries must be recreated by hand.
-- Absolute paths in `settings.json` contain the user name; edit them if the new account differs.
+- Absolute paths in `settings.json` contain the user name; edit them if the new account differs. That includes the three worklog hooks (`tools/worklog/log-event.ps1`).
+- The worklog's 15-minute sync task: run `pwsh -NoProfile -File ~/.claude/tools/worklog/register-timeline-task.ps1` once. It and `worklog.ps1` look for `ado.ps1` at `C:DevelopmentPetsoft.claudescriptsado.ps1`; set `WORKLOG_ADO` if your Petsoft checkout lives elsewhere.
