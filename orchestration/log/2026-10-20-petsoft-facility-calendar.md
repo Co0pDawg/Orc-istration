@@ -32,6 +32,22 @@
 | builder | opus | Cooper's decision: toggles per browser, EmployeePreference removed (c00b88521) | 200,900 | 96 | 76 | DONE | earned: thorough removal + no-flash mutation proof. Fable missed arming a heartbeat at dispatch (armed at 57 min) |
 
 Board note: three builders in a row (fc-back-stale, fc-collapse, fc-toggles-browser) reported their card "does not exist" although Fable created each before dispatch; subagent board writes look broken on this board, worth checking against the agents' board instructions.
-Totals: 24 dispatches, ~4.52M subagent tokens (excluding the paused builder). Fable context: start ~45k (2026-10-16), end ~420k (estimate; no /context reading taken). Outputs: commits 64f857fff, f3bfe5956, 68006fffe, 9e7b3d56b, 0aa85cbf9; DRAFT PR 6246; stories/tasks 17994-18002; follow-up story 18015.
-Loop signal: full pre-PR review tier (product code + SQL). It found 3 warnings and 1 issue the three refuter passes missed (cross-facility toggle loss, card/drawer rule duplication, test culture), so the full tier earned its cost here. No CI result yet.
+| builder | opus | 2026-10-21: Service Calendar Month view + team feedback + style toggle (9b60e7803) | 450,815 | 232 | 89 | DONE | earned; kept the old Department dropdown against the one-filter decision (fixed next round) |
+| refuter | sonnet | Month-view round | 155,690 | 27 | 9 | ACCEPT + 4 should-fix + perf diagnosis | earned: the perf diagnosis (per-row subqueries) drove a 1.5 s -> 0.44 s fix |
+| builder | opus | all-day band, employee multi-select, dropdown removal, perf, 6a-d (59e13f1b2) | 476,797 | 164 | 66 | DONE | earned |
+| refuter | sonnet | all-day round | 188,904 | 39 | 9 | ACCEPT + 4 should-fix (one pre-existing permission gap) | earned: found the Day/Week no-employee-record gap |
+| builder | opus | fix round: permission gap, zero chips, drawer employee filter, tests (796650f1f) | 283,278 | 100 | 39 | DONE, Fable reviewed the permission diff inline | earned |
+
+| builder | opus | header unification across Day/Week/Month (f5e750159) | 184,480 | 79 | 29 | DONE, Fable reviewed screenshots inline | earned |
+
+| builder | opus | resizable day drawer (ba034d677) | 162,217 | 65 | 30 | DONE, Fable reviewed inline | earned |
+
+| builder | opus | Day/Week grid scrolls inside the window (a80ec6a8e) | 228,885 | 116 | 49 | DONE, Fable reviewed inline | earned |
+
+| builder | opus | remove Minimal/Cards month styles, Grid only (8472c4c64) | 177,371 | 63 | 29 | DONE, Fable reviewed inline | earned |
+
+| researcher | sonnet | 2026-10-22: facts for the drag-and-drop reschedule spec (story 18055) | 111,183 | - | - | spec facts | earned: found Edit Reservation's save path and that conflicts go unchecked today |
+| debugger | opus | 2026-10-22: PR 6246 Playwright failures (57871d483) | 163,344 | 72 | 36 | A fixed test-only, B root-caused | earned: A reproduced locally by making the day load instant; B is a pipeline TZ mismatch, also red on develop |
+Totals: 35 dispatches, ~7.10M subagent tokens (excluding the paused builder). Fable context: start ~45k (2026-10-16), end ~420k (estimate; no /context reading taken). Outputs: commits 64f857fff, f3bfe5956, 68006fffe, 9e7b3d56b, 0aa85cbf9; DRAFT PR 6246; stories/tasks 17994-18002; follow-up story 18015.
+Loop signal: full pre-PR review tier (product code + SQL). It found 3 warnings and 1 issue the three refuter passes missed (cross-facility toggle loss, card/drawer rule duplication, test culture), so the full tier earned its cost here. CI (2026-10-22): two Playwright failures no review tier would catch: a slide-in race that only shows when the server is fast, and a pipeline time-zone mismatch that predates this PR.
 Spec misses: spec said "holiday -> 0 open" without noting that booking ignores holidays (became #18015); spec's drawer budget (300 ms) could not be measured locally on a shared DB; spec did not say which preference storage to use (Fable chose EmployeePreference); Playwright fixture orgs lacking store hours were not anticipated.
