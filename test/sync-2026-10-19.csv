@@ -1,0 +1,5 @@
+10:00:00,prompt,PET-17983,a1,C:\x\Petsoft,Build the search sync-secret
+10:05:00,agent,PET-17983,a1,C:\x\Petsoft,scout: Find call sites
+10:20:00,stop,PET-17983,a1,C:\x\Petsoft,
+11:00:00,prompt,PET-17291*,a2,C:\x\Petsoft-hotfix,Fix PET-17291
+11:10:00,stop,PET-17291,a2,C:\x\Petsoft-hotfix,
