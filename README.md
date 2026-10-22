@@ -1,6 +1,6 @@
 # ~/.claude: orchestration setup
 
-Private repo (`Co0pDawg/Orc-istration`) rooted at `~/.claude`. It holds the Claude Code orchestration rulebook, the agent roster, cost logs and two outline docs, so the setup can be restored or reused on another machine.
+Public repo (`Co0pDawg/Orc-istration`) rooted at `~/.claude`. It holds the Claude Code orchestration rulebook, the agent roster and two outline docs, so the setup can be restored or reused on another machine.
 
 ## Tracked files
 
@@ -10,7 +10,6 @@ Private repo (`Co0pDawg/Orc-istration`) rooted at `~/.claude`. It holds the Clau
 | `settings.json` | Permissions, hooks, status line, `enabledPlugins`, `extraKnownMarketplaces`, model settings |
 | `agents/*.md` | Roster: builder, debugger, refuter, researcher, scout |
 | `orchestration/README.md` | Cost-log format and review questions |
-| `orchestration/log/*.md` | One cost record per orchestrated task |
 | `skills/peer-review/` | Own skill (SKILL.md, score.sh); synced and plugin skills are not tracked |
 | `docs/ops-automation.md` | Outline for unattended `claude -p` jobs |
 | `docs/project-memory.md` | Outline for per-project memory |
