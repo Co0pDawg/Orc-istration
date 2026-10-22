@@ -27,11 +27,13 @@ Always pass `subagent_type`. A bare Agent call silently inherits the session mod
 7. Known: facts already established, so the agent does not rediscover them.
 8. Scratch path: `<session scratchpad>/<agent>-<topic>.md` for anything over the cap. The next agent reads the file; the report to the orchestrator is the path plus a short summary.
 9. Data precondition (builders and refuters): name the rows or paths the feature depends on (which senders populate CUSTOMER_ID, which users have two facilities) and require the agent to query them, not exercise one seeded row. The loop verifies the spec; this line is what makes the spec verify the requirement.
-10. Board (builders and refuters): `BOARD: https://claude.ai/artifact/GJS9SUHY6eiX4bp32G65z1 card <card id>`, so the agent posts its milestones to its card (see Orchestration Board).
+10. Board (builders and refuters): `BOARD: <board URL> card <card id>`, so the agent posts its milestones to its card (see Orchestration Board).
 
 ## Orchestration Board
 
-Every orchestrated task goes on the live board at https://claude.ai/artifact/GJS9SUHY6eiX4bp32G65z1, in every project, so Cooper can watch progress from any device. An orchestrated task is any task that dispatches a builder, refuter or debugger; inline work and lone scout or researcher lookups stay off the board.
+The board URL for this machine lives in an untracked file, so the public repo carries no personal link (a new machine creates its own after publishing its board): @board.local.md
+
+Every orchestrated task goes on the live board, in every project, so Cooper can watch progress from any device. An orchestrated task is any task that dispatches a builder, refuter or debugger; inline work and lone scout or researcher lookups stay off the board.
 
 - **Start:** before the first dispatch, create the session doc and one card per ticket or task in a single batch.
 - **During:** write at each dispatch, check-in, report, rework and commit. Run a heartbeat on any dispatch expected to run past ~30 min.
@@ -91,7 +93,7 @@ The refuter already reran the work, checked conventions and proved each test can
 
 ## Versioning the setup
 
-`~/.claude` is a git repo (private GitHub `Co0pDawg/Orc-istration`) with an allow-list `.gitignore`. This file, `settings.json`, `agents/*.md`, `orchestration/README.md`, the cost logs and `skills/peer-review/` are tracked, and transcripts, credentials, memory and plugins are not. After changing a tracked file, commit and push it in the same session; `README.md` there covers restoring and tracking a new file. The board is its own repo (`orchestration/board`, `Co0pDawg/Orc-Dashboard`).
+`~/.claude` is a git repo (public GitHub `Co0pDawg/Orc-istration`) with an allow-list `.gitignore`. This file, `settings.json`, `agents/*.md`, `orchestration/README.md`, `skills/peer-review/` and `tools/` are tracked; transcripts, credentials, memory, plugins, the cost logs and `board.local.md` are not (the repo is public). After changing a tracked file, commit and push it in the same session; `README.md` there covers restoring and tracking a new file. The board is its own repo (`orchestration/board`, `Co0pDawg/Orc-Dashboard`).
 
 ## Orchestration cost log
 
