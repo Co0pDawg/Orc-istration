@@ -15,6 +15,27 @@ Public repo (`Co0pDawg/Orc-istration`) rooted at `~/.claude`. It holds the Claud
 | `docs/project-memory.md` | Outline for per-project memory |
 | `tools/worklog/` | Time tracking: the hooks' `log-event.ps1`, the `worklog.ps1` roll-up, the board's `sync-timeline.ps1` and its scheduled-task script, with tests. Its data (`~/.claude/worklog/`) stays untracked. Imported with history by `git subtree` |
 
+## Which Claude do I need?
+
+Everything here runs in **Claude Code**, which reads `~/.claude`. The claude.ai chat app does not.
+
+| You mainly use | What works |
+|---|---|
+| Claude Code in a terminal (`claude`) | Everything: the rulebook, agents, build loop, worklog hooks, board writes |
+| Claude Code in VS Code or JetBrains | Everything, same as the terminal (same engine, same `~/.claude`) |
+| Claude desktop app, **Code** tab | Everything, same as the terminal |
+| claude.ai chat (web, desktop Chat tab, mobile) | Viewing a board someone shared with you. No agents, hooks or worklog, and no board writes |
+
+Chat-only users:
+
+- To get the full setup, install Claude Code (`npm install -g @anthropic-ai/claude-code`, or open the desktop app's **Code** tab), sign in with the same claude.ai account, then follow "Restore on a new machine" below. The desktop Code tab needs no terminal.
+- To watch someone else's work, ask the owner to share their board (Share menu on the artifact), then open the link in a browser or the app.
+- To borrow only the planning discipline, paste the "Marching orders" and "Build loop" sections of `CLAUDE.md` into a claude.ai Project's instructions. Nothing runs on your machine that way.
+
+Your own board: publish a copy of the board repo from Claude Code under **your** account (cross-organization editors cannot write another account's board data), then put its URL in `~/.claude/board.local.md`. The board repo's README covers publishing.
+
+The setup assumes Windows with PowerShell 7 and Git Bash. On macOS or Linux, the worklog hooks and scheduled-task script need porting.
+
 `orchestration/board/` is a separate repo, https://github.com/Co0pDawg/Orc-Dashboard (the live board page and its notes). It is ignored here; clone it on its own.
 
 ## How the .gitignore works
@@ -56,7 +77,7 @@ Back up any existing `CLAUDE.md` or `settings.json` first, because `checkout -f`
 - Project memory: `projects/<project>/memory/` is not tracked. See `docs/project-memory.md`.
 - Scheduled tasks and their scripts (`scripts/`, `cleanup/`, `buildwatch/`): not tracked; see `docs/ops-automation.md`. Task Scheduler entries must be recreated by hand.
 - Absolute paths in `settings.json` contain the user name; edit them if the new account differs. That includes the three worklog hooks (`tools/worklog/log-event.ps1`).
-- The worklog's 15-minute sync task: run `pwsh -NoProfile -File ~/.claude/tools/worklog/register-timeline-task.ps1` once. It and `worklog.ps1` look for `ado.ps1` at `C:DevelopmentPetsoft.claudescriptsado.ps1`; set `WORKLOG_ADO` if your Petsoft checkout lives elsewhere.
+- The worklog's 15-minute sync task: run `pwsh -NoProfile -File ~/.claude/tools/worklog/register-timeline-task.ps1` once. It and `worklog.ps1` look for `ado.ps1` at `C:\Development\Petsoft\.claude\scripts\ado.ps1`; set `WORKLOG_ADO` if your Petsoft checkout lives elsewhere.
 
 ## Contributing
 
