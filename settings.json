@@ -105,91 +105,13 @@
   },
   "model": "opus[1m]",
   "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\hooks\\peon-ping\\peon.ps1\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/Users/Cooper.Davis/.claude/hooks/peon-ping/peon.sh",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\hooks\\peon-ping\\peon.ps1\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/Users/Cooper.Davis/.claude/hooks/peon-ping/peon.sh",
-            "timeout": 10,
-            "async": true
-          }
-        ]
-      }
-    ],
-    "SubagentStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\hooks\\peon-ping\\peon.ps1\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/Users/Cooper.Davis/.claude/hooks/peon-ping/peon.sh",
-            "timeout": 10,
-            "async": true
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\hooks\\peon-ping\\peon.ps1\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/Users/Cooper.Davis/.claude/hooks/peon-ping/peon.sh",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\tools\\peon\\peon-hook.ps1\"",
             "timeout": 10,
             "async": true
           }
@@ -207,122 +129,15 @@
         ]
       }
     ],
-    "Notification": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\hooks\\peon-ping\\peon.ps1\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/Users/Cooper.Davis/.claude/hooks/peon-ping/peon.sh",
-            "timeout": 10,
-            "async": true
-          }
-        ]
-      }
-    ],
-    "PermissionRequest": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\hooks\\peon-ping\\peon.ps1\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/Users/Cooper.Davis/.claude/hooks/peon-ping/peon.sh",
-            "timeout": 10,
-            "async": true
-          }
-        ]
-      }
-    ],
-    "PostToolUseFailure": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\hooks\\peon-ping\\peon.ps1\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/Users/Cooper.Davis/.claude/hooks/peon-ping/peon.sh",
-            "timeout": 10,
-            "async": true
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\hooks\\peon-ping\\peon.ps1\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/Users/Cooper.Davis/.claude/hooks/peon-ping/peon.sh",
-            "timeout": 10,
-            "async": true
-          }
-        ]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "C:/Users/Cooper.Davis/.claude/hooks/peon-ping/peon.sh",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\tools\\peon\\peon-hook.ps1\"",
             "timeout": 10,
             "async": true
-          }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/Users/Cooper.Davis/.claude/hooks/peon-ping/scripts/hook-handle-use.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "C:/Users/Cooper.Davis/.claude/hooks/peon-ping/scripts/hook-handle-rename.sh",
-            "timeout": 5
           }
         ]
       },
@@ -351,36 +166,52 @@
         ]
       }
     ],
-    "PreToolUse": [
+    "SessionStart": [
       {
         "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\hooks\\peon-ping\\peon.ps1\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/Users/Cooper.Davis/.claude/hooks/peon-ping/peon.sh",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\tools\\peon\\peon-hook.ps1\"",
             "timeout": 10,
             "async": true
           }
         ]
       }
     ],
-    "SubagentStop": [
+    "Notification": [
       {
         "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "C:/Users/Cooper.Davis/.claude/hooks/peon-ping/peon.sh",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\tools\\peon\\peon-hook.ps1\"",
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\tools\\peon\\peon-hook.ps1\"",
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\tools\\peon\\peon-hook.ps1\"",
             "timeout": 10,
             "async": true
           }
@@ -412,7 +243,7 @@
   "effortLevel": "low",
   "modelSettings": {
     "claude-opus-5-5": {
-      "effortLevel": "low"
+      "effortLevel": "medium"
     }
   },
   "autoUpdatesChannel": "latest",

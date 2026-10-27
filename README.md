@@ -13,6 +13,7 @@ Public repo (`Co0pDawg/Orc-istration`) rooted at `~/.claude`. It holds the Claud
 | `skills/peer-review/` | Own skill (SKILL.md, score.sh); synced and plugin skills are not tracked |
 | `docs/ops-automation.md` | Outline for unattended `claude -p` jobs |
 | `docs/project-memory.md` | Outline for per-project memory |
+| `tools/peon/peon-hook.ps1` | The single peon-ping hook entry: skips headless runs, then runs `hooks/peon-ping/peon.ps1` |
 | `tools/worklog/` | Time tracking: the hooks' `log-event.ps1`, the `worklog.ps1` roll-up, the board's `sync-timeline.ps1` and its scheduled-task script, with tests. Its data (`~/.claude/worklog/`) stays untracked. Imported with history by `git subtree` |
 
 ## Which Claude do I need?
@@ -72,7 +73,7 @@ Back up any existing `CLAUDE.md` or `settings.json` first, because `checkout -f`
 
 - Plugins and marketplaces named in `settings.json`: `enabledPlugins` lists pr-review-toolkit, frontend-design, superpowers, code-review, code-simplifier, mattpocock-skills (all from `claude-plugins-official`) and ponytail; `extraKnownMarketplaces` adds the `ponytail` marketplace from GitHub `DietrichGebert/ponytail`. Install via `/plugin`.
 - Status line: `statusLine.command` points into `plugins/cache/ponytail/...`, so it works only after the ponytail plugin is installed. The version in the path may need updating.
-- peon-ping hook: `hooks/peon-ping/` (many hook entries in `settings.json` call `peon.ps1` / `peon.sh` there). Reinstall peon-ping, or remove those hook entries.
+- peon-ping (sound alerts, Orc Peon pack by default): install it into `hooks/peon-ping/`, then set `"default_pack": "peon"` and `"enabled": true` in its `config.json`. Its installer adds its own hook entries to `settings.json`; delete them and keep only the six async `tools/peon/peon-hook.ps1` entries (SessionStart, Stop, Notification, PermissionRequest, PreCompact, UserPromptSubmit). The installer's set registers both `peon.ps1` and `peon.sh` on every event, including each tool call, so sounds play twice and subagent tool calls flood the transcript with hook lines. The wrapper also stays silent in headless runs (`claude -p`). Without peon-ping installed, the wrapper does nothing.
 - Credentials: log in again (`/login`); also `az login` and `gh auth login` if used.
 - Project memory: `projects/<project>/memory/` is not tracked. See `docs/project-memory.md`.
 - Scheduled tasks and their scripts (`scripts/`, `cleanup/`, `buildwatch/`): not tracked; see `docs/ops-automation.md`. Task Scheduler entries must be recreated by hand.
