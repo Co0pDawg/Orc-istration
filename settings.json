@@ -164,6 +164,16 @@
             "async": true
           }
         ]
+      },
+      {
+        "matcher": "ArtifactData",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\tools\\worklog\\board-title.ps1\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Notification": [
