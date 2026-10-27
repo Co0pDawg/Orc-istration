@@ -15,6 +15,7 @@ Public repo (`Co0pDawg/Orc-istration`) rooted at `~/.claude`. It holds the Claud
 | `docs/project-memory.md` | Outline for per-project memory |
 | `tools/peon/peon-hook.ps1` | The single peon-ping hook entry: skips headless runs, then runs `hooks/peon-ping/peon.ps1` |
 | `tools/peon/peon-nag.ps1` | Replays a peon "input required" line every 2 minutes while a question or approval is pending (gets annoyed after 3), until the transcript moves on, a prompt is sent, or 15 minutes pass. Hooked on PermissionRequest and PreToolUse `AskUserQuestion` (start), UserPromptSubmit and Stop (stop). `PEON_NAG_SECONDS` overrides the interval for testing |
+| `tools/worklog/board-title.ps1` | PostToolUse hook on `ArtifactData`: when a board session doc is written with a `title`, names the Claude Code session the same (appends the `custom-title` line `/rename` writes), so the VS Code session list matches the board. A later `/rename` can win it back |
 | `tools/worklog/` | Time tracking: the hooks' `log-event.ps1`, the `worklog.ps1` roll-up, the board's `sync-timeline.ps1` and its scheduled-task script, with tests. Its data (`~/.claude/worklog/`) stays untracked. Imported with history by `git subtree` |
 
 ## Which Claude do I need?
