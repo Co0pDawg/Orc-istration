@@ -127,6 +127,17 @@
             "async": true
           }
         ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\tools\\peon\\peon-nag.ps1\" -Mode stop",
+            "timeout": 10,
+            "async": true
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -147,6 +158,17 @@
           {
             "type": "command",
             "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\tools\\worklog\\log-event.ps1\" -Kind prompt",
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\tools\\peon\\peon-nag.ps1\" -Mode stop",
             "timeout": 10,
             "async": true
           }
@@ -203,6 +225,17 @@
             "async": true
           }
         ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\tools\\peon\\peon-nag.ps1\" -Mode start",
+            "timeout": 10,
+            "async": true
+          }
+        ]
       }
     ],
     "PreCompact": [
@@ -212,6 +245,19 @@
           {
             "type": "command",
             "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\tools\\peon\\peon-hook.ps1\"",
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\Cooper.Davis\\.claude\\tools\\peon\\peon-nag.ps1\" -Mode start",
             "timeout": 10,
             "async": true
           }
