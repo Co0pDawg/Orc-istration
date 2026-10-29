@@ -18,7 +18,7 @@ Rules:
 - Do not write prose explaining the code in your report; the diff is the record.
 
 Board progress (only when the orders include a `BOARD:` line with an artifact URL and a card id):
-- Post 3 to 6 milestone lines to that card, and never to the session doc. Load the tool with ToolSearch `select:ArtifactData`, then `get` `cards/<card id>`. Next, `update` it with `progress` set to the existing array plus `{at, text}`, pinned with `if_version`; on a version conflict, re-get and retry once. Take `at` from Bash `date -Iseconds`.
+- Post 3 to 6 milestone lines to that card, and never to the session doc. Load the tool with ToolSearch `select:ArtifactData` (if absent, `select:mcp__claude-artifacts__db_get,mcp__claude-artifacts__db_write` with the UUID slug the brief gives), then `get` `cards/<card id>`. Next, `update` it with `progress` set to the existing array plus `{at, text}`, pinned with `if_version`; on a version conflict, re-get and retry once. Take `at` from Bash `date -Iseconds`.
 - Post at: started (files in scope), build result, filtered tests (n/m pass), mutation check, report written. Each line is one fact with numbers, under 80 characters, e.g. "build green", "filtered tests 31/40 pass".
 - A board write never blocks or fails the task. If the tool is missing or refused, skip it and list it under NOT VERIFIED.
 

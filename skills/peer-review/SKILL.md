@@ -2,6 +2,7 @@
 name: peer-review
 description: Use when asked to review (and fix) a teammate's Azure DevOps pull request in Petsoft, given a PR id or URL, or when the user invokes /peer-review. Not for the user's own branch; that is /pre-pr-review.
 argument-hint: "<PR id | URL> [--tier S|M|L|XL]"
+version: 1.0.1
 ---
 
 # Peer Review
@@ -30,7 +31,7 @@ Review someone else's PR with effort scaled to its size and risk, fix what the r
    1. Run `git fetch origin <source> <target>`.
    2. Create the worktree: `git worktree add C:/Development/Petsoft-pr<id> -b review/<id>-fix origin/<source>`.
    3. Try `git merge --no-commit --no-ff origin/<target>`. On conflicts, resolve them and commit the merge first. On a clean merge, `git merge --abort`.
-3. **Score.** Run `bash ~/.claude/skills/peer-review/score.sh origin/<target> origin/<source>` from the worktree. Apply the risk bump, then state the tier and the reason in one line, e.g. `Tier L: score 521, no risk hits`.
+3. **Score.** Run `bash ~/.claude/skills/peer-review/score.sh origin/<target> origin/<source>` from the worktree, with the Bash tool (Git Bash). From PowerShell, `bash` resolves to WSL and fails (`execvpe /bin/bash failed`). Apply the risk bump, then state the tier and the reason in one line, e.g. `Tier L: score 521, no risk hits`.
 4. **Review** at that tier. Every dispatch gets the PR intent from step 1.
 5. **Fix** every confirmed issue and warning, each with the test that proves it. Suggestions and nits follow the CLAUDE.md nit rule. A finding that changes behaviour the author chose deliberately is not fixed. It becomes a question in the comment.
 6. **Verify.**
