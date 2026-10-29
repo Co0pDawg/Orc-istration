@@ -76,6 +76,9 @@ Orchestrator spec → `builder` → `refuter` → orchestrator.
 - Live-app verification (Playwright, browser checks) gets its own builder in its own worktree with its own DB copy, so it never shares build output with a code builder.
 - Keep the machine awake (Windows: `SetThreadExecutionState` with `[uint32]2147483651` in a background loop) from the first long dispatch until the last dispatch's results are in, not until the work "looks done". Stopping it at midnight on 2026-10-28 let Modern Standby hang a builder's Playwright run for 2 h 48 m.
 - A test that fails in Arrange on a page-load timeout while another app or builder shares the same DB copy is contention until a rerun says otherwise: rerun it alone before treating it as a failure (4 of 4 passed alone on 2026-10-29).
+- When SQL logins time out or report "insufficient memory in the buffer pool", check free RAM before blaming the app. Run `dotnet build-server shutdown` to free the idle MSBuild and compiler servers.
+  - Keep at most one test host and one builder app running alongside Cooper's own app and browsers.
+  - On 2026-10-29, 1 GB of 32 GB was free and every screenshot and query hung.
 
 ### Pre-PR review tier (learned 2026-09-30 to 10-01 — review was 34% of agent tokens, ~90k per reviewer run)
 
@@ -94,6 +97,7 @@ The refuter already reran the work, checked conventions and proved each test can
 ### Specs, bugs and shared resources
 
 - A UI feature gets a mockup on a Design-canvas artifact, approved by Cooper, before any builder is dispatched. Each artboard has light/dark and state tweaks, and the builder's spec names the approved artboards as the visual spec. On 18055 the mockup round settled the layout, overlaps, locked states and flyout before any code, and the later design feedback (from Ira and Darius) was CSS-only.
+- A spec for a visual check names the states to look at and has the builder seed each one, not just open pages. Examples: a theme pass, dark mode, a restyle; states such as a booked appointment, a locked block, a +N overlap, an open flyout. The PR 6323 theme pass captured 45 screenshots of empty calendars, so the locked stripes, drag states and flyout went unchecked under the themes.
 - A spec whose feature acts on a group (a multi-pet reservation, linked records) walks one non-first member through the server's rule. The 18055 spec said "lift the pets together" but not which arrival the stale check compares, so a second pet's drag was always refused; only the full review panel caught it.
 - A spec for a search, filter or lookup UI lists the three inputs staff will type most (a partial number, a phone's last 4, part of an email) and walks each one through the planned matching rules to the result it shows. It also checks every new placeholder and label against its rendered width. Every review gate passed PR 6243, then Cooper's first live test found that a partial reservation number listed only invoices, that email needed an "@", and that the placeholder was cut off. The day-1 data already showed invoice numbers embed the reservation number.
 - A test-coverage spec says "hook-only view edits (`data-testid`/`id` attributes) are in scope". Saying "no product code" made a builder skip hooks that the repo rules require in the same PR.
