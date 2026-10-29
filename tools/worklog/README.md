@@ -1,6 +1,6 @@
 # worklog
 
-Logs which ticket each Claude Code session works on, and what it did, so the day can be pasted into portal.cosairus.com/Work (15-minute grid).
+Logs which ticket each Claude Code session works on, and what it did, so the day can be pasted into a time-entry portal (15-minute grid).
 
 ## How it works
 

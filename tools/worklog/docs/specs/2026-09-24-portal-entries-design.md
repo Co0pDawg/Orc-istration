@@ -2,7 +2,7 @@
 
 ## Goal
 
-At the end of the day, `worklog.ps1` prints lines that paste straight into portal.cosairus.com/Work: start, end, hours, a bare ticket number (its own portal field), and a one-sentence description of what was actually done.
+At the end of the day, `worklog.ps1` prints lines that paste straight into the time-entry portal: start, end, hours, a bare ticket number (its own portal field), and a one-sentence description of what was actually done.
 
 ## Decisions (Cooper, 2026-09-24)
 
