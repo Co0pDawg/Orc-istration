@@ -38,6 +38,13 @@ Every orchestrated task goes on the live board, in every project, so Cooper can 
 - **Start:** before the first dispatch, create the session doc and one card per ticket or task in a single batch.
 - **During:** write at each dispatch, check-in, report, rework and commit. Run a heartbeat on any dispatch expected to run past ~30 min.
 - **Finish:** mark the session Done with `completed` when the task ends, including when it is abandoned or handed off.
+- **Durable-rules check (before Done, every orchestrated task):**
+  1. List what the run taught that should outlive it: reusable patterns, feedback that generalises, rule-shaped review findings, traps, process lessons.
+  2. Drop what the repo's mapped docs already hold.
+  3. Ask Cooper with one multiSelect `AskUserQuestion` which to write down.
+  4. Write each picked rule where it bites: the repo doc on the branch, the skill (with a version bump), or this file. Then report what was written and what was declined.
+  5. Never wait to be asked. On 18055 the flyout, drag and write-path rules were written only after he asked.
+  - In Petsoft, `/start` Step 11.5 runs this check.
 - The protocol (fields, which write at which moment, the ArtifactData recipe) is the "Writing protocol" section of `~/.claude/orchestration/board/README.md`. Read it at the start of each orchestrated task; it is the single source.
 - Board writes are orchestrator work, like ticket hygiene: the orchestrator makes them between dispatches and never hands them to a builder. A failed board write is reported once and never blocks the task.
 - The page's code lives in the same folder (git repo, private GitHub `Co0pDawg/Orc-Dashboard`). Data changes never need a republish.
