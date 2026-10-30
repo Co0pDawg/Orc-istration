@@ -73,6 +73,9 @@ Orchestrator spec → `builder` → `refuter` → orchestrator.
 - When a builder reports a behaviour finding that contradicts an earlier builder or refuter, the orchestrator reads the code and the fixture itself before speccing a fix — the last one was a fixture artefact and cost only a comment.
 - A cross-cutting rule (e.g. "null weight reads as 0 lb") goes in one spec; the other spec references it. Two specs stating it independently drifted apart within one round.
 - Parallel builders: split by file ownership, one in a second worktree, and `git apply` the smaller diff onto the main one. Zero overlap both times it was used.
+  - Carry a worktree's changes with `git diff HEAD --binary`, never plain `git diff`, which drops staged deletions. On 18200, 11 deleted files went missing from a moved diff.
+  - Never `git stash` in a worktree. Every worktree shares one stash stack. On 2026-10-29 a `stash push` failed silently, and the `stash pop` after it applied another branch's stash ("17660 B-F").
+- Record the PID of every app or test host you start, and stop only that PID. Stopping by command-line match killed a builder's app on port 7399.
 - Live-app verification (Playwright, browser checks) gets its own builder in its own worktree with its own DB copy, so it never shares build output with a code builder.
 - Keep the machine awake (Windows: `SetThreadExecutionState` with `[uint32]2147483651` in a background loop) from the first long dispatch until the last dispatch's results are in, not until the work "looks done". Stopping it at midnight on 2026-10-28 let Modern Standby hang a builder's Playwright run for 2 h 48 m.
 - A test that fails in Arrange on a page-load timeout while another app or builder shares the same DB copy is contention until a rerun says otherwise: rerun it alone before treating it as a failure (4 of 4 passed alone on 2026-10-29).
