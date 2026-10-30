@@ -37,6 +37,7 @@ Every orchestrated task goes on the live board, in every project, so Cooper can 
 
 - **Start:** before the first dispatch, create the session doc and one card per ticket or task in a single batch.
 - **During:** write at each dispatch, check-in, report, rework and commit. Run a heartbeat on any dispatch expected to run past ~30 min.
+  - A builder round added after the start (review fixes, a follow-up) gets its own card before it is dispatched. On 18216 the review-fix round ran cardless until Cooper asked.
 - **Finish:** mark the session Done with `completed` when the task ends, including when it is abandoned or handed off.
 - **Durable-rules check (before Done, every orchestrated task):**
   1. List what the run taught that should outlive it: reusable patterns, feedback that generalises, rule-shaped review findings, traps, process lessons.
