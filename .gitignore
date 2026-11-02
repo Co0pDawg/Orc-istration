@@ -22,7 +22,6 @@
 # Own skills only (synced and plugin skills reinstall themselves)
 !/skills/
 /skills/*
-!/skills/peer-review/
 
 # Setup docs: restore guide and outlines for ops automation and project memory
 !/docs/

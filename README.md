@@ -10,7 +10,6 @@ Public repo (`Co0pDawg/Orc-istration`) rooted at `~/.claude`. It holds the Claud
 | `settings.json` | Permissions, hooks, status line, `enabledPlugins`, `extraKnownMarketplaces`, model settings |
 | `agents/*.md` | Roster: builder, debugger, refuter, researcher, scout |
 | `orchestration/README.md` | Cost-log format and review questions |
-| `skills/peer-review/` | Own skill (SKILL.md, score.sh); synced and plugin skills are not tracked |
 | `docs/ops-automation.md` | Outline for unattended `claude -p` jobs |
 | `docs/project-memory.md` | Outline for per-project memory |
 | `tools/peon/peon-hook.ps1` | The single peon-ping hook entry: skips headless runs, then runs `hooks/peon-ping/peon.ps1` |
