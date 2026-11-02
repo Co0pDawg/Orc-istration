@@ -77,6 +77,7 @@ Orchestrator spec → `builder` → `refuter` → orchestrator.
 - Parallel builders: split by file ownership, one in a second worktree, and `git apply` the smaller diff onto the main one. Zero overlap both times it was used.
   - Carry a worktree's changes with `git diff HEAD --binary`, never plain `git diff`, which drops staged deletions. On 18200, 11 deleted files went missing from a moved diff.
   - Never `git stash` in a worktree. Every worktree shares one stash stack. On 2026-10-29 a `stash push` failed silently, and the `stash pop` after it applied another branch's stash ("17660 B-F").
+- In Git Bash with `MSYS_NO_PATHCONV=1`, native tools (`git -C`, `python`, `pip --target`) misread `/c/...` paths. Pass them `C:/...`. On 2026-11-02 this created a stray folder at the drive root and made a force-push fail.
 - Record the PID of every app or test host you start, and stop only that PID. Stopping by command-line match killed a builder's app on port 7399.
 - Live-app verification (Playwright, browser checks) gets its own builder in its own worktree with its own DB copy, so it never shares build output with a code builder.
 - Keep the machine awake (Windows: `SetThreadExecutionState` with `[uint32]2147483651` in a background loop) from the first long dispatch until the last dispatch's results are in, not until the work "looks done". Stopping it at midnight on 2026-10-28 let Modern Standby hang a builder's Playwright run for 2 h 48 m.
@@ -118,6 +119,8 @@ The refuter already reran the work, checked conventions and proved each test can
 ## Versioning the setup
 
 `~/.claude` is a git repo (public GitHub `Co0pDawg/Orc-istration`) with an allow-list `.gitignore`. This file, `settings.example.json`, `agents/*.md`, `orchestration/README.md` and `tools/` are tracked; transcripts, credentials, memory, plugins, `settings.json`, the cost logs and `board.local.md` are not (the repo is public). After changing a tracked file, commit and push it in the same session; `README.md` there covers restoring and tracking a new file. The board is its own repo (`orchestration/board`, `Co0pDawg/Orc-Dashboard`).
+
+When anything leaves a public repo's allow-list, scan all of that repo's history for people's names and internal terms, not just the current files. Untracking keeps the old commits: on 2026-11-02, 139 cost logs were found in history this way, long after they stopped being tracked.
 
 ## Orchestration cost log
 
