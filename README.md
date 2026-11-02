@@ -7,7 +7,7 @@ Public repo (`Co0pDawg/Orc-istration`) rooted at `~/.claude`. It holds the Claud
 | Path | What it is |
 |---|---|
 | `CLAUDE.md` | Global rulebook: roster, marching orders, build loop, board, cost log, ticket hygiene |
-| `settings.json` | Permissions, hooks, status line, `enabledPlugins`, `extraKnownMarketplaces`, model settings |
+| `settings.example.json` | Hooks, status line, `enabledPlugins`, `extraKnownMarketplaces`, model settings, with no permissions and `<you>` in place of the user name |
 | `agents/*.md` | Roster: builder, debugger, refuter, researcher, scout |
 | `orchestration/README.md` | Cost-log format and review questions |
 | `docs/ops-automation.md` | Outline for unattended `claude -p` jobs |
@@ -68,17 +68,16 @@ If git reports "dubious ownership" (folder created by another account or an elev
 git config --global --add safe.directory C:/Users/<user>/.claude
 ```
 
-Back up any existing `CLAUDE.md` or `settings.json` first, because `checkout -f` replaces them. Then clone the board repo into `orchestration/board`.
+Back up any existing `CLAUDE.md` first, because `checkout -f` replaces it. Copy `settings.example.json` to `settings.json` and replace `<you>` with your user name; `settings.json` is not tracked, because its allow list collects local paths and one-off commands. Then clone the board repo into `orchestration/board`.
 
 ## Not in the repo (reinstall or recreate)
 
-- Plugins and marketplaces named in `settings.json`: `enabledPlugins` lists pr-review-toolkit, frontend-design, superpowers, code-review, code-simplifier, mattpocock-skills (all from `claude-plugins-official`) and ponytail; `extraKnownMarketplaces` adds the `ponytail` marketplace from GitHub `DietrichGebert/ponytail`. Install via `/plugin`.
+- Plugins and marketplaces named in `settings.example.json`: `enabledPlugins` lists pr-review-toolkit, frontend-design, superpowers, code-review, code-simplifier, mattpocock-skills (all from `claude-plugins-official`) and ponytail; `extraKnownMarketplaces` adds the `ponytail` marketplace from GitHub `DietrichGebert/ponytail`. Install via `/plugin`.
 - Status line: `statusLine.command` points into `plugins/cache/ponytail/...`, so it works only after the ponytail plugin is installed. The version in the path may need updating.
 - peon-ping (sound alerts, Orc Peon pack by default): install it into `hooks/peon-ping/`, then set `"default_pack": "peon"` and `"enabled": true` in its `config.json`, and turn every category off except `input.required`, so it sounds only for action items (approvals, questions), never for turn ends or reports you would learn to tune out. Its installer adds its own hook entries to `settings.json`; delete them and keep only the async `tools/peon/peon-hook.ps1` entries on PermissionRequest and Notification. The installer's set registers both `peon.ps1` and `peon.sh` on every event, including each tool call, so sounds play twice and subagent tool calls flood the transcript with hook lines. The wrapper also stays silent in headless runs (`claude -p`). Without peon-ping installed, the wrapper does nothing.
 - Credentials: log in again (`/login`); also `az login` and `gh auth login` if used.
 - Project memory: `projects/<project>/memory/` is not tracked. See `docs/project-memory.md`.
 - Scheduled tasks and their scripts (`scripts/`, `cleanup/`, `buildwatch/`): not tracked; see `docs/ops-automation.md`. Task Scheduler entries must be recreated by hand.
-- Absolute paths in `settings.json` contain the user name; edit them if the new account differs. That includes the three worklog hooks (`tools/worklog/log-event.ps1`).
 - The worklog's 15-minute sync task: run `pwsh -NoProfile -File ~/.claude/tools/worklog/register-timeline-task.ps1` once. It and `worklog.ps1` look for `ado.ps1` at `C:\src\AcmeApp\.claude\scripts\ado.ps1`; set `WORKLOG_ADO` if your AcmeApp checkout lives elsewhere.
 
 ## Contributing
