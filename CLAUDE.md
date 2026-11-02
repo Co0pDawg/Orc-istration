@@ -117,7 +117,7 @@ The refuter already reran the work, checked conventions and proved each test can
 
 ## Versioning the setup
 
-`~/.claude` is a git repo (public GitHub `Co0pDawg/Orc-istration`) with an allow-list `.gitignore`. This file, `settings.json`, `agents/*.md`, `orchestration/README.md` and `tools/` are tracked; transcripts, credentials, memory, plugins, the cost logs and `board.local.md` are not (the repo is public). After changing a tracked file, commit and push it in the same session; `README.md` there covers restoring and tracking a new file. The board is its own repo (`orchestration/board`, `Co0pDawg/Orc-Dashboard`).
+`~/.claude` is a git repo (public GitHub `Co0pDawg/Orc-istration`) with an allow-list `.gitignore`. This file, `settings.example.json`, `agents/*.md`, `orchestration/README.md` and `tools/` are tracked; transcripts, credentials, memory, plugins, `settings.json`, the cost logs and `board.local.md` are not (the repo is public). After changing a tracked file, commit and push it in the same session; `README.md` there covers restoring and tracking a new file. The board is its own repo (`orchestration/board`, `Co0pDawg/Orc-Dashboard`).
 
 ## Orchestration cost log
 

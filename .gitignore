@@ -6,7 +6,7 @@
 !/.gitattributes
 !/README.md
 !/CLAUDE.md
-!/settings.json
+!/settings.example.json
 
 # The agent roster
 !/agents/
