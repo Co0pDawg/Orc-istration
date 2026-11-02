@@ -18,6 +18,7 @@ Rules:
 Board progress (only when the orders include a `BOARD:` line with an artifact URL and a card id):
 - Post 3 to 6 milestone lines to that card, and never to the session doc. Load the tool with ToolSearch `select:ArtifactData` (if absent, `select:mcp__claude-artifacts__db_get,mcp__claude-artifacts__db_write` with the UUID slug the brief gives), then `get` `cards/<card id>`. Next, `update` it with `progress` set to the existing array plus `{at, text}`, pinned with `if_version`; on a version conflict, re-get and retry once. Take `at` from Bash `date -Iseconds`.
 - Post at: diff read (files, callers checked), build rerun, tests rerun (n/m pass), mutation result, verdict. Each line is one fact with numbers, under 80 characters.
+- When the line ends in `stage <label>`, move that stage in your own card writes: with your first progress line set it to `state: "active"` with `started`; with your last, set it to `done` with a short `note`, or `rework` on REWORK. `stages` is an array, so change only that entry, write the whole array back exactly as read otherwise, and pin the write; on a version conflict, re-get and retry. Never set `tokens`. With no stage named, post progress only.
 - A board write never blocks or changes the verdict. If the tool is missing or refused, skip it.
 
 Output (max 40 lines):

@@ -27,7 +27,7 @@ Always pass `subagent_type`. A bare Agent call silently inherits the session mod
 7. Known: facts already established, so the agent does not rediscover them.
 8. Scratch path: `<session scratchpad>/<agent>-<topic>.md` for anything over the cap. The next agent reads the file; the report to the orchestrator is the path plus a short summary.
 9. Data precondition (builders and refuters): name the rows or paths the feature depends on (which senders populate CUSTOMER_ID, which users have two facilities) and require the agent to query them, not exercise one seeded row. The loop verifies the spec; this line is what makes the spec verify the requirement.
-10. Board (builders and refuters): `BOARD: <board URL> card <card id>`, so the agent posts its milestones to its card (see Orchestration Board).
+10. Board (builders and refuters): `BOARD: <board URL> card <card id> stage <label>`, so the agent posts its milestones and moves its own stage on its card (see Orchestration Board).
 
 ## Orchestration Board
 
@@ -48,7 +48,7 @@ Every orchestrated task goes on the live board, in every project, so Cooper can 
   - In Petsoft, `/start` Step 11.5 runs this check.
 - Every hours roll-up (`worklog.ps1 <date>`, in any project) ends by running `~/.claude/tools/worklog/sync-timeline.ps1 -Date <date> -Force` and uploading the pending files to the board (worklog README "Uploading"), so the Time page matches the roll-up without a "sync my timeline".
 - The protocol (fields, which write at which moment, the ArtifactData recipe) is the "Writing protocol" section of `~/.claude/orchestration/board/README.md`. Read it at the start of each orchestrated task; it is the single source.
-- Board writes are orchestrator work, like ticket hygiene: the orchestrator makes them between dispatches and never hands them to a builder. A failed board write is reported once and never blocks the task.
+- The session doc and `tokens` are orchestrator work, like ticket hygiene: the orchestrator writes them between dispatches and never hands them to a builder. Agents write only their own card: its progress lines and the stage named in their `BOARD:` line. A hook (`tools/board-reminder.ps1`) reminds the orchestrator to update the session when an agent finishes, on its next dispatch, board write or prompt. A failed board write is reported once and never blocks the task.
 - The page's code lives in the same folder (git repo, public GitHub `Co0pDawg/Orc-Dashboard`). Data changes never need a republish.
 
 ## Build loop

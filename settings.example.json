@@ -47,6 +47,15 @@
             "async": true
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\<you>\\.claude\\tools\\board-reminder.ps1\" -Mode relay",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -67,6 +76,16 @@
           {
             "type": "command",
             "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\<you>\\.claude\\tools\\worklog\\board-title.ps1\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Agent|ArtifactData|mcp__claude-artifacts__db_.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\<you>\\.claude\\tools\\board-reminder.ps1\" -Mode relay",
             "timeout": 10
           }
         ]
@@ -118,6 +137,17 @@
             "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\<you>\\.claude\\tools\\peon\\peon-nag.ps1\" -Mode start",
             "timeout": 10,
             "async": true
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\<you>\\.claude\\tools\\board-reminder.ps1\" -Mode mark",
+            "timeout": 10
           }
         ]
       }
