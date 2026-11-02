@@ -49,7 +49,7 @@ Every orchestrated task goes on the live board, in every project, so Cooper can 
 - Every hours roll-up (`worklog.ps1 <date>`, in any project) ends by running `~/.claude/tools/worklog/sync-timeline.ps1 -Date <date> -Force` and uploading the pending files to the board (worklog README "Uploading"), so the Time page matches the roll-up without a "sync my timeline".
 - The protocol (fields, which write at which moment, the ArtifactData recipe) is the "Writing protocol" section of `~/.claude/orchestration/board/README.md`. Read it at the start of each orchestrated task; it is the single source.
 - Board writes are orchestrator work, like ticket hygiene: the orchestrator makes them between dispatches and never hands them to a builder. A failed board write is reported once and never blocks the task.
-- The page's code lives in the same folder (git repo, private GitHub `Co0pDawg/Orc-Dashboard`). Data changes never need a republish.
+- The page's code lives in the same folder (git repo, public GitHub `Co0pDawg/Orc-Dashboard`). Data changes never need a republish.
 
 ## Build loop
 
