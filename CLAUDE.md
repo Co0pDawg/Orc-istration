@@ -102,6 +102,7 @@ The refuter already reran the work, checked conventions and proved each test can
 - **Full tier.** Use it for anything else: product code, schema or SQL, config, money or security paths, or no refuter ACCEPT. Run every agent the skill selects, staged 3+3.
 - **Escalate.** If the light-tier agent or the orchestrator's diff read finds anything beyond doc wording, run the full tier.
 - **Nits** (suggestion/nit severity) get fixed by the orchestrator inline only when cheap and in a file already in the diff. Otherwise they are logged `not-actioned`. A builder round is never spent on nits alone, and a rerun is not triggered for a comment-only change; rebuild instead.
+- **Cheap reviewers.** In a full-tier run, pass `model: "sonnet"` when dispatching `secondary-artifacts`, `type-design-analyzer` and `code-simplifier`; the skill itself stays unpinned. On PR 6372 those three raised only suggestions and nits. This rests on that one run, and one of those suggestions was a real 500 (a 12/31/9999 end date), so drop the override if a Sonnet run misses something like it.
 
 ### Specs, bugs and shared resources
 
