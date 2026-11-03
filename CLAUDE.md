@@ -87,6 +87,7 @@ Orchestrator spec → `builder` → `refuter` → orchestrator.
 - When SQL logins time out or report "insufficient memory in the buffer pool", check free RAM before blaming the app. Run `dotnet build-server shutdown` to free the idle MSBuild and compiler servers.
   - Keep at most one test host and one builder app running alongside Cooper's own app and browsers.
   - On 2026-10-29, 1 GB of 32 GB was free and every screenshot and query hung.
+- `publish_files` attaches a file only by the path it resolves to: the long path in its real casing, not the scratchpad's 8.3 `COOPER~1.DAV` form or a differently cased folder. On 18242 it refused two tries; the second refusal named the path to use.
 
 ### Pre-PR review tier (learned 2026-09-30 to 10-01 — review was 34% of agent tokens, ~90k per reviewer run)
 
