@@ -328,8 +328,13 @@ Check "an action on another day is left out" (-not $elsewhen)
 $env:PATH = "$(Join-Path $dir 'bin');$env:PATH"; $env:WORKLOG_NOSUMMARY = $null; $env:WORKLOG_ADO = "$PSScriptRoot\test\fake-ado.ps1"
 $env:WORKLOG_FAKE_ACTIONS = "1"
 $acted = Rows (& $exe -NoProfile -File "$PSScriptRoot\worklog.ps1" 2026-01-07 3>$null 2>$null)
+@"
+15:20:00,prompt,PET-12351,s1,$repo,Afternoon work
+"@ | Set-Content (Join-Path $dir "2026-01-09.csv")
+$held = Rows (& $exe -NoProfile -File "$PSScriptRoot\worklog.ps1" 2026-01-09 3>$null 2>$null)
+Check "a PR action never takes a slot a session holds" ($held.Count -eq 1 -and $held[0][3] -eq "12351")
 $env:WORKLOG_FAKE_ACTIONS = "fail"
-$failed = Rows (& $exe -NoProfile -File "$PSScriptRoot\worklog.ps1" 2026-01-07 3>$null 2>$null)
+$failed =Rows (& $exe -NoProfile -File "$PSScriptRoot\worklog.ps1" 2026-01-07 3>$null 2>$null)
 $env:WORKLOG_FAKE_ACTIONS = $null; $env:PATH = $oldPath; $env:WORKLOG_NOSUMMARY = "1"; $env:WORKLOG_ADO = $null
 Check "a PR action adds its own 15-minute slot on the PR's ticket" ($acted.Count -eq 2 -and $acted[1][0] -eq "3:15 PM" -and $acted[1][1] -eq "3:30 PM" -and $acted[1][3] -eq "17003")
 Check "a failed actions read leaves the day as it was" ($failed.Count -eq 1 -and $failed[0][3] -eq "12351")

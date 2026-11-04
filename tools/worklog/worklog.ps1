@@ -140,18 +140,6 @@ if (-not $skipAdo) {
     $events | Where-Object { $up[$_.Ticket] } | ForEach-Object { $_.Ticket = $up[$_.Ticket] }
 }
 
-if ($ExportJson) {
-    $sessions = [ordered]@{}
-    foreach ($s in $events | Group-Object Session) {
-        $sessions[$s.Name] = [ordered]@{ cwd = $s.Group[-1].Cwd; review = [bool]($s.Group | Where-Object { $_.Event -eq "prompt" -and $_.Text -match '^\s*/peer-review' }) }
-    }
-    $out = [ordered]@{ date = $Date; sessions = $sessions; events = @($events | ForEach-Object {
-        [ordered]@{ time = $_.Time.ToString("HH:mm:ss"); kind = $_.Event; session = $_.Session; ticket = $(if ($_.Ticket -in "UNKNOWN", "-", "") { $null } else { $_.Ticket }) }
-    }) }
-    ConvertTo-Json -InputObject $out -Depth 5 | Set-Content $ExportJson -Encoding UTF8
-    exit 0
-}
-
 # Session segments: events at most $GapMinutes apart. A segment without a prompt (agent notifications while away) is not time worked.
 # Built with += : @() would flatten a lone segment into its events. The trailing $null closes the last segment.
 $segments = @()
@@ -172,6 +160,7 @@ $slot = { param($t) [int][math]::Floor($t.TimeOfDay.TotalMinutes / 15) }
 $weight = @{ prompt = 3; ado = 2; az = 2; commit = 2; agent = 2 }
 $w = @{}
 foreach ($g in $segments) {
+    if ($g[0].Session -like "ado-*") { continue }
     $j = 0
     for ($s = & $slot $g[0].Time; $s -le (& $slot $g[-1].Time); $s++) {
         if (-not $w[$s]) { $w[$s] = @{} }
@@ -184,6 +173,29 @@ foreach ($s in $w.Keys | Sort-Object) {
     $max = ($w[$s].Values | Measure-Object -Maximum).Maximum
     $tied = @($w[$s].Keys | Where-Object { $w[$s][$_] -eq $max } | Sort-Object)
     $win[$s] = if ($win[$s - 1] -in $tied) { $win[$s - 1] } else { $tied[0] }
+}
+
+# A PR action counts only in a slot no session holds; the first in a slot names its ticket. The rest leave the day's events.
+$filled = @{}
+$events = @(foreach ($e in $events) {
+    if ($e.Session -like "ado-*") {
+        $s = & $slot $e.Time
+        if (-not $win.ContainsKey($s)) { $win[$s] = $e.Ticket; $filled[$s] = $true }
+        if (-not $filled[$s] -or $win[$s] -ne $e.Ticket) { continue }
+    }
+    $e
+})
+
+if ($ExportJson) {
+    $sessions = [ordered]@{}
+    foreach ($s in $events | Group-Object Session) {
+        $sessions[$s.Name] = [ordered]@{ cwd = $s.Group[-1].Cwd; review = [bool]($s.Group | Where-Object { $_.Event -eq "prompt" -and $_.Text -match '^\s*/peer-review' }) }
+    }
+    $out = [ordered]@{ date = $Date; sessions = $sessions; events = @($events | ForEach-Object {
+        [ordered]@{ time = $_.Time.ToString("HH:mm:ss"); kind = $_.Event; session = $_.Session; ticket = $(if ($_.Ticket -in "UNKNOWN", "-", "") { $null } else { $_.Ticket }) }
+    }) }
+    ConvertTo-Json -InputObject $out -Depth 5 | Set-Content $ExportJson -Encoding UTF8
+    exit 0
 }
 
 # Consecutive same-ticket slots form one entry, cut at $MaxHours (the portal caps an entry at 2 h); chunks of one run share a Block.
