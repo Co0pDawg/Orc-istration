@@ -19,6 +19,7 @@ git -C $repo -c user.email=other@t commit -q --allow-empty -m "Someone else's co
 Remove-Item Env:GIT_COMMITTER_DATE, Env:GIT_AUTHOR_DATE
 $env:WORKLOG_DIR = $dir
 $env:WORKLOG_NOSUMMARY = "1"
+$env:WORKLOG_ACTIONS = "$PSScriptRoot\test\fake-actions.ps1"
 $env:WORKLOG_DISABLE = $null
 $exe = (Get-Process -Id $PID).Path  # hooks run under the same PowerShell as this test
 
@@ -304,6 +305,34 @@ Check "type column from wi-get" (($rows | ForEach-Object { $_[5] }) -join "," -e
 Check "Touched in ADO lists changed items not in the table" ($out -contains "Touched in ADO, no time logged: 17900")
 Check "Touched WIQL excludes items created that day" ($wiql -like "*[[]System.CreatedDate] < '2026-01-04'*")
 Check "summary lines attach only when the echoed start time matches; a mismatch stays raw" ($rows[0][4] -eq "Development: Fixed the merge conflict." -and $rows[1][4] -like "*(raw)" -and $rows[2][4] -eq "Testing: Checked the pipeline.")
+
+# --- ado-actions.ps1: only the user's own hand actions inside the day ---
+. "$PSScriptRoot\ado-actions.ps1"
+$me = @{ id = "me" }; $them = @{ id = "them" }
+function Note($author, $type, $at, $content) { [pscustomobject]@{ author = $author; commentType = $type; publishedDate = ([datetime]"2026-01-08 $at").ToUniversalTime().ToString("o"); content = $content; isDeleted = $false } }
+function Thread { [pscustomobject]@{ comments = @($args) } }
+$from = [datetime]"2026-01-08"; $to = $from.AddDays(1)
+$manual = Select-MyPrActions "me" 1 @(
+    (Thread (Note $me system "09:00:00" "Me voted 10")), (Thread (Note $them system "09:15:00" "Them voted 10")), (Thread (Note $me system "09:30:00" "Me voted 0")),
+    (Thread (Note $me text "10:00:00" "Looks good")), (Thread (Note $them text "10:15:00" "Reply")), (Thread (Note $me text "11:00:00" "Scheduled conflict sweep could not merge")),
+    (Thread (Note $me system "12:00:00" "Me updated the pull request status to Completed")), (Thread (Note $me system "13:00:00" "Policy status has been updated"))) $from $to
+Check "own votes, comments and a manual completion count; others, a vote reset, the sweep and policy events do not" (@($manual).time -join "," -eq "09:00:00,10:00:00,12:00:00")
+Check "a vote says what it was" (@($manual)[0].text -eq "Reviewed a pull request in Azure DevOps: Approved")
+$autoDone = Select-MyPrActions "me" 2 @((Thread (Note $them system "08:00:00" "Them set auto-complete")), (Thread (Note $me system "12:00:00" "Me updated the pull request status to Completed"))) $from $to
+Check "a completion on an auto-complete PR is automation" (-not $autoDone)
+$elsewhen = Select-MyPrActions "me" 3 @(Thread (Note $me text "12:00:00" "x")) $from.AddDays(1) $to.AddDays(1)
+Check "an action on another day is left out" (-not $elsewhen)
+
+# --- PR actions in the roll-up: one slot, on the PR's ticket, away from any session; a failed read warns and changes nothing ---
+"09:00:00,prompt,PET-12351,s1,$repo,Morning work" | Set-Content (Join-Path $dir "2026-01-07.csv")
+$env:PATH = "$(Join-Path $dir 'bin');$env:PATH"; $env:WORKLOG_NOSUMMARY = $null; $env:WORKLOG_ADO = "$PSScriptRoot\test\fake-ado.ps1"
+$env:WORKLOG_FAKE_ACTIONS = "1"
+$acted = Rows (& $exe -NoProfile -File "$PSScriptRoot\worklog.ps1" 2026-01-07 3>$null 2>$null)
+$env:WORKLOG_FAKE_ACTIONS = "fail"
+$failed = Rows (& $exe -NoProfile -File "$PSScriptRoot\worklog.ps1" 2026-01-07 3>$null 2>$null)
+$env:WORKLOG_FAKE_ACTIONS = $null; $env:PATH = $oldPath; $env:WORKLOG_NOSUMMARY = "1"; $env:WORKLOG_ADO = $null
+Check "a PR action adds its own 15-minute slot on the PR's ticket" ($acted.Count -eq 2 -and $acted[1][0] -eq "3:15 PM" -and $acted[1][1] -eq "3:30 PM" -and $acted[1][3] -eq "17003")
+Check "a failed actions read leaves the day as it was" ($failed.Count -eq 1 -and $failed[0][3] -eq "12351")
 
 Remove-Item -Recurse -Force $dir
 if ($fails) { "$fails FAILED"; exit 1 } else { "all passed" }

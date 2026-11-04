@@ -26,6 +26,8 @@ pwsh ~/.claude/tools/worklog/worklog.ps1            # today
 pwsh ~/.claude/tools/worklog/worklog.ps1 2026-09-22
 ```
 
+PR actions taken in Azure DevOps count as time: `ado-actions.ps1` reads the day's PR threads for the signed-in user's votes, written comments and completions, and each becomes a prompt event in its own `ado-<pr>-<HHmmss>` session, billed to the PR's ticket by the same rule as other PR evidence. Each covers only its own 15-minute slot, so the review time before a vote is not inferred. Skipped as automation under the user's identity: a completion on a PR with auto-complete set, and a comment starting "Scheduled conflict sweep". Work item edits are not counted: their revisions come mostly from sessions and auto-close cascades and cannot be told from hand edits, so they stay on the "Touched in ADO" line. To drop one action, add `ado-<pr>-<HHmmss> -` to `<date>.map`. A failed read warns and leaves the actions out.
+
 After the table (console only, not the `.txt`) come `Sessions:` (`<8-char id>  <tickets>  <first prompt>`, for writing the `.map`) and `Touched in ADO, no time logged: ...` (work items you changed that day but did not create that day, from one WIQL, minus the table's tickets).
 
 ADO calls (PR resolution, type/title/created/parent via `wi-get -Relations`, WIQL) run `pwsh -NoProfile -File` on `$env:WORKLOG_ADO` (default `C:\Development\Petsoft\.claude\scripts\ado.ps1`) with `WORKLOG_DISABLE=1`; a failed call warns and leaves that evidence unresolved. Set `WORKLOG_DIR` to redirect the log folder and `WORKLOG_NOSUMMARY=1` to skip the model call and every ADO call (both used by `test.ps1`, which also runs the ADO path against `test\fake-ado.ps1`). Run `pwsh -NoProfile -File test.ps1` (or `powershell`) to self-check.

@@ -99,6 +99,25 @@ foreach ($s in $events | Group-Object Session) {
     }
 }
 
+# PR actions taken in Azure DevOps (ado-actions.ps1). Each is a prompt in a session of its own, so it covers its own slot and no gap around it.
+if (-not $skipAdo) {
+    try {
+        $actionsScript = if ($env:WORKLOG_ACTIONS) { $env:WORKLOG_ACTIONS } else { Join-Path $PSScriptRoot "ado-actions.ps1" }
+        $old = $env:WORKLOG_DISABLE; $env:WORKLOG_DISABLE = "1"
+        $out = pwsh -NoProfile -File $actionsScript $Date 2>$null | Out-String
+        $code = $LASTEXITCODE; $env:WORKLOG_DISABLE = $old
+        if ($code) { throw "ado-actions.ps1 exited $code" }
+        $seq = @($events).Count
+        $list = $out | ConvertFrom-Json
+        $added = foreach ($a in $list) {
+            $t = PrTicket $a.pr
+            $id = "ado-$($a.pr)-$($a.time -replace ':', '')"
+            [pscustomobject]@{ Time = [datetime]"$Date $($a.time)"; Event = "prompt"; Raw = "PR-$($a.pr)*"; Ticket = $(if ($t) { $t } else { "UNKNOWN" }); Session = $id; Cwd = ""; Text = $a.text; Seq = $seq++ }
+        }
+        $events = @(@($events) + @($added) | Where-Object { $_ } | Sort-Object Time, Seq)
+    } catch { Write-Warning "ADO PR actions left out: $_" }
+}
+
 # Overrides, applied last: sessions.map (every date), then <date>.map; "<session-id-prefix> <NNNNN|->", where - drops the session.
 foreach ($mapFile in (Join-Path $logDir "sessions.map"), (Join-Path $logDir "$Date.map")) {
     if (-not (Test-Path $mapFile)) { continue }
@@ -182,7 +201,7 @@ foreach ($s in $win.Keys | Sort-Object) {
 foreach ($b in $blocks) {
     $own = @($events | Where-Object { $_.Ticket -eq $b.Ticket })
     $since = $b.Start.ToString("s"); $until = $b.End.ToString("s")
-    $commits = $own.Cwd | Sort-Object -Unique | ForEach-Object { git -C $_ log --no-merges --author="$(git -C $_ config user.email 2>$null)" --since=$since --until=$until --format=%s 2>$null }
+    $commits = $own.Cwd | Where-Object { $_ } | Sort-Object -Unique | ForEach-Object { git -C $_ log --no-merges --author="$(git -C $_ config user.email 2>$null)" --since=$since --until=$until --format=%s 2>$null }
     # Strongest evidence first, labelled so the summary leans on commits and ADO actions over chat prompts.
     $of = { param($evs, $kind, $label) $evs | Where-Object { $_.Event -eq $kind -and $_.Text } | ForEach-Object { "${label}: $($_.Text)" } }
     $facts = { param($evs) @(@($commits | ForEach-Object { "commit: $_" }) + @(& $of $evs az "ado") + @(& $of $evs ado "ado") + @(& $of $evs agent "agent") + @(& $of $evs prompt "asked") | Where-Object { $_ } | Select-Object -Unique) }
