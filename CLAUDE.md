@@ -106,6 +106,7 @@ The refuter already reran the work, checked conventions and proved each test can
 
 ### Specs, bugs and shared resources
 
+- A spec for a new action lists each role and whether it can reach the action, turn it off, and open any page an email names. On Epic 18199 the Schedule button lived only on a page rollup-only members could not open, so they could not create a schedule or stop one's emails. Two refuters and the full review panel passed it; a teammate caught it.
 - Check a PR's status right before merging work into its branch. On Epic 18199, PR 6367 completed mid-round and its branch was deleted while a merge sat unpushed; pushing it would have recreated the branch.
 - A spec for a recurring job says what happens to a missed run, a cancelled run and a failed item. On Epic 18199 two builders and two refuters passed jobs that lost a missed period and reported cancelled runs as done, until the full review panel raised them.
 - A change to an agent definition cannot be tested from the session that made it, and a headless `claude -p` run cannot approve board writes. Test it in a new session, or paste the new rule into the brief and say the definition file itself is unproven. On 18245 a test builder followed its old rules.
