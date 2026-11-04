@@ -106,6 +106,8 @@ The refuter already reran the work, checked conventions and proved each test can
 
 ### Specs, bugs and shared resources
 
+- Check a PR's status right before merging work into its branch. On Epic 18199, PR 6367 completed mid-round and its branch was deleted while a merge sat unpushed; pushing it would have recreated the branch.
+- A spec for a recurring job says what happens to a missed run, a cancelled run and a failed item. On Epic 18199 two builders and two refuters passed jobs that lost a missed period and reported cancelled runs as done, until the full review panel raised them.
 - A change to an agent definition cannot be tested from the session that made it, and a headless `claude -p` run cannot approve board writes. Test it in a new session, or paste the new rule into the brief and say the definition file itself is unproven. On 18245 a test builder followed its old rules.
 - A spec that relies on a hook confirms in the Claude Code hooks docs where the output goes before design. SubagentStop output goes to the finishing agent and keeps it running, so reaching the orchestrator takes a marker relayed by PostToolUse or UserPromptSubmit.
 - A UI feature gets a mockup on a Design-canvas artifact, approved by Cooper, before any builder is dispatched. Each artboard has light/dark and state tweaks, and the builder's spec names the approved artboards as the visual spec. On 18055 the mockup round settled the layout, overlaps, locked states and flyout before any code, and the later design feedback (from teammates) was CSS-only.
