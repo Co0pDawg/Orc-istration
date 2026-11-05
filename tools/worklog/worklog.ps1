@@ -110,6 +110,9 @@ if (-not $skipAdo) {
         $seq = @($events).Count
         $list = $out | ConvertFrom-Json
         $added = foreach ($a in $list) {
+            # A comment a session posted through ado.ps1 is that session's work, not a hand action: its pr-comment-add is logged within seconds.
+            $at = [datetime]"$Date $($a.time)"
+            if ($a.text -like "Wrote*" -and ($events | Where-Object { $_.Event -eq "ado" -and $_.Text -match "pr-comment-add -Pr $($a.pr)\b" -and [math]::Abs(($_.Time - $at).TotalSeconds) -le 120 })) { continue }
             $t = PrTicket $a.pr
             $id = "ado-$($a.pr)-$($a.time -replace ':', '')"
             [pscustomobject]@{ Time = [datetime]"$Date $($a.time)"; Event = "prompt"; Raw = "PR-$($a.pr)*"; Ticket = $(if ($t) { $t } else { "UNKNOWN" }); Session = $id; Cwd = ""; Text = $a.text; Seq = $seq++ }

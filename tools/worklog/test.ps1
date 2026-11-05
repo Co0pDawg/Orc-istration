@@ -333,6 +333,11 @@ $acted = Rows (& $exe -NoProfile -File "$PSScriptRoot\worklog.ps1" 2026-01-07 3>
 "@ | Set-Content (Join-Path $dir "2026-01-09.csv")
 $held = Rows (& $exe -NoProfile -File "$PSScriptRoot\worklog.ps1" 2026-01-09 3>$null 2>$null)
 Check "a PR action never takes a slot a session holds" ($held.Count -eq 1 -and $held[0][3] -eq "12351")
+$env:WORKLOG_FAKE_ACTIONS = "comment"
+"09:00:00,prompt,APP-12351,s1,$repo,Morning work", "15:24:10,ado,APP-12351,s2,$repo,ado.ps1 pr-comment-add -Pr 6025 -BodyFile x" | Set-Content (Join-Path $dir "2026-01-10.csv")
+$byHand = Rows (& $exe -NoProfile -File "$PSScriptRoot\worklog.ps1" 2026-01-07 3>$null 2>$null)
+$bySession = Rows (& $exe -NoProfile -File "$PSScriptRoot\worklog.ps1" 2026-01-10 3>$null 2>$null)
+Check "a hand comment fills its slot; a session's logged comment does not" ($byHand.Count -eq 2 -and $bySession.Count -eq 1)
 $env:WORKLOG_FAKE_ACTIONS = "fail"
 $failed =Rows (& $exe -NoProfile -File "$PSScriptRoot\worklog.ps1" 2026-01-07 3>$null 2>$null)
 $env:WORKLOG_FAKE_ACTIONS = $null; $env:PATH = $oldPath; $env:WORKLOG_NOSUMMARY = "1"; $env:WORKLOG_ADO = $null
