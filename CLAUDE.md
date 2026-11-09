@@ -8,13 +8,13 @@ Inline, no agent: a one-line fix, a single grep, anything under about five tool 
 
 | Agent | Model | Use for |
 |---|---|---|
-| `scout` | sonnet, high | find files, symbols, call sites; returns locations, never file bodies. Locations only: a question that decides a design goes to the orchestrator's own grep or a researcher, and one scout per question, never two with adjacent briefs |
+| `scout` | haiku | find files, symbols, call sites; returns locations, never file bodies. Locations only: a question that decides a design goes to the orchestrator's own grep or a researcher, and one scout per question, never two with adjacent briefs |
 | `researcher` | sonnet, high | read docs/source/web and report facts; unconfirmed claims marked UNVERIFIED |
 | `builder` | opus, high | implement from a written spec, run build and tests |
 | `refuter` | opus, high | review the builder's diff against the spec, rerun tests, ACCEPT or REWORK |
 | `debugger` | opus, high | root cause only, when a failure is not obvious |
 
-Always pass `subagent_type`. A bare Agent call silently inherits the session model. Pass `model:` only to override the roster for one dispatch. Repo-owned skills such as `/pre-pr-review` keep inheriting the session model; do not pin a model inside a checked-in skill.
+Always pass `subagent_type`. A bare Agent call, or any agent definition with no model, runs on Opus 5.5 at high effort through `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_SUBAGENT_EFFORT` in `settings.json`; agents marked `model: inherit` still follow the session, and built-in Explore and Plan keep their own model. Pass `model:` only to override the roster for one dispatch. Repo-owned skills such as `/pre-pr-review` keep inheriting the session model; do not pin a model inside a checked-in skill.
 
 ## Marching orders (every dispatch, in this order)
 
