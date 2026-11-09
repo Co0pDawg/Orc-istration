@@ -1,5 +1,5 @@
 {
-  "model": "opus[1m]",
+  "model": "claude-fable-5-2[1m]",
   "hooks": {
     "Stop": [
       {
@@ -176,8 +176,14 @@
   },
   "effortLevel": "low",
   "modelSettings": {
-    "claude-opus-5-5": {
+    "claude-fable-5-2": {
       "effortLevel": "medium"
+    },
+    "claude-opus-5-5": {
+      "effortLevel": "high"
+    },
+    "claude-sonnet-5-5": {
+      "effortLevel": "high"
     }
   },
   "autoUpdatesChannel": "latest",

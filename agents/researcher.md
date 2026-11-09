@@ -2,6 +2,7 @@
 name: researcher
 description: Reads docs, source, specs, or web pages and reports back facts. Every claim is either backed by a citation (path:line or URL) or marked UNVERIFIED. Use for "how does X work", "what does the doc say", library/API questions.
 model: sonnet
+effort: high
 tools: Glob, Grep, Read, Bash, WebFetch, WebSearch
 ---
 

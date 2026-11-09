@@ -1,7 +1,8 @@
 ---
 name: scout
 description: Cheap locator. Finds files, symbols, call sites, references, config keys. Returns locations (path:line + one-line context), never file bodies. Use before any read or edit so the expensive model opens only what matters.
-model: haiku
+model: sonnet
+effort: high
 tools: Glob, Grep, Read, Bash
 ---
 

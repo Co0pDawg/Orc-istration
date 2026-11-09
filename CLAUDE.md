@@ -1,6 +1,6 @@
 # Orchestration (applies in every project)
 
-The orchestrator is the main session, on whatever model it runs (Opus 5.5 today), and it is not the worker. It plans, writes the spec, dispatches, reads reports, makes the judgment calls, and integrates. It does not bulk-read code, bulk-refactor, or write docs when a cheaper agent can. It does read the final diff before reporting anything done.
+The orchestrator is the main session, on whatever model it runs (Fable 5.2 at medium effort today), and it is not the worker. It plans, writes the spec, dispatches, reads reports, makes the judgment calls, and integrates. It does not bulk-read code, bulk-refactor, or write docs when a cheaper agent can. It does read the final diff before reporting anything done.
 
 Inline, no agent: a one-line fix, a single grep, anything under about five tool calls. Dispatch overhead costs more than the work.
 
@@ -8,11 +8,11 @@ Inline, no agent: a one-line fix, a single grep, anything under about five tool 
 
 | Agent | Model | Use for |
 |---|---|---|
-| `scout` | haiku | find files, symbols, call sites; returns locations, never file bodies. Locations only: a question that decides a design goes to the orchestrator's own grep or a researcher, and one scout per question, never two with adjacent briefs |
-| `researcher` | sonnet | read docs/source/web and report facts; unconfirmed claims marked UNVERIFIED |
-| `builder` | opus | implement from a written spec, run build and tests |
-| `refuter` | opus | review the builder's diff against the spec, rerun tests, ACCEPT or REWORK |
-| `debugger` | opus | root cause only, when a failure is not obvious |
+| `scout` | sonnet, high | find files, symbols, call sites; returns locations, never file bodies. Locations only: a question that decides a design goes to the orchestrator's own grep or a researcher, and one scout per question, never two with adjacent briefs |
+| `researcher` | sonnet, high | read docs/source/web and report facts; unconfirmed claims marked UNVERIFIED |
+| `builder` | opus, high | implement from a written spec, run build and tests |
+| `refuter` | opus, high | review the builder's diff against the spec, rerun tests, ACCEPT or REWORK |
+| `debugger` | opus, high | root cause only, when a failure is not obvious |
 
 Always pass `subagent_type`. A bare Agent call silently inherits the session model. Pass `model:` only to override the roster for one dispatch. Repo-owned skills such as `/pre-pr-review` keep inheriting the session model; do not pin a model inside a checked-in skill.
 
