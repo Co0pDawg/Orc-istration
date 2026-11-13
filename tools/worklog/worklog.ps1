@@ -31,7 +31,7 @@ $events = Get-Content $file | ForEach-Object {
 # ADO goes through AcmeApp's ado.ps1 (pwsh, JSON on stdout, exit 1 on failure); every call is skipped with WORKLOG_NOSUMMARY.
 # WORKLOG_DISABLE (inherited) keeps anything it starts from logging itself.
 $skipAdo = $env:WORKLOG_NOSUMMARY -eq "1"
-$adoScript = if ($env:WORKLOG_ADO) { $env:WORKLOG_ADO } else { "C:\src\AcmeApp\.claude\scripts\ado.ps1" }
+$adoScript = if ($env:WORKLOG_ADO) { $env:WORKLOG_ADO } elseif ($env:ORC_ADO_SCRIPT) { $env:ORC_ADO_SCRIPT } else { "C:\src\your-repo\.claude\scripts\ado.ps1" }
 function Ado {
     $old = $env:WORKLOG_DISABLE; $env:WORKLOG_DISABLE = "1"
     $out = pwsh -NoProfile -File $adoScript @args 2>$null | Out-String

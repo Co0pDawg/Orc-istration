@@ -30,7 +30,7 @@ PR actions taken in Azure DevOps count as time: `ado-actions.ps1` reads the day'
 
 After the table (console only, not the `.txt`) come `Sessions:` (`<8-char id>  <tickets>  <first prompt>`, for writing the `.map`) and `Touched in ADO, no time logged: ...` (work items you changed that day but did not create that day, from one WIQL, minus the table's tickets).
 
-ADO calls (PR resolution, type/title/created/parent via `wi-get -Relations`, WIQL) run `pwsh -NoProfile -File` on `$env:WORKLOG_ADO` (default `C:\src\AcmeApp\.claude\scripts\ado.ps1`) with `WORKLOG_DISABLE=1`; a failed call warns and leaves that evidence unresolved. Set `WORKLOG_DIR` to redirect the log folder and `WORKLOG_NOSUMMARY=1` to skip the model call and every ADO call (both used by `test.ps1`, which also runs the ADO path against `test\fake-ado.ps1`). Run `pwsh -NoProfile -File test.ps1` (or `powershell`) to self-check.
+ADO calls (PR resolution, type/title/created/parent via `wi-get -Relations`, WIQL) run `pwsh -NoProfile -File` on `$env:WORKLOG_ADO`, else `$env:ORC_ADO_SCRIPT` (default `C:\src\your-repo\.claude\scripts\ado.ps1`; set `ORC_ADO_SCRIPT` to your repo's `ado.ps1`) with `WORKLOG_DISABLE=1`; a failed call warns and leaves that evidence unresolved. Set `WORKLOG_DIR` to redirect the log folder and `WORKLOG_NOSUMMARY=1` to skip the model call and every ADO call (both used by `test.ps1`, which also runs the ADO path against `test\fake-ado.ps1`). Run `pwsh -NoProfile -File test.ps1` (or `powershell`) to self-check.
 
 ## Install
 

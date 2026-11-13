@@ -26,7 +26,7 @@ function Select-MyPrActions($MeId, $PrId, $Threads, [datetime]$From, [datetime]$
 # Dot-sourced by test.ps1 for the pure function above: stop before any ADO call.
 if ($MyInvocation.InvocationName -eq ".") { return }
 
-$adoScript = if ($env:WORKLOG_ADO) { $env:WORKLOG_ADO } else { "C:\src\AcmeApp\.claude\scripts\ado.ps1" }
+$adoScript = if ($env:WORKLOG_ADO) { $env:WORKLOG_ADO } elseif ($env:ORC_ADO_SCRIPT) { $env:ORC_ADO_SCRIPT } else { "C:\src\your-repo\.claude\scripts\ado.ps1" }
 . $adoScript
 $dayStart = [datetime]$Date; $dayEnd = $dayStart.AddDays(1)
 $meId = (Invoke-Ado -Uri "$orgUrl/_apis/connectionData").authenticatedUser.id

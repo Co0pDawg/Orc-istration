@@ -16,7 +16,7 @@ $ErrorActionPreference = "Stop"
 $env:WORKLOG_DISABLE = "1"; $env:WORKLOG_NOSUMMARY = $null; $env:GIT_TERMINAL_PROMPT = "0"
 $logDir = if ($env:WORKLOG_DIR) { $env:WORKLOG_DIR } else { Join-Path $HOME ".claude\worklog" }
 $state = if ($env:TIMELINE_SYNC_STATE) { $env:TIMELINE_SYNC_STATE } else { Join-Path $HOME ".claude\timeline-sync" }
-$adoScript = if ($env:WORKLOG_ADO) { $env:WORKLOG_ADO } else { "C:\src\AcmeApp\.claude\scripts\ado.ps1" }
+$adoScript = if ($env:WORKLOG_ADO) { $env:WORKLOG_ADO } elseif ($env:ORC_ADO_SCRIPT) { $env:ORC_ADO_SCRIPT } else { "C:\src\your-repo\.claude\scripts\ado.ps1" }
 $pending = Join-Path $state "pending"
 New-Item -ItemType Directory -Force $pending | Out-Null
 function Log($m) { $m; Add-Content (Join-Path $state "sync.log") "$((Get-Date).ToString('s')) $m" }

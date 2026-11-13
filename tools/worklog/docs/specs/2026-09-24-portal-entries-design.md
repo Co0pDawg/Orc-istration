@@ -103,7 +103,7 @@ Local prompts say *when*; ADO actions, PR links and commits say *which ticket*. 
 3. `<logDir>/<date>.map` overrides: lines `<session-id-prefix> <NNNNN|->`; `-` drops the session. Applied last.
 4. Blocks, fold, split, snapping and summaries run unchanged on the re-ticketed events.
 5. After the table (console only, not the `.txt`): a `Sessions:` list (`<8-char id>  <ticket>  <first real prompt, 60 chars>`) for writing the map, and `Touched in ADO, no time logged: ...` from one WIQL (`[System.ChangedBy] = @Me` and `[System.ChangedDate]` within the date) minus tickets already in the table.
-6. ADO calls (PR resolution, type/title lookup, WIQL) go through `ado.ps1` at `$env:WORKLOG_ADO` (default `C:\src\AcmeApp\.claude\scripts\ado.ps1`), all skipped with `WORKLOG_NOSUMMARY=1`; a failed call warns and leaves that evidence unresolved.
+6. ADO calls (PR resolution, type/title lookup, WIQL) go through `ado.ps1` at `$env:WORKLOG_ADO` (default `C:\src\your-repo\.claude\scripts\ado.ps1`), all skipped with `WORKLOG_NOSUMMARY=1`; a failed call warns and leaves that evidence unresolved.
 
 ## Quarter-hour allocation, parent roll-up, global map (2026-10-05)
 

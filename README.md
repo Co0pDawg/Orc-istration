@@ -79,7 +79,7 @@ Back up any existing `CLAUDE.md` first, because `checkout -f` replaces it. Copy 
 - Credentials: log in again (`/login`); also `az login` and `gh auth login` if used.
 - Project memory: `projects/<project>/memory/` is not tracked. See `docs/project-memory.md`.
 - Scheduled tasks and their scripts (`scripts/`, `cleanup/`, `buildwatch/`): not tracked; see `docs/ops-automation.md`. Task Scheduler entries must be recreated by hand.
-- The worklog's 15-minute sync task: run `pwsh -NoProfile -File ~/.claude/tools/worklog/register-timeline-task.ps1` once. It and `worklog.ps1` look for `ado.ps1` at `C:\src\AcmeApp\.claude\scripts\ado.ps1`; set `WORKLOG_ADO` if your AcmeApp checkout lives elsewhere.
+- The worklog's 15-minute sync task: run `pwsh -NoProfile -File ~/.claude/tools/worklog/register-timeline-task.ps1` once. It and `worklog.ps1` look for `ado.ps1` at `$env:ORC_ADO_SCRIPT` (default `C:\src\your-repo\.claude\scripts\ado.ps1`); set `ORC_ADO_SCRIPT` or `WORKLOG_ADO` if your AcmeApp checkout lives elsewhere.
 
 ## Contributing
 
