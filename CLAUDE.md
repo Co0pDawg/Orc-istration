@@ -62,6 +62,7 @@ Orchestrator spec → `builder` → `refuter` → orchestrator.
 - Run-and-commit work stays on Opus builders, or the brief says to wait for the run to finish: a Sonnet builder handed back mid-run and the orchestrator had to finish it.
 - Batch related fixes into one builder dispatch so large files are read once.
 - An agent that drifts off its orders gets stopped (TaskStop), not waited on.
+- After stopping a builder (a pause, a TaskStop), report its state from its last actions (notes file, logs, `git status`, any database it upgraded), not from the plan. It may be mid-mutation, so the resume brief says to check for a leftover mutation and restore from the builder's backups first. On 18356 the pause report said the database was untouched; the builder had already upgraded it and left a half-applied mutation.
 - Ultracode and Workflow stay off unless explicitly asked; when on, cap the agent count in the script.
 - Decisions and progress go into a handoff doc (`docs/superpowers/handoffs/` when the repo has it) so the next session reads the file instead of rebuilding context.
 - Keep replies and agent reports short. Ask for detail when it is needed, not by default.
@@ -69,6 +70,7 @@ Orchestrator spec → `builder` → `refuter` → orchestrator.
 ### Test runs (learned on PR 5896, 2026-09-14 — ~3 h of a 7 h loop was re-running suites)
 
 - Builders run only the filtered tests for what they touched. The orchestrator runs each full test project **once**, at the end, in the background, while the refuter does its static pass — never per builder, never per refuter. "The end" is after the review's fix round: on PR 6393 they ran during the review panel, the panel forced code changes, and they ran again.
+  - Check a spec's test filter against the real class names before dispatch (`dotnet test --list-tests --filter ...`, or a grep of the test classes the diff touches). On 18356 the fix-round filter `~ChangeRequest` missed two controller test classes; the builder noticed and widened it.
 - Full runs go by project name, sequentially. Never `dotnet test` a solution that contains a Playwright/UI project (AcmeApp's `UITests` waits on an app forever). Two vstest hosts in one worktree at once has killed a run silently — serialise.
 - A refuter reruns only targeted and mutation tests, `--no-build` where possible.
 - When a builder's notification is late or its task id has vanished, read its report file and run logs on disk; do not wait on the notification.
@@ -113,6 +115,7 @@ The refuter already reran the work, checked conventions and proved each test can
 - When a push widens an open PR's scope, update its description in the same step, before asking about anything else. On 18193 PR 6397 completed while the update waited for approval, so its description never mentions time off.
 - A spec for a recurring job says what happens to a missed run, a cancelled run and a failed item. On Epic 18199 two builders and two refuters passed jobs that lost a missed period and reported cancelled runs as done, until the full review panel raised them.
 - A spec for a new write path into a table lists the procs and queries that read that table and walks each one. On 18192 Add punch could save an open punch that then blocked the employee's clock-in; two rounds passed it until the review panel read the clock-in proc.
+  - The walk covers what each reader assumes about the row (its length, its lifetime), and every caller of a shared proc, the Mobile API included. On 18356 the plan listed the readers of a long-lived timeslot hold, but availability sized a hold by the searched service and the mobile claim had no catch for the refusal; six refuter passes missed both, and the full review panel and the fix-round refuter caught them.
 - A spec that reuses an existing event, email or notice names what that event actually sends, read from its handler. On 18274 approval reused `ReservationUpdated`, whose only email is the reminder "appointment has moved" one; two refuters passed it and only the live pass caught it.
 - A spec for a feature that closes or blocks on other actions lists every path that changes the record (for a reservation: check-in, guest removal, extend, itinerary edits, cancel) and says for each whether the customer is told. On 18274 check-in and guest removal were missed until the full review panel; a removed guest's add-ons would have been re-billed on approval.
 - A refuter's database probe runs every mutating action inside a transaction it rolls back, and reads the row's state before acting on it. On 18274 a refuter ran Cancel for real on a seeded reservation because its request was Denied, not Pending, and could not fully restore it.
