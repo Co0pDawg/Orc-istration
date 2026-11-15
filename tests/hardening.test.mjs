@@ -54,6 +54,42 @@ test('V1: a value option without a value fails and writes nothing', async () => 
   }
 });
 
+test('V1: --key=value is honoured, an empty or unknown option is an error, and the real home is never the fallback', () => {
+  const target = tempDir('eqhome');
+  const ok = isolated(['install', '--tool', 'codex', `--home=${target}`, '--apply']);
+  assert.equal(ok.code, 0, ok.err);
+  assert.ok(fs.existsSync(path.join(target, '.codex', 'AGENTS.md')), '--home=<dir> is the install target');
+  assert.deepEqual(fs.readdirSync(ok.fakeHome), [], 'scratch home stays empty');
+  for (const argv of [
+    ['install', '--tool', 'codex', '--home=', '--apply'],
+    ['install', '--tool', 'codex', '--home=--apply'],
+    ['install', '--tool', 'codex', '--hoem', target, '--apply'],
+    ['install', '--tool', 'codex', '--apply=yes', '--home', target],
+    ['install', '--tool=', '--home', target, '--apply'],
+  ]) {
+    const r = isolated(argv);
+    assert.equal(r.code, 1, argv.join(' '));
+    assert.match(r.err, /needs a value|unknown option/);
+    assert.deepEqual(fs.readdirSync(r.fakeHome), [], `scratch home stays empty: ${argv.join(' ')}`);
+  }
+});
+
+test('V6: one hand-written file refuses the whole install; nothing is half applied', async () => {
+  const home = tempDir('atomic');
+  const mine = path.join(home, '.codex', 'agents', 'builder.toml');
+  fs.mkdirSync(path.dirname(mine), { recursive: true });
+  fs.writeFileSync(mine, 'name = "builder"\n');
+  const dry = await run(['install', '--tool', 'codex', '--home', home]);
+  assert.equal(dry.code, 0);
+  assert.match(dry.out, /--apply would refuse: 1 hand-written file/);
+  const r = await run(['install', '--tool', 'codex', '--home', home, '--apply']);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /nothing written: 1 hand-written file/);
+  assert.deepEqual(fs.readdirSync(path.join(home, '.codex')), ['agents'], 'no rulebook written');
+  assert.deepEqual(fs.readdirSync(path.dirname(mine)), ['builder.toml'], 'no other agent written');
+  assert.equal(read(mine), 'name = "builder"\n');
+});
+
 test('V2: the read-only guard finds roles for every file type', async () => {
   const roles = loadRoles(REPO);
   const models = loadModels(REPO, { local: false });

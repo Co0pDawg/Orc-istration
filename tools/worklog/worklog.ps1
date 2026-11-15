@@ -280,7 +280,8 @@ $body
         }
         $env:WORKLOG_DISABLE = $old
         # WORKLOG_SUMMARY_TIMEOUT (seconds, default 120) exists for test.ps1.
-        $timeout = if ($env:WORKLOG_SUMMARY_TIMEOUT) { [int]$env:WORKLOG_SUMMARY_TIMEOUT } else { 120 }
+        $timeout = $env:WORKLOG_SUMMARY_TIMEOUT -as [int]
+        if (-not $timeout -or $timeout -lt 1) { $timeout = 120 }
         Wait-Process -Id $p.Id -Timeout $timeout -ErrorAction SilentlyContinue
         $reply = @()
         if ($p.HasExited) { $reply = @(Get-Content $tmp[1] -Encoding UTF8) }

@@ -185,18 +185,26 @@ function stamp(d = new Date()) {
 
 const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo'];
 
+const FLAG_OPTIONS = ['apply', 'force', 'from-stdin'];
+
+// Accepts `--key value` and `--key=value`. An unknown option is an error, never a silent boolean: a mistyped
+// `--home=<dir>` once fell through to the real home directory.
 export function args(argv) {
   const out = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a.startsWith('--')) {
-      const key = a.slice(2);
-      const next = argv[i + 1];
-      if (VALUE_OPTIONS.includes(key)) {
-        if (next === undefined || next.trim() === '' || next.startsWith('--')) throw new Error(`--${key} needs a value`);
-        out[key] = argv[++i];
-      } else out[key] = true;
-    } else out._.push(a);
+    if (!a.startsWith('--')) {
+      out._.push(a);
+      continue;
+    }
+    const eq = a.indexOf('=');
+    const key = eq < 0 ? a.slice(2) : a.slice(2, eq);
+    if (VALUE_OPTIONS.includes(key)) {
+      const value = eq < 0 ? argv[++i] : a.slice(eq + 1);
+      if (value === undefined || value.trim() === '' || value.startsWith('--')) throw new Error(`--${key} needs a value`);
+      out[key] = value;
+    } else if (FLAG_OPTIONS.includes(key) && eq < 0) out[key] = true;
+    else throw new Error(`unknown option ${a}`);
   }
   return out;
 }
@@ -320,20 +328,24 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       }
     }
     const when = stamp(io.now ? io.now() : new Date());
-    let refused = 0;
-    for (const f of files) {
-      if (f.install === false) continue;
-      const target = path.join(home, ...f.path.split('/'));
-      const exists = fs.existsSync(target);
-      const current = exists ? read(target) : null;
-      let state = !exists ? 'create' : current === normalizeEol(f.content) ? 'unchanged' : 'replace';
-      // Only rulebooks and TOML agents carry a marker; any other differing file is treated as hand-written.
-      if (state === 'replace' && !isGenerated(current)) state = 'REPLACE HAND-WRITTEN';
-      if (opt.apply && state === 'REPLACE HAND-WRITTEN' && !opt.force) {
-        io.err(`refused (hand-written; pass --force to replace it, with a backup): ${target}`);
-        refused++;
-        continue;
-      }
+    // Plan every target first: one hand-written file refuses the whole install, so it is never half applied.
+    const plan = files
+      .filter((f) => f.install !== false)
+      .map((f) => {
+        const target = path.join(home, ...f.path.split('/'));
+        const exists = fs.existsSync(target);
+        const current = exists ? read(target) : null;
+        let state = !exists ? 'create' : current === normalizeEol(f.content) ? 'unchanged' : 'replace';
+        // Only rulebooks and TOML agents carry a marker; any other differing file is treated as hand-written.
+        if (state === 'replace' && !isGenerated(current)) state = 'REPLACE HAND-WRITTEN';
+        return { f, target, exists, state };
+      });
+    const blocked = opt.force ? [] : plan.filter((p) => p.state === 'REPLACE HAND-WRITTEN');
+    if (opt.apply && blocked.length) {
+      for (const p of blocked) io.err(`refused (hand-written; pass --force to replace it, with a backup): ${p.target}`);
+      return fail(`nothing written: ${blocked.length} hand-written file(s) in the way`);
+    }
+    for (const { f, target, exists, state } of plan) {
       if (opt.apply && state !== 'unchanged') {
         fs.mkdirSync(path.dirname(target), { recursive: true });
         if (exists) {
@@ -347,8 +359,11 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       io.out(`${opt.apply ? 'applied' : 'would'} ${state}${sep} ${target}`);
     }
     if (adapter.installNote) io.out(adapter.installNote);
-    if (!opt.apply) io.out(`dry run for ${adapter.id}; add --apply to write`);
-    return refused ? 1 : 0;
+    if (!opt.apply) {
+      io.out(`dry run for ${adapter.id}; add --apply to write`);
+      if (blocked.length) io.out(`--apply would refuse: ${blocked.length} hand-written file(s) in the way (use --force to replace them, with backups)`);
+    }
+    return 0;
   }
 
   if (cmd === 'models') {
