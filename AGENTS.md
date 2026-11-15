@@ -2,7 +2,7 @@
 
 The orchestrator is the main session, on whatever model it runs, and it is not the worker. It plans, writes the spec, dispatches, reads reports, makes the judgment calls, and integrates. It does not bulk-read code, bulk-refactor, or write docs when a cheaper agent can. It does read the final diff before reporting anything done.
 
-Inline, no agent: a one-line fix, a single grep, anything under about five tool calls. Dispatch overhead costs more than the work.
+Inline, no agent: a one-line fix, a single grep, anything under about five tool calls.
 
 ## Roster (`roles/`, installed as each tool's agents)
 
@@ -31,19 +31,19 @@ Always dispatch an agent by its roster name (the tool notes say how). An unnamed
 
 ## Orchestration Board
 
-The board address for this machine is in `board.local.md` beside the rulebook (untracked, so the public repo carries no personal link; a new machine creates its own after publishing its board), or in the Board line of the tool notes below.
+The board address for this machine is in `board.local.md` beside the rulebook (untracked), or in the Board line of the tool notes below.
 
 - A `http://localhost:<port>` address means the local backend: write with `node <board repo>/local/board.js` (`batch` for the Start write, `append` for progress and events, `update` for fields; exit 2 is a version conflict).
 - A `claude.ai/artifact/...` address means the artifact backend, which only Claude Code can write (see its tool notes).
 
-Every orchestrated task goes on the live board, in every project, so the user can watch progress from any device. An orchestrated task is any task that dispatches a builder, refuter or debugger; inline work and lone scout or researcher lookups stay off the board.
+Every orchestrated task goes on the live board, in every project. An orchestrated task is any task that dispatches a builder, refuter or debugger; inline work and lone scout or researcher lookups stay off the board.
 
 - **Start:** before the first dispatch, create the session doc and one card per ticket or task in a single batch.
 - **During:** write at each dispatch, check-in, report, rework and commit. Run a heartbeat on any dispatch expected to run past ~30 min.
   - A builder round added after the start (review fixes, a follow-up) gets its own card before it is dispatched.
 - **Finish:** mark the session Done with `completed` when the task ends, including when it is abandoned or handed off.
 - **Durable-rules check (before Done, every orchestrated task):**
-  1. List what the run taught that should outlive it.
+  1. List what the run taught that should outlive it: reusable patterns, feedback that generalises, rule-shaped review findings, traps, process lessons.
   2. Drop what the repo's mapped docs already hold.
   3. Ask the user with one multiple-choice question (several picks allowed) which to write down.
   4. Write each picked rule where it bites: the repo doc on the branch, the skill (with a version bump), or this file. Then report what was written and what was declined.
@@ -60,14 +60,14 @@ Orchestrator spec → `builder` → `refuter` → orchestrator.
 
 - REWORK: send the must-fixes to the same builder, resuming it so its context survives, then dispatch a fresh refuter. After two REWORK rounds the orchestrator reads the diff itself and decides.
 - Parallel is fine for read-only work: scouts, researchers, refuters. Never two writers on the same files. Parallel builders each get their own worktree.
-- Rate-limit guard: no more than three High-tier agents in flight at once; stage wider fan-outs 3+3 with the mandatory agent first. Never launch a High-tier fan-out or refuter right after a builder that spent over 300k tokens: refute inline, use a Mid-tier refuter (a one-dispatch model override), or wait. A rate-limited dispatch costs the launch and the wait and returns nothing.
+- Rate-limit guard: no more than three High-tier agents in flight at once; stage wider fan-outs 3+3 with the mandatory agent first. Never launch a High-tier fan-out or refuter right after a builder that spent over 300k tokens: refute inline, use a Mid-tier refuter (a one-dispatch model override), or wait.
 - Builder and refuter reports state the test-run log timestamps against the time of the last code edit. A green run older than the last edit is not evidence.
 - Run-and-commit work stays on High-tier builders, or the brief says to wait for the run to finish.
-- Batch related fixes into one builder dispatch so large files are read once.
+- Batch related fixes into one builder dispatch.
 - An agent that drifts off its orders gets stopped, not waited on.
 - After stopping a builder (a pause, a stop), report its state from its last actions (notes file, logs, `git status`, any database it upgraded), not from the plan. It may be mid-mutation, so the resume brief says to check for a leftover mutation and restore from the builder's backups first.
 - Multi-agent automation features (the tool notes name them) stay off unless explicitly asked; when on, cap the agent count in the script.
-- Decisions and progress go into a handoff doc (`docs/superpowers/handoffs/` when the repo has it) so the next session reads the file instead of rebuilding context.
+- Decisions and progress go into a handoff doc (`docs/superpowers/handoffs/` when the repo has it).
 - Keep replies and agent reports short. Ask for detail when it is needed, not by default.
 
 ### Test runs
@@ -80,16 +80,16 @@ Orchestrator spec → `builder` → `refuter` → orchestrator.
 - When a builder reports a behaviour finding that contradicts an earlier builder or refuter, the orchestrator reads the code and the fixture itself before speccing a fix.
 - A cross-cutting rule goes in one spec; the other spec references it.
 - Parallel builders: split by file ownership, one in a second worktree, and `git apply` the smaller diff onto the main one.
-  - Carry a worktree's changes with `git diff HEAD --binary`, never plain `git diff`, which drops staged deletions.
-  - Never `git stash` in a worktree. Every worktree shares one stash stack.
+  - Carry a worktree's changes with `git diff HEAD --binary`, never plain `git diff`.
+  - Never `git stash` in a worktree.
 - In Git Bash with `MSYS_NO_PATHCONV=1`, native tools (`git -C`, `python`, `pip --target`) misread `/c/...` paths. Pass them `C:/...`.
 - After merging into the worktree the user's app runs from, rebuild and restart that app and apply the branch's schema to its DB.
 - Give a long git merge or push a timeout and read its result before the next step.
 - Record the PID of every app or test host you start, and stop only that PID.
-- A script that starts an app never captures or pipes that step's output (`$x = & step`, `if (-not (step))`, `*> file`): the app inherits the pipe and the capture waits for it forever. Start it with `Start-Process ... -WindowStyle Hidden -PassThru` and `WaitForExit()`.
-- Live-app verification (Playwright, browser checks) gets its own builder in its own worktree with its own DB copy, so it never shares build output with a code builder.
-- When the runtime-validator comes back with no browser (the chrome-devtools servers did not connect), an XL peer review still gets a browser pass before its fixes count as verified.
-- Keep the machine awake from the first long dispatch until the last dispatch's results are in, not until the work "looks done".
+- A script that starts an app never captures or pipes that step's output (`$x = & step`, `if (-not (step))`, `*> file`). Start it with `Start-Process ... -WindowStyle Hidden -PassThru` and `WaitForExit()`.
+- Live-app verification (Playwright, browser checks) gets its own builder in its own worktree with its own DB copy.
+- When the runtime-validator comes back with no browser (the chrome-devtools servers did not connect), an XL peer review still gets a browser pass before its fixes count as verified: a builder drives Chromium with `playwright-core` from `UITests/bin/Debug/net10.0/.playwright` against a `ticket-env.ps1` app.
+- Keep the machine awake (Windows: `SetThreadExecutionState` with `[uint32]2147483651` in a background loop) from the first long dispatch until the last dispatch's results are in, not until the work "looks done".
 - A test that fails in Arrange on a page-load timeout while another app or builder shares the same DB copy is contention until a rerun says otherwise: rerun it alone before treating it as a failure.
 - When SQL logins time out or report "insufficient memory in the buffer pool", check free RAM before blaming the app. Run `dotnet build-server shutdown` to free the idle MSBuild and compiler servers.
   - Keep at most one test host and one builder app running alongside the user's own app and browsers.
@@ -132,7 +132,7 @@ Pick the tier before launching review:
 - A ticket rule that depends on what a column means gets a backtest on real data before the plan locks it.
 - Live checks of anything relative to today run on a DB copy restored within the last few days.
 - Marketing screenshots of a feature are taken after that feature's review and performance fixes land.
-- A showcase-retake brief first confirms the restored backup holds the image's org, or names the seed procedure to run on the throwaway copy, and greps how many views use the image, since a shared image needs a new file name and view edits.
+- A showcase-retake brief first confirms the restored backup holds the image's org, or names the seed procedure to run on the throwaway copy, and greps how many views use the image.
 - When the base branch is merged in after a Playwright run, rerun the touched suite before pushing, or say plainly in the report that it was not rerun.
 - A spec for a visual check names the states to look at and has the builder seed each one, not just open pages.
 - A test that claims something did not happen gets a timing mutation from the refuter (the action delayed a few hundred ms), not only a logic one.

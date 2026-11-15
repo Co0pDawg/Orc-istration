@@ -75,10 +75,7 @@ entry is the original wording, under the rule it explains. The rules themselves 
 ## Examples and rationale moved later (original wording, by rule)
 - Data precondition, examples of the rows to name: (which senders populate CUSTOMER_ID, which users have two facilities). Why: the loop verifies the spec; this line is what makes the spec verify the requirement.
 - Board line, why the full path matters: otherwise the agent may look the card up wrong and skip every board write.
-- Durable-rules check, what to list: reusable patterns, feedback that generalises, rule-shaped review findings, traps, process lessons.
 - Never `dotnet test` a solution with a UI project: AcmeApp's `UITests` waits on an app forever.
-- Browser pass without a runtime-validator browser, how: a builder drives Chromium with `playwright-core` from `UITests/bin/Debug/net10.0/.playwright` against a `ticket-env.ps1` app.
-- Keep the machine awake, how (Windows): `SetThreadExecutionState` with `[uint32]2147483651` in a background loop.
 - Cross-cutting rule, example: "null weight reads as 0 lb".
 - Pre-PR tier, why: the refuter already reran the work and proved each test can fail, so a full panel on top of it mostly duplicates effort on test-only diffs.
 - Cheap reviewers, evidence: this rests on one run, and the defect to watch for is like the 12/31/9999 end-date 500 one of them raised.
@@ -91,3 +88,14 @@ entry is the original wording, under the rule it explains. The rules themselves 
 - SQL command batch, why: the in-memory provider hides statement order and FK enforcement.
 - Ticket decisions, example deferral: "AdSense deferred: needs nonce CSP + CMP".
 - Cost log, why: the Loop signal lets the tier rule be tuned from evidence; the context sizes let a review compare orchestrator spend against subagent spend.
+- Inline work, why: dispatch overhead costs more than the work.
+- Board address file, why untracked: so the public repo carries no personal link; a new machine creates its own after publishing its board.
+- Board for every orchestrated task, why: so the user can watch progress from any device.
+- Rate-limit guard, why: a rate-limited dispatch costs the launch and the wait and returns nothing.
+- Batch related fixes, why: so large files are read once.
+- Handoff doc, why: so the next session reads the file instead of rebuilding context.
+- Live-app verification builder, why: so it never shares build output with a code builder.
+- No `git stash` in a worktree, why: every worktree shares one stash stack.
+- Never pipe an app-starting step, why: the app inherits the pipe and the capture waits for it forever.
+- Showcase retakes, why grep the views: a shared image needs a new file name and view edits.
+- `git diff HEAD --binary`, why: plain `git diff` drops staged deletions.

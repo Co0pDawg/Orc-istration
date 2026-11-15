@@ -32,7 +32,7 @@ After the table (console only, not the `.txt`) come `Sessions:` (`<8-char id>  <
 
 ADO calls (PR resolution, type/title/created/parent via `wi-get -Relations`, WIQL) run `pwsh -NoProfile -File` on `$env:WORKLOG_ADO`, else `$env:ORC_ADO_SCRIPT` (default `C:\src\your-repo\.claude\scripts\ado.ps1`; set `ORC_ADO_SCRIPT` to your repo's `ado.ps1`) with `WORKLOG_DISABLE=1`; a failed call warns and leaves that evidence unresolved. Set `WORKLOG_DIR` to redirect the log folder and `WORKLOG_NOSUMMARY=1` to skip the model call and every ADO call (both used by `test.ps1`, which also runs the ADO path against `test\fake-ado.ps1`). Run `pwsh -NoProfile -File test.ps1` (or `powershell`) to self-check.
 
-Descriptions come from `claude -p --model sonnet` (haiku fallback). To use another tool, set `WORKLOG_SUMMARY_CMD` to a command line: it runs through the shell (`cmd /c`), gets the prompt on stdin and must print the `<n>|<start>|<description>` lines on stdout. Unset, nothing changes.
+Descriptions come from `claude -p --model sonnet` (haiku fallback). To use another tool, set `WORKLOG_SUMMARY_CMD` to a command line: it runs through the shell (`cmd /c`), gets the prompt on stdin and must print the `<n>|<start>|<description>` lines on stdout. Unset, nothing changes. A command still running after `WORKLOG_SUMMARY_TIMEOUT` seconds (default 120; the tests shorten it) is killed with its whole process tree.
 
 ## Install
 

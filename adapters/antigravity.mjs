@@ -18,7 +18,7 @@ export default {
   home: { root: '.gemini', rulebook: '.gemini/AGENTS.md', agentsDir: '.gemini/config/agents' },
   capabilityTools,
   limits: { ruleBytes: 24000 },
-  conflicts: [{ path: '.gemini/GEMINI.md', tool: 'Gemini CLI' }],
+  conflicts: [{ path: '.gemini/GEMINI.md', tool: 'Gemini CLI', warning: 'Antigravity could load two copies of the rulebook' }],
   gaps: [
     'Per-agent model is only inherit, flash or pro: Mid and Low both map to flash, and what flash and pro resolve to is not documented.',
     'No per-agent effort key; effort exists only on a headless run (--effort).',

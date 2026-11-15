@@ -279,9 +279,13 @@ $body
             Start-Process claude "-p --model $model" -NoNewWindow -PassThru -WorkingDirectory $logDir -RedirectStandardInput $tmp[0] -RedirectStandardOutput $tmp[1] -RedirectStandardError $tmp[2]
         }
         $env:WORKLOG_DISABLE = $old
-        Wait-Process -Id $p.Id -Timeout 120 -ErrorAction SilentlyContinue
+        # WORKLOG_SUMMARY_TIMEOUT (seconds, default 120) exists for test.ps1.
+        $timeout = if ($env:WORKLOG_SUMMARY_TIMEOUT) { [int]$env:WORKLOG_SUMMARY_TIMEOUT } else { 120 }
+        Wait-Process -Id $p.Id -Timeout $timeout -ErrorAction SilentlyContinue
         $reply = @()
-        if ($p.HasExited) { $reply = @(Get-Content $tmp[1] -Encoding UTF8) } else { Stop-Process -Id $p.Id -Force }
+        if ($p.HasExited) { $reply = @(Get-Content $tmp[1] -Encoding UTF8) }
+        elseif ($env:WORKLOG_SUMMARY_CMD) { taskkill /T /F /PID $p.Id 2>$null | Out-Null }  # the cmd wrapper and its children
+        else { Stop-Process -Id $p.Id -Force }
         $tmp | Remove-Item -ErrorAction SilentlyContinue
         # A line counts only if its echoed start time is its entry's, so a shifted reply can never label the wrong row.
         foreach ($l in $reply) {

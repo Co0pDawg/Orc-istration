@@ -145,15 +145,17 @@ if (-not $boardUrl) {
     $boardFile = Join-Path $HOME ".claude\board.local.md"
     if (Test-Path $boardFile) { $boardUrl = [regex]::Match((Get-Content $boardFile -Raw), 'https?://\S+').Value }
 }
-if (-not $DryRun -and $boardUrl -match '^http://(localhost|127\.0\.0\.1)(:(\d+))?') {
+if (-not $DryRun -and $boardUrl -match '^http://(localhost|127\.0\.0\.1)(:(\d+))?(/|$)') {
     if ($Matches[3]) { $env:ORC_BOARD_PORT = $Matches[3] }
     $boardRepo = if ($env:ORC_BOARD_REPO) { $env:ORC_BOARD_REPO } else { Join-Path $HOME ".claude\orchestration\board" }
     $cli = Join-Path $boardRepo "local\board.js"
-    foreach ($f in Get-ChildItem $pending -Filter "timeline-????-??-??.json") {
+    $missing = if (-not (Get-Command node -ErrorAction SilentlyContinue)) { "node is not on PATH" } elseif (-not (Test-Path $cli)) { "the board CLI $cli does not exist" }
+    if ($missing) { Log "WARN cannot upload to $boardUrl`: $missing; pending files left" }
+    else { foreach ($f in Get-ChildItem $pending -Filter "timeline-????-??-??.json") {
         $d = $f.BaseName.Substring(9)
         node $cli set "timeline/$d" --file $f.FullName | Out-Null
         if ($LASTEXITCODE -eq 0) { Remove-Item $f.FullName; Log "uploaded timeline/$d to $boardUrl" }
         else { Log "WARN upload of timeline/$d exited $LASTEXITCODE; left pending" }
-    }
+    } }
 }
 if ($failed) { exit 1 }

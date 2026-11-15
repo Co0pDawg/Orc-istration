@@ -18,7 +18,7 @@ export default {
   home: { root: '.gemini', rulebook: '.gemini/GEMINI.md', agentsDir: '.gemini/agents' },
   capabilityTools,
   limits: {},
-  conflicts: [{ path: '.gemini/AGENTS.md', tool: 'Antigravity' }],
+  conflicts: [{ path: '.gemini/AGENTS.md', tool: 'Antigravity', warning: 'Antigravity could load two copies of the rulebook' }],
   gaps: [
     'No reasoning-effort key; tiers differ by model id only, and Low and Mid share the Flash id (no Flash-Lite id documented).',
     'Subagents cannot dispatch subagents, and parallel subagents are not documented: dispatch one at a time.',

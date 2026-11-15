@@ -259,6 +259,25 @@ Check "local board: set timeline/<date> --file <pending> on the address's port, 
 $env:ORC_BOARD_URL = "https://claude.ai/artifact/test-board"
 $o9 = pwsh -NoProfile -File "$PSScriptRoot\sync-timeline.ps1" -Date 2026-11-01 -Force 2>&1 | Out-String
 Check "artifact board: the pending file stays for a Claude session and the CLI is not called" ((Test-Path $pend) -and @(Get-Content $env:FAKE_BOARD_LOG).Count -eq 2)
+# Only an exact localhost / 127.0.0.1 host is local. A date with no log builds nothing, so only the upload step runs.
+$upload = { param($url) $env:ORC_BOARD_URL = $url; $n = @(Get-Content $env:FAKE_BOARD_LOG).Count
+    if (-not (Test-Path $pend)) { '{"date":"2026-11-01"}' | Set-Content $pend }
+    $o = pwsh -NoProfile -File "$PSScriptRoot\sync-timeline.ps1" -Date 2026-12-31 2>&1 | Out-String
+    @{ out = $o; called = (@(Get-Content $env:FAKE_BOARD_LOG).Count -gt $n); pending = (Test-Path $pend) } }
+$e1 = & $upload "http://localhost.evil.example"; $e2 = & $upload "http://127.0.0.1.evil.example:80"
+Check "lookalike hosts are not local: CLI not called, file stays pending" (-not $e1.called -and $e1.pending -and -not $e2.called -and $e2.pending)
+$l1 = & $upload "http://localhost:8377/"; $l2 = & $upload "http://127.0.0.1"
+Check "http://localhost:8377/ and http://127.0.0.1 are local" ($l1.called -and -not $l1.pending -and $l2.called -and -not $l2.pending -and (Get-Content $env:FAKE_BOARD_LOG)[-2] -match 'port=8377$')
+# Missing node or CLI: one WARN, files left pending, no throw.
+$env:ORC_BOARD_REPO = Join-Path $dir "no-such-board"
+$m1 = & $upload "http://localhost:8499/"
+Check "missing board CLI: one WARN, file left pending" ($m1.out -match "WARN cannot upload to http://localhost:8499/: the board CLI .* does not exist" -and $m1.pending -and $m1.out -notmatch "FAILED|Exception")
+$env:ORC_BOARD_REPO = "$PSScriptRoot\test\fake-board"
+$keepPath = $env:PATH; $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -and -not (Test-Path (Join-Path $_ "node.exe")) }) -join ';'
+$m2 = & $upload "http://localhost:8499/"
+$env:PATH = $keepPath
+Check "missing node: one WARN, file left pending" ($m2.out -match "WARN cannot upload to http://localhost:8499/: node is not on PATH" -and $m2.pending -and -not $m2.called)
+$env:ORC_BOARD_URL = "https://claude.ai/artifact/test-board"
 $env:ORC_BOARD_REPO = $null; $env:FAKE_BOARD_LOG = $null; $env:FAKE_BOARD_EXIT = $null
 # A failed ADO type lookup leaves no marker, so the next run rebuilds (and retries the Unplanned flag).
 $env:TIMELINE_SYNC_STATE = Join-Path $dir "sync-state-noado"; $env:WORKLOG_ADO = Join-Path $dir "no-such-ado.ps1"
@@ -320,6 +339,14 @@ $env:WORKLOG_SUMMARY_CMD = $null
 $stub = Rows (& $exe -NoProfile -File "$PSScriptRoot\worklog.ps1" 2026-01-12 3>$null 2>$null)
 Check "WORKLOG_SUMMARY_CMD: its reply is used and it got the prompt on stdin" ($custom[0][4] -eq "Development: Ran the custom summary command." -and (Get-Content (Join-Path $dir "bin\summary-in.txt") -Raw) -match '<worklog>')
 Check "WORKLOG_SUMMARY_CMD unset: the claude call runs as before" ($stub[0][4] -eq "Development: Fixed the merge conflict.")
+# A summary command past WORKLOG_SUMMARY_TIMEOUT has its whole tree killed: the grandchild never writes its late file.
+$late = Join-Path $dir "bin\late.txt"
+"@powershell -NoProfile -Command `"Start-Sleep 6; Set-Content -Path '$late' -Value late`"`r`n@echo 1^|09:00^|Development: Too late." | Set-Content (Join-Path $dir "bin\slow.cmd")
+$env:WORKLOG_SUMMARY_CMD = Join-Path $dir "bin\slow.cmd"; $env:WORKLOG_SUMMARY_TIMEOUT = "2"
+$slow = Rows (& $exe -NoProfile -File "$PSScriptRoot\worklog.ps1" 2026-01-12 3>$null 2>$null)
+$env:WORKLOG_SUMMARY_CMD = $null; $env:WORKLOG_SUMMARY_TIMEOUT = $null
+Start-Sleep -Seconds 8
+Check "WORKLOG_SUMMARY_CMD timeout: raw fallback and the process tree is killed" ($slow[0][4] -like "*(raw)" -and -not (Test-Path $late))
 $env:PATH = $oldPath; $env:WORKLOG_NOSUMMARY = "1"; $env:WORKLOG_ADO = $null
 Check "parent roll-up: two-hop chain, one hop, filed-earlier child stays" (($up | ForEach-Object { $_[3] }) -join "," -eq "17012,17021,17030")
 $rows = Rows $out
