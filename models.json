@@ -14,5 +14,25 @@
     "low": { "model": "gemini-3-flash-preview" },
     "mid": { "model": "gemini-3-flash-preview" },
     "high": { "model": "gemini-3-pro-preview" }
+  },
+  "codex": {
+    "low": { "model": "gpt-6-luna" },
+    "mid": { "model": "gpt-6.1-sol", "effort": "high" },
+    "high": { "model": "gpt-6-astra", "effort": "high" }
+  },
+  "cursor": {
+    "low": { "model": "inherit" },
+    "mid": { "model": "inherit" },
+    "high": { "model": "inherit" }
+  },
+  "copilot": {
+    "low": {},
+    "mid": {},
+    "high": {}
+  },
+  "opencode": {
+    "low": { "model": "anthropic/claude-sonnet-5-5#high" },
+    "mid": { "model": "anthropic/claude-sonnet-5-5#high" },
+    "high": { "model": "anthropic/claude-sonnet-5-5#high" }
   }
 }

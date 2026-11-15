@@ -18,7 +18,7 @@ Rules:
 
 Board progress (only when the orders include a `BOARD:` line with a board address and a card id):
 - Post 3 to 6 milestone lines to that card, and never to the session doc, through the backend the address names:
-  - Local (`http://localhost:<port>`): `node <board repo>/local/board.js get cards/<card id>`, then `append cards/<card id> progress --data '{"at":"…","text":"…"}'` for each line and `update cards/<card id> --data '<json>'` for `stages` and `note`. Exit 2 is a version conflict.
+  - Local (`http://localhost:<port>`; set `ORC_BOARD_PORT` to that port): `node <board repo>/local/board.js get cards/<card id>`. Pipe JSON in with `--stdin`, never quote it on the command line: `'{"at":"…","text":"…"}' | node <board repo>/local/board.js append cards/<card id> progress --stdin` per line, and `… | node <board repo>/local/board.js update cards/<card id> --stdin --if-version <n>` for `stages` and `note`. Exit 2 is a version conflict.
   - Artifact (`claude.ai/artifact/...`, Claude Code only): load ArtifactData with ToolSearch `select:ArtifactData` (if absent, `select:mcp__claude-artifacts__db_get,mcp__claude-artifacts__db_write` with the UUID slug the brief gives), `get` `cards/<card id>`, then `update` it with `progress` set to the existing array plus `{at, text}`, pinned with `if_version`.
   - On a version conflict, re-get and retry once. Take `at` from the shell's `date -Iseconds`.
 - Post at: diff read (files, callers checked), build rerun, tests rerun (n/m pass), mutation result, verdict. Each line is one fact with numbers, under 80 characters.

@@ -50,27 +50,33 @@ The setup assumes Windows with PowerShell 7 and Git Bash. On macOS or Linux, the
 
 ## Other tools
 
-The rulebook and roles are tool-neutral; an adapter per tool turns them into that tool's files. Round A covers:
+The rulebook and roles are tool-neutral; an adapter per tool turns them into that tool's files:
 
 | Tool | Rulebook | Agents | Gaps |
 |---|---|---|---|
 | Claude Code | `~/.claude/CLAUDE.md` + `AGENTS.md` | `~/.claude/agents/` | Everything works; the refuter keeps every tool (for the board) so read-only rests on its body |
 | Antigravity CLI | `~/.gemini/AGENTS.md` (24,000-byte cap) | `~/.gemini/config/agents/` | Models only flash/pro; no per-agent effort; no subagent-stop hook; read-only via allowlist only; local board only |
 | Gemini CLI | `~/.gemini/GEMINI.md` | `~/.gemini/agents/` | No effort key; no nested or documented parallel subagents; no subagent-stop hook; read-only via allowlist only; local board only |
+| Codex CLI | `~/.codex/AGENTS.md` (32 KiB cap) | `~/.codex/agents/*.toml` | No tool allowlist (read-only rests on the role body); no hooks in the docs; Windows via WSL2; local board only |
+| Cursor | none global: copy `dist/cursor/project/AGENTS.md` into a project, or paste into User Rules | `~/.cursor/agents/` | Model ids unverified (`inherit` until `models.local.json`); read-only via `readonly: true`; local board only |
+| GitHub Copilot CLI | `~/.copilot/copilot-instructions.md` | `~/.copilot/agents/*.agent.md` | Model ids unverified (none until `models.local.json`); coarse tool aliases, never `agent`; 30,000-character agent bodies; local board only |
+| OpenCode | `~/.config/opencode/AGENTS.md` | `~/.config/opencode/agents/` | One documented model id for every tier; read-only denies `edit` only; no shell hooks; local board only |
+
+Run live so far: Antigravity only (one headless run on 2026-11-15 loaded the generated scout and returned a correct answer). Claude Code uses the checked-in files. Gemini CLI, Codex, Cursor, Copilot and OpenCode are verified by tests only.
 
 The full gap list for each tool is printed by `build` and appended to its rulebook. Commands (Node 22+, no dependencies):
 
 ```
 node tools/orc.mjs build --tool all              # writes dist/<tool>/... (untracked)
 node tools/orc.mjs install --tool antigravity    # dry run: prints create / replace / unchanged per file
-node tools/orc.mjs install --tool antigravity --apply   # writes; a replaced file is first copied to <file>.orc-backup-<stamp>
+node tools/orc.mjs install --tool antigravity --apply --board http://localhost:8377/ --board-repo <path to Orc-Dashboard>
 ```
 
-`install` never deletes and only writes the files it generates. It refuses `--tool claude-code` without `--home`, because this repo is the live `~/.claude`: edit `AGENTS.md`, `roles/` or `adapters/`, then run `node tools/orc.mjs sync` and `npm test` (which runs `check`).
+`--apply` writes; a replaced file is first copied to `<file>.orc-backup-<stamp>` (`-2`, `-3` when that name exists). `--board` and `--board-repo` add a Board line with this machine's address and board command to the installed rulebook; without them `install` warns. Installing both Antigravity and Gemini CLI puts two rulebooks in `~/.gemini`, which Antigravity may both load: `install` warns and names the file to remove. `install` never deletes and only writes the files it generates. It refuses `--tool claude-code` without `--home`, because this repo is the live `~/.claude`: edit `AGENTS.md`, `roles/` or `adapters/`, then run `node tools/orc.mjs sync` and `npm test` (which runs `check`).
 
 Antigravity models are per account. Run `agy models | node tools/orc.mjs models --tool antigravity --from-stdin` and save the printed fragment as `models.local.json` so headless runs use slugs your account has.
 
-The hooks (board reminder, worklog, peon) stay Claude Code extras for now; on other tools, updating the board after each agent report is a build-loop step.
+The hooks (board reminder, worklog, peon) stay Claude Code extras for now; on other tools, updating the board after each agent report is a build-loop step. The worklog can run without Claude: `WORKLOG_SUMMARY_CMD` swaps the description model, and `sync-timeline.ps1` uploads to a local board itself (`tools/worklog/README.md`).
 
 ## How the .gitignore works
 

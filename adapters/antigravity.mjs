@@ -1,5 +1,5 @@
 // Antigravity CLI (agy). Syntax source: antigravity.google/docs/subagents, /rules, /hooks, /cli/headless.
-import { serialize } from '../tools/lib/frontmatter.mjs';
+import { serialize, generatedMarker } from '../tools/lib/frontmatter.mjs';
 import { ALL_CAPABILITIES } from '../tools/lib/roles.mjs';
 
 const capabilityTools = {
@@ -18,6 +18,7 @@ export default {
   home: { root: '.gemini', rulebook: '.gemini/AGENTS.md', agentsDir: '.gemini/config/agents' },
   capabilityTools,
   limits: { ruleBytes: 24000 },
+  conflicts: [{ path: '.gemini/GEMINI.md', tool: 'Gemini CLI' }],
   gaps: [
     'Per-agent model is only inherit, flash or pro: Mid and Low both map to flash, and what flash and pro resolve to is not documented.',
     'No per-agent effort key; effort exists only on a headless run (--effort).',
@@ -42,6 +43,6 @@ export default {
     return { path: `.gemini/config/agents/${role.name}.md`, content: serialize(fm, role.body) };
   },
   renderRulebook(agentsMd, notesMd) {
-    return [{ path: '.gemini/AGENTS.md', content: `${agentsMd}\n${notesMd}` }];
+    return [{ path: '.gemini/AGENTS.md', content: `${generatedMarker('antigravity')}\n${agentsMd}\n${notesMd}` }];
   },
 };

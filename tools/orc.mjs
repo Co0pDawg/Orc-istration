@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { parse, normalizeEol } from './lib/frontmatter.mjs';
+import { parse, normalizeEol, isGenerated } from './lib/frontmatter.mjs';
 import { parseRole } from './lib/roles.mjs';
 
 const DEFAULT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -53,8 +53,9 @@ export async function loadAdapters(repo) {
   return adapters;
 }
 
-export function renderNotes(adapter) {
+export function renderNotes(adapter, extra = []) {
   let notes = adapter.notes;
+  for (const line of extra) notes += `${line}\n`;
   if (adapter.gaps.length) {
     notes += `\nWhat ${adapter.title} cannot do (generated from the adapter's gaps):\n`;
     for (const g of adapter.gaps) notes += `- ${g}\n`;
@@ -66,18 +67,21 @@ export function allowedTools(adapter) {
   return new Set(Object.values(adapter.capabilityTools ?? {}).flat().filter(Boolean));
 }
 
-function emittedTools(content) {
-  const { data } = parse(content);
+function emittedTools(file) {
+  if (!file.path.endsWith('.md')) return [];
+  const { data } = parse(file.content);
   if (data.tools === undefined) return [];
   return Array.isArray(data.tools) ? data.tools : String(data.tools).split(',').map((s) => s.trim());
 }
 
 // Returns {files, errors}. Paths are home-relative with forward slashes.
-export function buildTool(adapter, roles, models, agentsMd) {
+export function buildTool(adapter, roles, models, agentsMd, { extraNotes = [] } = {}) {
   const errors = [];
+  const warnings = [];
+  let rulebook = null;
   const tiers = models[adapter.id];
   if (!tiers) return { files: [], errors: [`${adapter.id}: no entry in models.json`] };
-  const files = [...adapter.renderRulebook(agentsMd, renderNotes(adapter))];
+  const files = [...adapter.renderRulebook(agentsMd, renderNotes(adapter, extraNotes))];
   for (const role of roles) {
     const tierModel = tiers[role.tier];
     if (!tierModel) errors.push(`${adapter.id}: no model for tier ${role.tier}`);
@@ -90,12 +94,19 @@ export function buildTool(adapter, roles, models, agentsMd) {
     const limit = adapter.limits?.ruleBytes;
     if (limit && f.path === adapter.home.rulebook) {
       const size = Buffer.byteLength(f.content, 'utf8');
+      rulebook = { path: f.path, size, limit, headroom: limit - size };
       if (size >= limit) errors.push(`${adapter.id}: ${f.path} is ${size} bytes; the limit is under ${limit}`);
+      else if (limit - size < 1000) warnings.push(`${adapter.id}: ${f.path} has only ${limit - size} bytes of headroom (under 1000)`);
+    }
+    const bodyCap = adapter.limits?.agentBodyChars;
+    if (bodyCap && f.path.startsWith(`${adapter.home.agentsDir}/`)) {
+      const chars = [...parse(f.content).body].length;
+      if (chars > bodyCap) errors.push(`${adapter.id}: ${f.path} body is ${chars} characters; the limit is ${bodyCap}`);
     }
     if (!f.path.startsWith(`${adapter.home.agentsDir}/`)) continue;
     let tools;
     try {
-      tools = emittedTools(f.content);
+      tools = emittedTools(f);
     } catch (e) {
       errors.push(`${adapter.id}: ${f.path}: ${e.message}`);
       continue;
@@ -106,17 +117,17 @@ export function buildTool(adapter, roles, models, agentsMd) {
       for (const t of tools) if (editTools.has(t)) errors.push(`${adapter.id}: read-only ${role.name} gets ${t}`);
     }
   }
-  return { files, errors };
+  return { files, errors, warnings, rulebook };
 }
 
-async function buildAll(repo, toolId, { local = true } = {}) {
+async function buildAll(repo, toolId, { local = true, extraNotes = [] } = {}) {
   const roles = loadRoles(repo);
   const models = loadModels(repo, { local });
   const agentsMd = read(path.join(repo, 'AGENTS.md'));
   const adapters = await loadAdapters(repo);
   const picked = !toolId || toolId === 'all' ? adapters : adapters.filter((a) => a.id === toolId);
   if (!picked.length) throw new Error(`unknown tool ${toolId}; known: ${adapters.map((a) => a.id).join(', ')}`);
-  return picked.map((adapter) => ({ adapter, ...buildTool(adapter, roles, models, agentsMd) }));
+  return picked.map((adapter) => ({ adapter, ...buildTool(adapter, roles, models, agentsMd, { extraNotes }) }));
 }
 
 function checkedInTargets(results) {
@@ -170,7 +181,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const outDir = path.resolve(repo, opt.out ?? 'dist');
     const results = await buildAll(repo, opt.tool ?? 'all');
     let code = 0;
-    for (const { adapter, files, errors } of results) {
+    for (const { adapter, files, errors, warnings, rulebook } of results) {
+      warnings.forEach((w) => io.err(`WARN ${w}`));
       if (errors.length) {
         errors.forEach((e) => io.err(e));
         code = 1;
@@ -180,7 +192,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         const target = path.join(outDir, adapter.id, ...f.path.split('/'));
         fs.mkdirSync(path.dirname(target), { recursive: true });
         fs.writeFileSync(target, f.content);
-        io.out(`${adapter.id}/${f.path} ${Buffer.byteLength(f.content)} bytes`);
+        const room = rulebook?.path === f.path ? ` (headroom ${rulebook.headroom} of ${rulebook.limit})` : '';
+        io.out(`${adapter.id}/${f.path} ${Buffer.byteLength(f.content)} bytes${room}`);
       }
       for (const g of adapter.gaps) io.out(`  gap: ${g}`);
     }
@@ -190,6 +203,10 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   if (cmd === 'check') {
     const results = await buildAll(repo, 'all', { local: false });
     const problems = results.flatMap((r) => r.errors);
+    for (const r of results) {
+      r.warnings.forEach((w) => io.err(`WARN ${w}`));
+      if (r.rulebook) io.out(`${r.adapter.id}: ${r.rulebook.path} ${r.rulebook.size} bytes, headroom ${r.rulebook.headroom}`);
+    }
     for (const { rel, content } of checkedInTargets(results)) {
       const file = path.join(repo, ...rel.split('/'));
       if (!fs.existsSync(file)) problems.push(`${rel}: missing (run node tools/orc.mjs sync)`);
@@ -225,20 +242,46 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       return fail('refusing --tool claude-code without --home: the live ~/.claude is synced by hand');
     }
     const home = path.resolve(typeof opt.home === 'string' ? opt.home : (await import('node:os')).homedir());
-    const [{ adapter, files, errors }] = await buildAll(repo, toolId);
+    const extraNotes = [];
+    if (typeof opt.board === 'string') {
+      const boardRepo = typeof opt['board-repo'] === 'string' ? opt['board-repo'].replace(/\\/g, '/') : '<board repo>';
+      const port = /^https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)/.exec(opt.board)?.[1];
+      const portNote = port ? ` (set \`ORC_BOARD_PORT=${port}\`)` : '';
+      extraNotes.push(
+        `- **Board:** this machine's board address is \`${opt.board}\`; write it with \`node ${boardRepo}/local/board.js\`${portNote}.`,
+      );
+    } else {
+      io.err('WARN the board address is not set: pass --board <address> [--board-repo <path>] so the rulebook names it');
+    }
+    const [{ adapter, files, errors }] = await buildAll(repo, toolId, { extraNotes });
     if (errors.length) return fail(errors.join('\n'));
-    const when = stamp();
+    for (const c of adapter.conflicts ?? []) {
+      const other = path.join(home, ...c.path.split('/'));
+      if (fs.existsSync(other) && isGenerated(read(other))) {
+        io.err(
+          `WARN ${other} is an orc-generated ${c.tool} rulebook in the same folder: Antigravity could load two copies ` +
+            `of the rulebook. Remove ${other} unless you also use ${c.tool}.`,
+        );
+      }
+    }
+    const when = stamp(io.now ? io.now() : new Date());
     for (const f of files) {
+      if (f.install === false) continue;
       const target = path.join(home, ...f.path.split('/'));
       const exists = fs.existsSync(target);
       const state = !exists ? 'create' : read(target) === normalizeEol(f.content) ? 'unchanged' : 'replace';
       if (opt.apply && state !== 'unchanged') {
         fs.mkdirSync(path.dirname(target), { recursive: true });
-        if (state === 'replace') fs.copyFileSync(target, `${target}.orc-backup-${when}`);
+        if (state === 'replace') {
+          let backup = `${target}.orc-backup-${when}`;
+          for (let n = 2; fs.existsSync(backup); n++) backup = `${target}.orc-backup-${when}-${n}`;
+          fs.copyFileSync(target, backup);
+        }
         fs.writeFileSync(target, f.content);
       }
       io.out(`${opt.apply ? 'applied' : 'would'} ${state}: ${target}`);
     }
+    if (adapter.installNote) io.out(adapter.installNote);
     if (!opt.apply) io.out(`dry run for ${adapter.id}; add --apply to write`);
     return 0;
   }

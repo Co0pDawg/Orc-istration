@@ -1,5 +1,5 @@
 // Claude Code: generates the checked-in CLAUDE.md and agents/*.md (the repo is rooted at ~/.claude).
-import { serialize } from '../tools/lib/frontmatter.mjs';
+import { serialize, generatedMarker } from '../tools/lib/frontmatter.mjs';
 import { ALL_CAPABILITIES } from '../tools/lib/roles.mjs';
 
 const capabilityTools = {
@@ -36,7 +36,7 @@ export default {
   },
   renderRulebook(agentsMd, notesMd) {
     return [
-      { path: '.claude/CLAUDE.md', content: `@AGENTS.md\n\n${notesMd}` },
+      { path: '.claude/CLAUDE.md', content: `@AGENTS.md\n${generatedMarker('claude-code')}\n\n${notesMd}` },
       { path: '.claude/AGENTS.md', content: agentsMd },
     ];
   },

@@ -1,5 +1,5 @@
 // Gemini CLI. Syntax source: geminicli.com/docs/core/subagents, /cli/gemini-md, /reference/tools, /cli/model.
-import { serialize } from '../tools/lib/frontmatter.mjs';
+import { serialize, generatedMarker } from '../tools/lib/frontmatter.mjs';
 import { ALL_CAPABILITIES } from '../tools/lib/roles.mjs';
 
 const capabilityTools = {
@@ -18,6 +18,7 @@ export default {
   home: { root: '.gemini', rulebook: '.gemini/GEMINI.md', agentsDir: '.gemini/agents' },
   capabilityTools,
   limits: {},
+  conflicts: [{ path: '.gemini/AGENTS.md', tool: 'Antigravity' }],
   gaps: [
     'No reasoning-effort key; tiers differ by model id only, and Low and Mid share the Flash id (no Flash-Lite id documented).',
     'Subagents cannot dispatch subagents, and parallel subagents are not documented: dispatch one at a time.',
@@ -39,6 +40,6 @@ export default {
     return { path: `.gemini/agents/${role.name}.md`, content: serialize(fm, role.body) };
   },
   renderRulebook(agentsMd, notesMd) {
-    return [{ path: '.gemini/GEMINI.md', content: `${agentsMd}\n${notesMd}` }];
+    return [{ path: '.gemini/GEMINI.md', content: `${generatedMarker('gemini-cli')}\n${agentsMd}\n${notesMd}` }];
   },
 };

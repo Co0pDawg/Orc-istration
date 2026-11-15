@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse, serialize, normalizeEol } from '../tools/lib/frontmatter.mjs';
 import { parseRole } from '../tools/lib/roles.mjs';
+import { serializeToml, parseToml, tomlMultiline } from '../tools/lib/toml.mjs';
 import { main, loadRoles, loadModels, loadAdapters, buildTool, allowedTools, parseAgyModels } from '../tools/orc.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -53,23 +54,61 @@ test('roles parse and validate', () => {
 
 test('golden snapshots, tool allowlists, read-only roles', async () => {
   const { roles, models, agentsMd, adapters } = await buildRepo();
-  assert.deepEqual(adapters.map((a) => a.id), ['antigravity', 'claude-code', 'gemini-cli']);
+  assert.deepEqual(adapters.map((a) => a.id), ['antigravity', 'claude-code', 'codex', 'copilot', 'cursor', 'gemini-cli', 'opencode']);
   for (const adapter of adapters) {
     const { files, errors } = buildTool(adapter, roles, models, agentsMd);
     assert.deepEqual(errors, [], adapter.id);
     const allowed = allowedTools(adapter);
-    const edit = new Set(adapter.capabilityTools.edit);
+    const edit = new Set(adapter.capabilityTools?.edit ?? []);
     for (const f of files) {
       const golden = path.join(GOLDEN, adapter.id, ...f.path.split('/'));
       assert.equal(f.content, read(golden), `${adapter.id}/${f.path} differs from golden`);
       if (!f.path.startsWith(`${adapter.home.agentsDir}/`)) continue;
+      const role = roles.find((r) => f.path.split('/').at(-1).split('.')[0] === r.name);
+      if (f.path.endsWith('.toml')) {
+        const t = parseToml(f.content);
+        assert.equal(t.name, role.name);
+        assert.equal(t.developer_instructions, role.body, `${f.path} body round-trips`);
+        continue;
+      }
       const { data } = parse(f.content);
       const tools = data.tools === undefined ? [] : Array.isArray(data.tools) ? data.tools : data.tools.split(', ');
       for (const t of tools) assert.ok(allowed.has(t), `${adapter.id} emits ${t}`);
-      const role = roles.find((r) => r.name === data.name);
-      if (role.access === 'read-only') for (const t of tools) assert.ok(!edit.has(t), `${role.name} gets ${t}`);
+      if (role.access === 'read-only') {
+        for (const t of tools) assert.ok(!edit.has(t), `${role.name} gets ${t}`);
+        if (adapter.id === 'cursor') assert.equal(data.readonly, true);
+        if (adapter.id === 'opencode') assert.deepEqual(data.permissions, [{ action: 'edit', resource: '*', effect: 'deny' }]);
+      } else if (adapter.id === 'opencode') assert.equal(data.permissions, undefined);
+      if (adapter.id === 'copilot') assert.ok(!tools.includes('agent'));
     }
   }
+});
+
+test('toml strings: quotes, backslashes, triple quotes', () => {
+  for (const body of ['plain "q" and \'s\'\n', 'back\\slash \\n "x"\n', "has ''' literal end\n", 'has """ basic end\n', "ends with '", 'tab\tand \u0001 ctl\n']) {
+    const toml = serializeToml({ name: 'a"b\\c', developer_instructions: { multiline: body } });
+    assert.deepEqual(parseToml(toml), { name: 'a"b\\c', developer_instructions: body }, JSON.stringify(body));
+  }
+  assert.match(tomlMultiline("x ''' y\n"), /^"""\n/);
+  assert.match(tomlMultiline('x """ y\n'), /^'''\n/);
+});
+
+test('copilot enforces the 30,000-character agent body cap', async () => {
+  const { roles, models, agentsMd, adapters } = await buildRepo();
+  const copilot = adapters.find((a) => a.id === 'copilot');
+  const big = roles.map((r) => (r.name === 'scout' ? { ...r, body: 'x'.repeat(30001) } : r));
+  assert.match(buildTool(copilot, big, models, agentsMd).errors.join('\n'), /scout\.agent\.md body is 30001 characters/);
+});
+
+test('models.local.json overrides per tool and tier', () => {
+  const copy = tempDir('models');
+  fs.copyFileSync(path.join(REPO, 'models.json'), path.join(copy, 'models.json'));
+  fs.writeFileSync(path.join(copy, 'models.local.json'), JSON.stringify({ copilot: { high: { model: 'x-high' } }, codex: { mid: { effort: 'low' } } }));
+  const m = loadModels(copy);
+  assert.deepEqual(m.copilot.high, { model: 'x-high' });
+  assert.deepEqual(m.copilot.low, {});
+  assert.deepEqual(m.codex.mid, { model: 'gpt-6.1-sol', effort: 'low' });
+  assert.deepEqual(loadModels(copy, { local: false }).copilot.high, {});
 });
 
 test('antigravity rejects a 30 KB rulebook', async () => {
@@ -148,4 +187,65 @@ test('AGENTS.md hygiene', () => {
   const banned = /subagent_type|ArtifactData|claude -p|haiku|sonnet|opus|fable/i;
   const hits = text.split('\n').filter((l) => banned.test(l) && !INCIDENT_ALLOW.includes(l));
   assert.deepEqual(hits, []);
+});
+
+test('install --board adds the Board line; without it a warning', async () => {
+  const home = tempDir('board');
+  const without = await run(['install', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.match(without.err, /WARN the board address is not set/);
+  assert.doesNotMatch(read(path.join(home, '.gemini', 'AGENTS.md')), /\*\*Board:\*\* this machine/);
+  const withBoard = await run(['install', '--tool', 'antigravity', '--home', home, '--apply', '--board', 'http://localhost:8377/', '--board-repo', String.raw`C:\src\Orc-Dashboard`]);
+  assert.doesNotMatch(withBoard.err, /not set/);
+  assert.match(
+    read(path.join(home, '.gemini', 'AGENTS.md')),
+    /- \*\*Board:\*\* this machine's board address is `http:\/\/localhost:8377\/`; write it with `node C:\/src\/Orc-Dashboard\/local\/board\.js` \(set `ORC_BOARD_PORT=8377`\)\./,
+  );
+});
+
+test('install warns about two rulebooks in a shared ~/.gemini', async () => {
+  const home = tempDir('gemini');
+  assert.equal((await run(['install', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
+  assert.match(read(path.join(home, '.gemini', 'AGENTS.md')), /^<!-- generated by orc\.mjs: antigravity -->\n/);
+  const g = await run(['install', '--tool', 'gemini-cli', '--home', home]);
+  assert.match(g.err, /AGENTS\.md is an orc-generated Antigravity rulebook .*two copies.*Remove .*AGENTS\.md unless you also use Antigravity/);
+  const home2 = tempDir('gemini2');
+  await run(['install', '--tool', 'gemini-cli', '--home', home2, '--apply']);
+  const a = await run(['install', '--tool', 'antigravity', '--home', home2]);
+  assert.match(a.err, /GEMINI\.md is an orc-generated Gemini CLI rulebook .*Remove .*GEMINI\.md unless you also use Gemini CLI/);
+  // A hand-written file is not ours: no warning.
+  const home3 = tempDir('gemini3');
+  fs.mkdirSync(path.join(home3, '.gemini'));
+  fs.writeFileSync(path.join(home3, '.gemini', 'GEMINI.md'), '# my own rules\n');
+  assert.doesNotMatch((await run(['install', '--tool', 'antigravity', '--home', home3])).err, /two copies/);
+});
+
+test('install backups never collide within one second', async () => {
+  const home = tempDir('stamp');
+  const io = (out) => ({ out: (s) => out.push(s), err: () => {}, stdin: () => '', now: () => new Date(2026, 10, 15, 13, 5, 9) });
+  await main(['install', '--tool', 'codex', '--home', home, '--apply'], io([]));
+  const rule = path.join(home, '.codex', 'AGENTS.md');
+  for (const n of [1, 2, 3]) {
+    fs.writeFileSync(rule, `edit ${n}\n`);
+    await main(['install', '--tool', 'codex', '--home', home, '--apply'], io([]));
+  }
+  const backups = fs.readdirSync(path.dirname(rule)).filter((f) => f.includes('.orc-backup-')).sort();
+  assert.deepEqual(backups, ['AGENTS.md.orc-backup-20261115-130509', 'AGENTS.md.orc-backup-20261115-130509-2', 'AGENTS.md.orc-backup-20261115-130509-3']);
+  assert.equal(read(path.join(path.dirname(rule), backups[2])), 'edit 3\n');
+});
+
+test('install paths for codex, cursor, copilot, opencode', async () => {
+  const home = tempDir('round-b');
+  const expect = {
+    codex: ['.codex/AGENTS.md', '.codex/agents/scout.toml'],
+    copilot: ['.copilot/copilot-instructions.md', '.copilot/agents/scout.agent.md'],
+    opencode: ['.config/opencode/AGENTS.md', '.config/opencode/agents/scout.md'],
+    cursor: ['.cursor/agents/scout.md'],
+  };
+  for (const [tool, paths] of Object.entries(expect)) {
+    const r = await run(['install', '--tool', tool, '--home', home, '--apply']);
+    assert.equal(r.code, 0, tool);
+    for (const p of paths) assert.ok(fs.existsSync(path.join(home, ...p.split('/'))), p);
+    if (tool === 'cursor') assert.match(r.out, /no global rulebook file/);
+  }
+  assert.ok(!fs.existsSync(path.join(home, 'project')));
 });

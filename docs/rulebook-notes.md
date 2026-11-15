@@ -71,3 +71,23 @@ entry is the original wording, under the rule it explains. The rules themselves 
 
 ## Ticket hygiene
 - AcmeApp checklist commands: `& ./.claude/scripts/ado.ps1 comment-add -Id <id> -BodyFile <file>` / `comment-edit -Id <id> -CommentId <cid> -BodyFile <file>`.
+
+## Examples and rationale moved later (original wording, by rule)
+- Data precondition, examples of the rows to name: (which senders populate CUSTOMER_ID, which users have two facilities). Why: the loop verifies the spec; this line is what makes the spec verify the requirement.
+- Board line, why the full path matters: otherwise the agent may look the card up wrong and skip every board write.
+- Durable-rules check, what to list: reusable patterns, feedback that generalises, rule-shaped review findings, traps, process lessons.
+- Never `dotnet test` a solution with a UI project: AcmeApp's `UITests` waits on an app forever.
+- Browser pass without a runtime-validator browser, how: a builder drives Chromium with `playwright-core` from `UITests/bin/Debug/net10.0/.playwright` against a `ticket-env.ps1` app.
+- Keep the machine awake, how (Windows): `SetThreadExecutionState` with `[uint32]2147483651` in a background loop.
+- Cross-cutting rule, example: "null weight reads as 0 lb".
+- Pre-PR tier, why: the refuter already reran the work and proved each test can fail, so a full panel on top of it mostly duplicates effort on test-only diffs.
+- Cheap reviewers, evidence: this rests on one run, and the defect to watch for is like the 12/31/9999 end-date 500 one of them raised.
+- Every path that changes the record, for a reservation: check-in, guest removal, extend, itinerary edits, cancel.
+- Visual-check states, examples: a theme pass, dark mode, a restyle; states such as a booked appointment, a locked block, a +N overlap, an open flyout.
+- Search inputs, examples: a partial number, a phone's last 4, part of an email.
+- Backtest column meaning, examples: a price source, a status, a date.
+- Fresh DB copies, examples of today-relative checks: projections, to-date comparisons, a scorecard's today tiles.
+- Hook-only view edits in scope, why: saying "no product code" made a builder skip hooks that the repo rules require in the same PR.
+- SQL command batch, why: the in-memory provider hides statement order and FK enforcement.
+- Ticket decisions, example deferral: "AdSense deferred: needs nonce CSP + CMP".
+- Cost log, why: the Loop signal lets the tier rule be tuned from evidence; the context sizes let a review compare orchestrator spend against subagent spend.

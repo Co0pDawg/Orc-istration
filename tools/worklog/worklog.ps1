@@ -2,7 +2,8 @@
 # Usage: worklog.ps1 [yyyy-MM-dd] [-GapMinutes 30] [-MaxHours 1]   (default: today)
 # Rules: events are re-ticketed from evidence, maps and parent roll-up; each session's events at most $GapMinutes apart form a segment
 # (prompt-less ones dropped); each quarter-hour slot of the clock grid goes to the ticket with the most weight in it; consecutive
-# same-ticket slots form an entry of at most $MaxHours. One `claude -p --model sonnet` call (haiku fallback) writes the descriptions;
+# same-ticket slots form an entry of at most $MaxHours. One `claude -p --model sonnet` call (haiku fallback) writes the descriptions
+# (WORKLOG_SUMMARY_CMD, when set, is run through the shell instead: prompt on stdin, reply on stdout);
 # WORKLOG_NOSUMMARY=1, a failure, a timeout or a reply line whose echoed start time is not its entry's falls back to the raw facts, marked (raw).
 param(
     [string]$Date = (Get-Date).ToString("yyyy-MM-dd"),
@@ -266,11 +267,17 @@ $body
 "@
     # Start-Process, not Start-Job: jobs fail under a system-wide constrained language mode.
     # WORKLOG_DISABLE (inherited by claude and its hooks) stops the summarising session from logging itself.
-    foreach ($model in "sonnet", "haiku") {
+    # WORKLOG_SUMMARY_CMD: a command line run through the shell (cmd /c) instead of claude, prompt on stdin, answer on stdout.
+    $models = if ($env:WORKLOG_SUMMARY_CMD) { , "WORKLOG_SUMMARY_CMD" } else { "sonnet", "haiku" }
+    foreach ($model in $models) {
         $tmp = 1..3 | ForEach-Object { New-TemporaryFile }
         $ask | Set-Content $tmp[0] -Encoding UTF8
         $old = $env:WORKLOG_DISABLE; $env:WORKLOG_DISABLE = "1"
-        $p = Start-Process claude "-p --model $model" -NoNewWindow -PassThru -WorkingDirectory $logDir -RedirectStandardInput $tmp[0] -RedirectStandardOutput $tmp[1] -RedirectStandardError $tmp[2]
+        $p = if ($env:WORKLOG_SUMMARY_CMD) {
+            Start-Process cmd "/d /s /c `"$env:WORKLOG_SUMMARY_CMD`"" -NoNewWindow -PassThru -WorkingDirectory $logDir -RedirectStandardInput $tmp[0] -RedirectStandardOutput $tmp[1] -RedirectStandardError $tmp[2]
+        } else {
+            Start-Process claude "-p --model $model" -NoNewWindow -PassThru -WorkingDirectory $logDir -RedirectStandardInput $tmp[0] -RedirectStandardOutput $tmp[1] -RedirectStandardError $tmp[2]
+        }
         $env:WORKLOG_DISABLE = $old
         Wait-Process -Id $p.Id -Timeout 120 -ErrorAction SilentlyContinue
         $reply = @()

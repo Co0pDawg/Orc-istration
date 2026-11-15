@@ -32,6 +32,8 @@ After the table (console only, not the `.txt`) come `Sessions:` (`<8-char id>  <
 
 ADO calls (PR resolution, type/title/created/parent via `wi-get -Relations`, WIQL) run `pwsh -NoProfile -File` on `$env:WORKLOG_ADO`, else `$env:ORC_ADO_SCRIPT` (default `C:\src\your-repo\.claude\scripts\ado.ps1`; set `ORC_ADO_SCRIPT` to your repo's `ado.ps1`) with `WORKLOG_DISABLE=1`; a failed call warns and leaves that evidence unresolved. Set `WORKLOG_DIR` to redirect the log folder and `WORKLOG_NOSUMMARY=1` to skip the model call and every ADO call (both used by `test.ps1`, which also runs the ADO path against `test\fake-ado.ps1`). Run `pwsh -NoProfile -File test.ps1` (or `powershell`) to self-check.
 
+Descriptions come from `claude -p --model sonnet` (haiku fallback). To use another tool, set `WORKLOG_SUMMARY_CMD` to a command line: it runs through the shell (`cmd /c`), gets the prompt on stdin and must print the `<n>|<start>|<description>` lines on stdout. Unset, nothing changes.
+
 ## Install
 
 Add to `hooks` in `~/.claude/settings.json`:
@@ -84,7 +86,9 @@ pwsh -NoProfile -File sync-timeline.ps1 -Date 2026-10-19 -DryRun C:\temp\tl   # 
 
 ### Uploading
 
-A Claude session uploads each pending file in `~/.claude/timeline-sync/pending/`:
+On a local board (`ORC_BOARD_URL`, else the URL in `~/.claude/board.local.md`, starts with `http://localhost` or `http://127.0.0.1`), `sync-timeline.ps1` uploads each pending file itself: `node <board repo>/local/board.js set timeline/<date> --file <file>`, with the board repo from `ORC_BOARD_REPO` (default `~/.claude/orchestration/board`) and `ORC_BOARD_PORT` from the address. It deletes the file only when the CLI exits 0 and leaves it pending otherwise.
+
+With an artifact board, a Claude session uploads each pending file in `~/.claude/timeline-sync/pending/`:
 
 1. ArtifactData `get` with url your board's URL (`~/.claude/board.local.md`), collection `timeline`, doc_id = the file's date.
 2. ArtifactData `set` with the same url, collection and doc_id, `file_path` = the pending file, and `if_version` = the version from step 1 when the doc exists.
