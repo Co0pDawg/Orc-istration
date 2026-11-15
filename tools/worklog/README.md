@@ -94,7 +94,7 @@ With an artifact board, a Claude session uploads each pending file in `~/.claude
 2. ArtifactData `set` with the same url, collection and doc_id, `file_path` = the pending file, and `if_version` = the version from step 1 when the doc exists.
 3. Delete the pending file.
 
-Orchestrator sessions do this at the start of every orchestrated task. Any session does it when Cooper says "sync my timeline", and after every roll-up (`worklog.ps1 <date>`): run `sync-timeline.ps1 -Date <date> -Force` first, since a tick built before the roll-up finished carries no roll-up blocks (10/30: the Time page showed none).
+Orchestrator sessions do this at the start of every orchestrated task. Any session does it when the user says "sync my timeline", and after every roll-up (`worklog.ps1 <date>`): run `sync-timeline.ps1 -Date <date> -Force` first, since a tick built before the roll-up finished carries no roll-up blocks (10/30: the Time page showed none).
 
 ## Known ceilings
 

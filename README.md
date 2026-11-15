@@ -68,7 +68,7 @@ Every change that goes through the build loop gets an independent adversarial re
 
 | Tool | What gets generated | Verified how | Main gap |
 |---|---|---|---|
-| Claude Code | `CLAUDE.md` + `agents/*.md` in `~/.claude` | The loop has run on the earlier Claude-only rulebook; the generated files keep identical agent settings but have not run live yet | Read-only refuter rests on its role body |
+| Claude Code | `CLAUDE.md` + `agents/*.md` in `~/.claude` | The loop has run on the earlier Claude-only rulebook; the generated files keep identical agent settings but have not run live yet | Builder and debugger keep MCP tools (no allowlist) |
 | Antigravity CLI | `~/.gemini/AGENTS.md` + `config/agents/` | One headless live run of the scout (2026-11-15) | Models only `flash` or `pro`; no per-agent effort |
 | Gemini CLI | `~/.gemini/GEMINI.md` + `agents/` | Golden-file tests against documented formats | No nested or documented parallel subagents |
 | Codex CLI | `~/.codex/AGENTS.md` + `agents/*.toml` | Golden-file tests against documented formats | No tool allowlist; Windows through WSL2 |
@@ -107,9 +107,10 @@ Save the last command's output as `models.local.json`. The rest: [Install and Qu
 | `AGENTS.md` | The tool-neutral rulebook (the source) |
 | `CLAUDE.md`, `agents/*.md` | Generated Claude Code files (`node tools/orc.mjs sync`) |
 | `roles/*.md` | The five agent roles: tier, access, capabilities, body |
+| `profiles/*.md` | Optional rulebook additions (`--profile <name>`); `dotnet-azure-devops` holds the long rulebook's stack rules and general lessons |
 | `models.json` | Tier to model, per tool; `models.local.json` (untracked) overrides |
 | `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
-| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `install`, `models` |
+| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `install`, `status`, `models` |
 | `tests/` | `npm test`: golden files per tool, install and check tests |
 | `orchestration/README.md` | Cost-log format and review questions |
 | `docs/` | Rulebook incident notes; outlines for unattended runs and project memory |
@@ -140,6 +141,10 @@ node tools/orc.mjs install --tool antigravity    # dry run: prints create / repl
 ```
 
 `--apply` writes; a replaced file is first copied to `<file>.orc-backup-<stamp>`. `install` refuses to replace a file it did not generate unless `--force` is given (with a backup), never deletes, and refuses `--tool claude-code` without `--home`, because this repo is designed to be checked out as `~/.claude`. `--board` and `--board-repo` add this machine's board address to the installed rulebook. Installing both Antigravity and Gemini CLI puts two rulebooks in `~/.gemini`; `install` warns and names the file to remove.
+
+`status --tool <id> [--home <dir>]` compares an installed copy with what would be generated now, without writing: each file is `same`, `differs (first difference at line N)`, `missing` or `extra` (a file in the agents folder that no role generates; install backups are skipped). It exits 0 only when everything is `same`. Pass the same `--board`, `--board-repo` and `--profile` options the install used.
+
+`build` and `install` take `--profile <name>` (repeatable or comma-separated) to append `profiles/<name>.md` after the tool notes; `check`, `sync` and the goldens use no profile. The rulebook core is the compact, generic `AGENTS.md`; `dotnet-azure-devops` is too large for Antigravity's 24,000-byte cap (the build fails with the size message), so use it with uncapped tools or as a project-level rules file.
 
 ## How the .gitignore works
 

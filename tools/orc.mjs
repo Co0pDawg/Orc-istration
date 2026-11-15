@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Orchestration generator and installer. Node 22+, standard library only.
-// build | check | sync | install | models   (see README "Other tools")
+// build | check | sync | install | status | models   (see README "Other tools")
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -63,14 +63,34 @@ export async function loadAdapters(repo) {
   return adapters;
 }
 
-export function renderNotes(adapter, extra = []) {
+export function renderNotes(adapter, extra = [], profiles = []) {
   let notes = adapter.notes;
   for (const line of extra) notes += `${line}\n`;
   if (adapter.gaps.length) {
     notes += `\nWhat ${adapter.title} cannot do (generated from the adapter's gaps):\n`;
     for (const g of adapter.gaps) notes += `- ${g}\n`;
   }
+  for (const p of profiles) notes += `\n# Profile: ${p.name}\n\n${p.text}`;
   return notes;
+}
+
+// Optional rulebook additions from profiles/<name>.md, appended after the tool notes in the order given.
+export function loadProfiles(repo, names = []) {
+  const dir = path.join(repo, 'profiles');
+  const known = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)).sort() : [];
+  return names.map((name) => {
+    if (!known.includes(name)) throw new Error(`unknown profile ${name}; known: ${known.join(', ') || 'none'}`);
+    return { name, text: read(path.join(dir, `${name}.md`)) };
+  });
+}
+
+// The Board line that install adds, so status compares against the same text.
+function boardNotes(opt) {
+  if (!opt.board) return [];
+  const cli = `${opt['board-repo'].replace(/\\/g, '/')}/local/board.js`;
+  const port = /^https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)/.exec(opt.board)?.[1];
+  const portNote = port ? ` (set \`ORC_BOARD_PORT=${port}\`)` : '';
+  return [`- **Board:** this machine's board address is \`${opt.board}\`; write it with \`node "${cli}"\`${portNote}.`];
 }
 
 export function allowedTools(adapter) {
@@ -85,13 +105,13 @@ function emittedTools(file) {
 }
 
 // Returns {files, errors, warnings, rulebook}. Paths are home-relative with forward slashes; agent files carry `role`.
-export function buildTool(adapter, roles, models, agentsMd, { extraNotes = [] } = {}) {
+export function buildTool(adapter, roles, models, agentsMd, { extraNotes = [], profiles = [] } = {}) {
   const errors = [];
   const warnings = [];
   let rulebook = null;
   const tiers = models[adapter.id];
   if (!tiers) return { files: [], errors: [`${adapter.id}: no entry in models.json`], warnings, rulebook };
-  const files = [...adapter.renderRulebook(agentsMd, renderNotes(adapter, extraNotes))];
+  const files = [...adapter.renderRulebook(agentsMd, renderNotes(adapter, extraNotes, profiles))];
   for (const role of roles) {
     const tierModel = tiers[role.tier];
     if (!tierModel) errors.push(`${adapter.id}: no model for tier ${role.tier}`);
@@ -130,14 +150,15 @@ export function buildTool(adapter, roles, models, agentsMd, { extraNotes = [] } 
   return { files, errors, warnings, rulebook };
 }
 
-async function buildAll(repo, toolId, { local = true, extraNotes = [] } = {}) {
+async function buildAll(repo, toolId, { local = true, extraNotes = [], profiles = [] } = {}) {
   const roles = loadRoles(repo);
+  const loaded = loadProfiles(repo, profiles);
   const models = loadModels(repo, { local });
   const agentsMd = read(path.join(repo, 'AGENTS.md'));
   const adapters = await loadAdapters(repo);
   const picked = !toolId || toolId === 'all' ? adapters : adapters.filter((a) => a.id === toolId);
   if (!picked.length) throw new Error(`unknown tool ${toolId}; known: ${adapters.map((a) => a.id).join(', ')}`);
-  return picked.map((adapter) => ({ adapter, ...buildTool(adapter, roles, models, agentsMd, { extraNotes }) }));
+  return picked.map((adapter) => ({ adapter, ...buildTool(adapter, roles, models, agentsMd, { extraNotes, profiles: loaded }) }));
 }
 
 function checkedInTargets(results) {
@@ -183,7 +204,10 @@ function stamp(d = new Date()) {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo'];
+const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile'];
+
+// Value options that may repeat; each value may also be comma-separated.
+const LIST_OPTIONS = ['profile'];
 
 const FLAG_OPTIONS = ['apply', 'force', 'from-stdin'];
 
@@ -202,7 +226,11 @@ export function args(argv) {
     if (VALUE_OPTIONS.includes(key)) {
       const value = eq < 0 ? argv[++i] : a.slice(eq + 1);
       if (value === undefined || value.trim() === '' || value.startsWith('--')) throw new Error(`--${key} needs a value`);
-      out[key] = value;
+      if (LIST_OPTIONS.includes(key)) {
+        const items = value.split(',').map((s) => s.trim());
+        if (items.some((s) => s === '')) throw new Error(`--${key} needs a value`);
+        out[key] = [...(out[key] ?? []), ...items];
+      } else out[key] = value;
     } else if (FLAG_OPTIONS.includes(key) && eq < 0) out[key] = true;
     else throw new Error(`unknown option ${a}`);
   }
@@ -233,10 +261,17 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   }
   const cmd = opt._[0];
   const repo = path.resolve(opt.repo ?? DEFAULT_REPO);
+  const profiles = opt.profile ?? [];
+  if (profiles.length && !['build', 'install', 'status'].includes(cmd)) return fail('--profile applies to build, install and status only');
+  try {
+    loadProfiles(repo, profiles);
+  } catch (e) {
+    return fail(e.message);
+  }
 
   if (cmd === 'build') {
     const outDir = path.resolve(repo, opt.out ?? 'dist');
-    const results = await buildAll(repo, opt.tool ?? 'all');
+    const results = await buildAll(repo, opt.tool ?? 'all', { profiles });
     let code = 0;
     for (const { adapter, files, errors, warnings, rulebook } of results) {
       warnings.forEach((w) => io.err(`WARN ${w}`));
@@ -310,16 +345,9 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     }
     if (!opt.board !== !opt['board-repo']) return fail('pass --board and --board-repo together, or neither');
     const home = path.resolve(opt.home ?? (await import('node:os')).homedir());
-    const extraNotes = [];
-    if (opt.board) {
-      const cli = `${opt['board-repo'].replace(/\\/g, '/')}/local/board.js`;
-      const port = /^https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)/.exec(opt.board)?.[1];
-      const portNote = port ? ` (set \`ORC_BOARD_PORT=${port}\`)` : '';
-      extraNotes.push(`- **Board:** this machine's board address is \`${opt.board}\`; write it with \`node "${cli}"\`${portNote}.`);
-    } else {
-      io.err('WARN the board address is not set: pass --board <address> --board-repo <path> so the rulebook names it');
-    }
-    const [{ adapter, files, errors }] = await buildAll(repo, toolId, { extraNotes });
+    const extraNotes = boardNotes(opt);
+    if (!opt.board) io.err('WARN the board address is not set: pass --board <address> --board-repo <path> so the rulebook names it');
+    const [{ adapter, files, errors }] = await buildAll(repo, toolId, { extraNotes, profiles });
     if (errors.length) return fail(errors.join('\n'));
     for (const c of adapter.conflicts ?? []) {
       const other = path.join(home, ...c.path.split('/'));
@@ -366,6 +394,42 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     return 0;
   }
 
+  if (cmd === 'status') {
+    const toolId = opt.tool;
+    if (!toolId || toolId === 'all') return fail('status needs --tool <id>');
+    if (!opt.board !== !opt['board-repo']) return fail('pass --board and --board-repo together, or neither');
+    const home = path.resolve(opt.home ?? (await import('node:os')).homedir());
+    const [{ adapter, files, errors }] = await buildAll(repo, toolId, { extraNotes: boardNotes(opt), profiles });
+    if (errors.length) return fail(errors.join('\n'));
+    const installed = files.filter((f) => f.install !== false);
+    const ours = new Set();
+    let clean = true;
+    for (const f of installed) {
+      const target = path.join(home, ...f.path.split('/'));
+      ours.add(target);
+      let state = 'same';
+      if (!fs.existsSync(target)) state = 'missing';
+      else {
+        const line = firstDiffLine(read(target), normalizeEol(f.content));
+        if (line) state = `differs (first difference at line ${line})`;
+      }
+      if (state !== 'same') clean = false;
+      io.out(`${state}: ${target}`);
+    }
+    // Files in the agents folder that no role generates; install backups (*.orc-backup-*) are not counted.
+    const agentsDir = path.join(home, ...adapter.home.agentsDir.split('/'));
+    if (fs.existsSync(agentsDir)) {
+      for (const e of fs.readdirSync(agentsDir, { withFileTypes: true })) {
+        const p = path.join(agentsDir, e.name);
+        if (!e.isFile() || ours.has(p) || e.name.includes('.orc-backup-')) continue;
+        clean = false;
+        io.out(`extra: ${p}`);
+      }
+    }
+    io.out(clean ? `status ${adapter.id}: all same` : `status ${adapter.id}: out of date (install --apply updates it)`);
+    return clean ? 0 : 1;
+  }
+
   if (cmd === 'models') {
     if (opt.tool !== 'antigravity' || !opt['from-stdin']) return fail('usage: models --tool antigravity --from-stdin');
     const { fragment, error } = parseAgyModels(decodeText(io.stdin()));
@@ -374,7 +438,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     return 0;
   }
 
-  return fail('usage: node tools/orc.mjs build|check|sync|install|models [options]');
+  return fail('usage: node tools/orc.mjs build|check|sync|install|status|models [options]');
 }
 
 function isMain() {

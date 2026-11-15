@@ -183,15 +183,126 @@ test('models helper reads agy models output', async () => {
   assert.match(bad.err, /cannot tell the low, mid, high flash slug/);
 });
 
-// Lines that may name a model because they record an incident as a fact, not a rule.
-const INCIDENT_ALLOW = ['  - On 18261 Haiku gave opposite size verdicts on identical tickets across two runs.'];
-
 test('AGENTS.md hygiene', () => {
   const text = read(path.join(REPO, 'AGENTS.md'));
   assert.ok(Buffer.byteLength(text) < 24000, 'AGENTS.md over 24,000 bytes');
-  const banned = /subagent_type|ArtifactData|claude -p|haiku|sonnet|opus|fable/i;
-  const hits = text.split('\n').filter((l) => banned.test(l) && !INCIDENT_ALLOW.includes(l));
+  const banned = /subagent_type|ArtifactData|claude -p|haiku|sonnet|opus|fable|board-reminder|@board\.local\.md|~\/\.claude|AcmeApp|dotnet|Playwright|ticket-env|ado\.ps1|UITests|vstest|Azure DevOps/i;
+  const hits = text.split('\n').filter((l) => banned.test(l));
   assert.deepEqual(hits, []);
+});
+
+test('every generated rulebook carries the pull request signature', async () => {
+  const sig = 'End every pull request description with the line `Built with [Orc-istration](https://github.com/Co0pDawg/Orc-istration) \u{1F9CC}`.';
+  const { roles, models, agentsMd, adapters } = await buildRepo();
+  for (const adapter of adapters) {
+    const { files } = buildTool(adapter, roles, models, agentsMd);
+    const rule = files.find((f) => !f.role && f.content.includes('# Orchestration'));
+    assert.ok(rule && rule.content.includes(sig), `${adapter.id} rulebook has the signature`);
+  }
+  const notes = read(path.join(REPO, 'adapters', 'claude-code.notes.md'));
+  assert.ok(notes.includes('`\u{1F916} Generated with [Claude Code](https://claude.com/claude-code) and built with [Orc-istration](https://github.com/Co0pDawg/Orc-istration) \u{1F9CC}`'));
+  // The troll is the only non-ASCII character AGENTS.md adds beyond its arrows and dashes, and only in that line.
+  for (const l of agentsMd.split('\n')) if (l.includes('\u{1F9CC}')) assert.ok(l.includes(sig), l);
+});
+
+test('no tracked text file names the owner', () => {
+  const name = new RegExp(['c', 'o', 'o', 'p', 'e', 'r'].join(''), 'i');
+  const files = spawnSync('git', ['ls-files', '-z'], { cwd: REPO, encoding: 'utf8' }).stdout.split('\0').filter(Boolean);
+  assert.ok(files.length > 50, 'git ls-files listed the repo');
+  const hits = [];
+  for (const f of files) {
+    const buf = fs.readFileSync(path.join(REPO, f));
+    if (buf.includes(0)) continue;
+    buf.toString('utf8').split('\n').forEach((l, i) => {
+      if (name.test(l)) hits.push(`${f}:${i + 1}`);
+    });
+  }
+  assert.deepEqual(hits, []);
+});
+
+test('claude-code agent frontmatter matches the roster', () => {
+  const want = {
+    scout: { model: 'haiku', tools: 'Glob, Grep, Read, Bash' },
+    researcher: { model: 'sonnet', effort: 'high', tools: 'Glob, Grep, Read, Bash, WebFetch, WebSearch' },
+    builder: { model: 'opus', effort: 'high' },
+    refuter: { model: 'opus', effort: 'high', tools: 'Glob, Grep, Read, Bash' },
+    debugger: { model: 'opus', effort: 'high' },
+  };
+  for (const [name, fm] of Object.entries(want)) {
+    const { data } = parse(read(path.join(REPO, 'agents', `${name}.md`)));
+    assert.deepEqual(data, { name, description: data.description, ...fm }, name);
+  }
+});
+
+test('--profile appends after the tool notes; bad profiles fail', async () => {
+  const out = tempDir('profile');
+  const r = await run(['build', '--tool', 'codex', '--profile', 'dotnet-azure-devops', '--out', out]);
+  assert.equal(r.code, 0, r.err);
+  const rule = read(path.join(out, 'codex', '.codex', 'AGENTS.md'));
+  const notes = rule.indexOf('# Codex CLI');
+  const prof = rule.indexOf('\n# Profile: dotnet-azure-devops\n');
+  assert.ok(notes > 0 && prof > notes, 'profile follows the tool notes');
+  assert.match(rule.slice(prof), /## Stack-specific/);
+  assert.doesNotMatch(read(path.join(REPO, 'AGENTS.md')), /# Profile:/);
+  const twice = await run(['build', '--tool', 'opencode', '--profile', 'dotnet-azure-devops', '--profile=dotnet-azure-devops', '--out', out]);
+  assert.equal(twice.code, 0);
+  assert.equal(read(path.join(out, 'opencode', '.config', 'opencode', 'AGENTS.md')).split('# Profile: ').length, 3);
+  const unknown = await run(['build', '--tool', 'codex', '--profile', 'nope', '--out', out]);
+  assert.equal(unknown.code, 1);
+  assert.match(unknown.err, /unknown profile nope; known: dotnet-azure-devops/);
+  for (const argv of [['build', '--profile'], ['build', '--profile', 'a,,b'], ['build', '--profile=']]) {
+    assert.match((await run(argv)).err, /--profile needs a value/, argv.join(' '));
+  }
+  const chk = await run(['check', '--profile', 'dotnet-azure-devops']);
+  assert.equal(chk.code, 1);
+  assert.match(chk.err, /--profile applies to build, install and status only/);
+});
+
+test('--profile over the Antigravity cap fails with the size message', async () => {
+  const copy = tempDir('bigprofile');
+  for (const p of ['AGENTS.md', 'models.json', 'roles', 'adapters', 'tools/lib']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
+  fs.mkdirSync(path.join(copy, 'profiles'));
+  fs.writeFileSync(path.join(copy, 'profiles', 'big.md'), `${'x'.repeat(20000)}\n`);
+  const r = await run(['build', '--repo', copy, '--tool', 'antigravity', '--profile', 'big', '--out', path.join(copy, 'dist')]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /antigravity: \.gemini\/AGENTS\.md is \d+ bytes; the limit is under 24000/);
+});
+
+test('status: same, differs, missing, extra; never writes', async () => {
+  const home = tempDir('status');
+  const before = await run(['status', '--tool', 'antigravity', '--home', home]);
+  assert.equal(before.code, 1);
+  assert.match(before.out, /missing: .*AGENTS\.md/);
+  assert.deepEqual(fs.readdirSync(home), [], 'status wrote nothing');
+  assert.equal((await run(['install', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
+  const same = await run(['status', '--tool', 'antigravity', '--home', home]);
+  assert.equal(same.code, 0, same.out);
+  assert.match(same.out, /status antigravity: all same/);
+  assert.doesNotMatch(same.out, /differs|missing|extra/);
+  const scout = path.join(home, '.gemini', 'config', 'agents', 'scout.md');
+  const lines = read(scout).split('\n');
+  lines[3] = 'edited';
+  fs.writeFileSync(scout, lines.join('\n'));
+  fs.writeFileSync(path.join(home, '.gemini', 'config', 'agents', 'mine.md'), 'x\n');
+  fs.writeFileSync(path.join(home, '.gemini', 'config', 'agents', 'scout.md.orc-backup-20261115-130509'), 'x\n');
+  fs.rmSync(path.join(home, '.gemini', 'config', 'agents', 'builder.md'));
+  const snapshot = fs.readdirSync(path.join(home, '.gemini', 'config', 'agents')).sort();
+  const diff = await run(['status', '--tool', 'antigravity', '--home', home]);
+  assert.equal(diff.code, 1);
+  assert.match(diff.out, /differs \(first difference at line 4\): .*scout\.md/);
+  assert.match(diff.out, /missing: .*builder\.md/);
+  assert.match(diff.out, /extra: .*mine\.md/);
+  assert.doesNotMatch(diff.out, /orc-backup/);
+  assert.deepEqual(fs.readdirSync(path.join(home, '.gemini', 'config', 'agents')).sort(), snapshot, 'status wrote nothing');
+  // claude-code compares the ~/.claude layout; the board line from install is part of the comparison.
+  const ch = tempDir('status-claude');
+  const board = ['--board', 'http://localhost:8377/', '--board-repo', 'C:/b'];
+  assert.equal((await run(['install', '--tool', 'claude-code', '--home', ch, '--apply', ...board])).code, 0);
+  const c = await run(['status', '--tool', 'claude-code', '--home', ch, ...board]);
+  assert.equal(c.code, 0, c.out);
+  for (const p of ['CLAUDE.md', 'AGENTS.md', 'refuter.md']) assert.match(c.out, new RegExp(`same: .*${p.replace('.', '\\.')}`));
+  assert.equal((await run(['status', '--tool', 'claude-code', '--home', ch])).code, 1, 'without the board line CLAUDE.md differs');
+  assert.match((await run(['status', '--home', ch])).err, /status needs --tool/);
 });
 
 test('install --board adds the Board line; without it a warning', async () => {
