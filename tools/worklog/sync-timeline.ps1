@@ -3,7 +3,8 @@
 # Usage: sync-timeline.ps1 [-Date yyyy-MM-dd] [-From yyyy-MM-dd] [-Force] [-DryRun <dir>]
 #   No -Date or -From (the scheduled tick): today, then yesterday; yesterday's marker makes it free once its last events are in.
 #   -From: every CSV date from that day to today. -DryRun: writes <dir>\timeline-<date>.json instead of the pending file.
-# Each built doc goes to ~/.claude/timeline-sync/pending/timeline-<date>.json; a Claude session uploads it (README "Uploading").
+# Each built doc goes to ~/.claude/timeline-sync/pending/timeline-<date>.json; a Claude session uploads it (README "Uploading"),
+# or, on a local board (ORC_BOARD_URL / board.local.md at http://localhost), this script does with the board CLI.
 # This script never calls a model. Only at/kind/session/ticket, project, review, notes, ADO titles, roll-up blocks and flags go in the doc; prompt text never does.
 # A date whose inputs (CSV, sessions.map, <date>.map, <date>.txt) are unchanged since its last build is skipped (-Force rebuilds it).
 # Timing: the export runs the worklog's full attribution with ADO (PR and parent roll-up), about 95 s for a busy day, plus up to
@@ -135,5 +136,26 @@ foreach ($d in $dates) {
         }
         if (-not $typeFailed) { $hash | Set-Content $marker }
     } catch { Log "FAILED timeline/$d`: $_"; $failed++ }
+}
+
+# Local board (ORC_BOARD_URL, else the first URL in ~/.claude/board.local.md, is http://localhost or http://127.0.0.1): upload
+# each pending file with the board CLI and delete it only on exit 0. An artifact board keeps the files for a Claude session.
+$boardUrl = $env:ORC_BOARD_URL
+if (-not $boardUrl) {
+    $boardFile = Join-Path $HOME ".claude\board.local.md"
+    if (Test-Path $boardFile) { $boardUrl = [regex]::Match((Get-Content $boardFile -Raw), 'https?://\S+').Value }
+}
+if (-not $DryRun -and $boardUrl -match '^http://(localhost|127\.0\.0\.1)(:(\d+))?(/|$)') {
+    if ($Matches[3]) { $env:ORC_BOARD_PORT = $Matches[3] }
+    $boardRepo = if ($env:ORC_BOARD_REPO) { $env:ORC_BOARD_REPO } else { Join-Path $HOME ".claude\orchestration\board" }
+    $cli = Join-Path $boardRepo "local\board.js"
+    $missing = if (-not (Get-Command node -ErrorAction SilentlyContinue)) { "node is not on PATH" } elseif (-not (Test-Path $cli)) { "the board CLI $cli does not exist" }
+    if ($missing) { Log "WARN cannot upload to $boardUrl`: $missing; pending files left" }
+    else { foreach ($f in Get-ChildItem $pending -Filter "timeline-????-??-??.json") {
+        $d = $f.BaseName.Substring(9)
+        node $cli set "timeline/$d" --file $f.FullName | Out-Null
+        if ($LASTEXITCODE -eq 0) { Remove-Item $f.FullName; Log "uploaded timeline/$d to $boardUrl" }
+        else { Log "WARN upload of timeline/$d exited $LASTEXITCODE; left pending" }
+    } }
 }
 if ($failed) { exit 1 }

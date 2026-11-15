@@ -6,6 +6,13 @@
 !/.gitattributes
 !/README.md
 !/CLAUDE.md
+!/AGENTS.md
+!/models.json
+!/package.json
+# Tool-neutral core: roles, per-tool adapters, tests (dist/ and models.local.json stay untracked)
+!/roles/
+!/adapters/
+!/tests/
 !/settings.example.json
 
 # The agent roster
