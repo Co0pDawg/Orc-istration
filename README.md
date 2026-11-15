@@ -1,6 +1,6 @@
 # Orc-istration
 
-Orc-istration is a method and a toolkit for running a team of AI coding agents the way a lead runs a small engineering team: one orchestrator plans and reviews, cheap agents search, expensive agents build, and an adversarial reviewer tries to break every change before a person sees it. One tool-neutral rulebook and five agent roles are turned into native files for seven agent tools.
+Orc-istration is a method and a toolkit for running a team of AI coding agents the way a lead runs a small engineering team: one orchestrator plans and reviews, cheap agents search, expensive agents build, and an adversarial reviewer tries to break each built change before a person sees it. One tool-neutral rulebook and five agent roles are turned into native files for seven agent tools.
 
 The orchestrator is the main chat session. A subagent is a separate agent the orchestrator starts with a written brief; it works in its own context and returns a short report. Each subagent role runs on a tier (Low, Mid or High), which maps to a cheaper or more capable model per tool.
 
@@ -13,7 +13,7 @@ Full documentation lives in the [wiki](https://github.com/Co0pDawg/Orc-istration
 3. A builder (High tier) implements exactly the spec and runs the filtered tests.
 4. A refuter (High tier) reviews the diff against the spec, reruns the tests, mutation-checks them, and returns ACCEPT or REWORK.
 5. REWORK goes back to the same builder. After two rounds the orchestrator reads the diff and decides.
-6. The orchestrator reads the final diff itself, picks a pre-PR review tier, and opens a draft pull request.
+6. The orchestrator reads the final diff itself, picks a pre-PR review tier, and opens a pull request.
 
 ```mermaid
 flowchart LR
@@ -24,7 +24,7 @@ flowchart LR
   F -- "REWORK" --> B
   F -- "ACCEPT" --> D["Orchestrator reads diff"]
   D --> P["Pre-PR review"]
-  P --> PR["Draft PR"]
+  P --> PR["Pull request"]
 ```
 
 ## What is in the box
@@ -60,15 +60,15 @@ flowchart LR
 
 ## Evidence
 
-The first cost review ([`orchestration/README.md`](orchestration/README.md), 13 records) covered about 14.5M subagent tokens over about 110 dispatches: 80 earned, 9 marginal, 4 waste. The High tier took about 75% of the spend. Scouts were half marginal, and all four wastes were rate-limit failures or a dispatch in the wrong folder. The rules changed because of it: a cap of three High-tier agents in flight, scouts limited to locations, a data-precondition item in the marching orders, and a mandatory orchestrator-context line in each record.
+The first cost review ([`orchestration/README.md`](orchestration/README.md), 13 records) covered about 14.5M subagent tokens over about 110 dispatches. Of those the review labelled, 80 were earned, 9 marginal and 4 waste. The High tier took about 75% of the spend. Scouts were half marginal, and all four wastes were rate-limit failures or a dispatch in the wrong folder. The rules changed because of it: a cap of three High-tier agents in flight, scouts limited to locations, a data-precondition item in the marching orders, and a mandatory orchestrator-context line in each record.
 
-Every change gets an independent adversarial review before a person sees it. The refuter reruns the tests itself and mutation-checks them (it breaks the code and confirms a test fails). The incidents behind each rule are recorded in [`docs/rulebook-notes.md`](docs/rulebook-notes.md).
+Every change that goes through the build loop gets an independent adversarial review before a person sees it; only small inline fixes (a one-line change, anything under about five tool calls) skip it. The refuter reruns the tests itself and mutation-checks them (it breaks the code and confirms a test fails). The incidents behind each rule are recorded in [`docs/rulebook-notes.md`](docs/rulebook-notes.md).
 
 ## Works with
 
 | Tool | What gets generated | Verified how | Main gap |
 |---|---|---|---|
-| Claude Code | `CLAUDE.md` + `agents/*.md` in `~/.claude` | Run live (this repo is the live setup) | Read-only refuter rests on its role body |
+| Claude Code | `CLAUDE.md` + `agents/*.md` in `~/.claude` | The loop has run on the earlier Claude-only rulebook; the generated files keep identical agent settings but have not run live yet | Read-only refuter rests on its role body |
 | Antigravity CLI | `~/.gemini/AGENTS.md` + `config/agents/` | One headless live run of the scout (2026-11-15) | Models only `flash` or `pro`; no per-agent effort |
 | Gemini CLI | `~/.gemini/GEMINI.md` + `agents/` | Golden-file tests against documented formats | No nested or documented parallel subagents |
 | Codex CLI | `~/.codex/AGENTS.md` + `agents/*.toml` | Golden-file tests against documented formats | No tool allowlist; Windows through WSL2 |
@@ -119,7 +119,7 @@ Save the last command's output as `models.local.json`. The rest: [Install and Qu
 
 ## Limits
 
-- Only Claude Code and Antigravity CLI have been run live; Antigravity only for one headless run of the generated scout.
+- The full loop has run live only on Claude Code, and that was with the earlier Claude-only rulebook: the regenerated files keep each agent's settings identical but have not run a live session yet. Antigravity CLI has had one headless run of the generated scout.
 - Gemini CLI, Codex, Cursor, Copilot and OpenCode are verified by tests against documented formats only.
 - Cursor and Copilot need model ids set in `models.local.json`; until then they use `inherit` or the default model.
 - Hooks, the worklog and sound alerts are Claude Code extras. On other tools the board update after each report is a build-loop step.
@@ -139,7 +139,7 @@ node tools/orc.mjs build --tool all              # writes dist/<tool>/... (untra
 node tools/orc.mjs install --tool antigravity    # dry run: prints create / replace / unchanged per file
 ```
 
-`--apply` writes; a replaced file is first copied to `<file>.orc-backup-<stamp>`. `install` refuses to replace a file it did not generate unless `--force` is given (with a backup), never deletes, and refuses `--tool claude-code` without `--home`, because this repo is the live `~/.claude`. `--board` and `--board-repo` add this machine's board address to the installed rulebook. Installing both Antigravity and Gemini CLI puts two rulebooks in `~/.gemini`; `install` warns and names the file to remove.
+`--apply` writes; a replaced file is first copied to `<file>.orc-backup-<stamp>`. `install` refuses to replace a file it did not generate unless `--force` is given (with a backup), never deletes, and refuses `--tool claude-code` without `--home`, because this repo is designed to be checked out as `~/.claude`. `--board` and `--board-repo` add this machine's board address to the installed rulebook. Installing both Antigravity and Gemini CLI puts two rulebooks in `~/.gemini`; `install` warns and names the file to remove.
 
 ## How the .gitignore works
 
