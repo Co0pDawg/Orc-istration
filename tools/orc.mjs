@@ -1,0 +1,265 @@
+#!/usr/bin/env node
+// Orchestration generator and installer. Node 22+, standard library only.
+// build | check | sync | install | models   (see README "Other tools")
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { parse, normalizeEol } from './lib/frontmatter.mjs';
+import { parseRole } from './lib/roles.mjs';
+
+const DEFAULT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+function read(file) {
+  return normalizeEol(fs.readFileSync(file, 'utf8'));
+}
+
+export function loadRoles(repo) {
+  const dir = path.join(repo, 'roles');
+  return fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith('.md'))
+    .sort()
+    .map((f) => parseRole(read(path.join(dir, f)), `roles/${f}`));
+}
+
+export function loadModels(repo, { local = true } = {}) {
+  const models = JSON.parse(read(path.join(repo, 'models.json')));
+  const localFile = path.join(repo, 'models.local.json');
+  if (local && fs.existsSync(localFile)) {
+    const over = JSON.parse(read(localFile));
+    for (const [tool, tiers] of Object.entries(over)) {
+      models[tool] ??= {};
+      for (const [tier, value] of Object.entries(tiers)) {
+        const base = models[tool][tier];
+        models[tool][tier] =
+          base && typeof base === 'object' && typeof value === 'object' ? { ...base, ...value } : value;
+      }
+    }
+  }
+  return models;
+}
+
+export async function loadAdapters(repo) {
+  const dir = path.join(repo, 'adapters');
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.mjs')).sort();
+  const adapters = [];
+  for (const f of files) {
+    const mod = await import(pathToFileURL(path.join(dir, f)).href);
+    const adapter = mod.default;
+    const notesFile = path.join(dir, `${adapter.id}.notes.md`);
+    adapter.notes = fs.existsSync(notesFile) ? read(notesFile) : '';
+    adapters.push(adapter);
+  }
+  return adapters;
+}
+
+export function renderNotes(adapter) {
+  let notes = adapter.notes;
+  if (adapter.gaps.length) {
+    notes += `\nWhat ${adapter.title} cannot do (generated from the adapter's gaps):\n`;
+    for (const g of adapter.gaps) notes += `- ${g}\n`;
+  }
+  return notes;
+}
+
+export function allowedTools(adapter) {
+  return new Set(Object.values(adapter.capabilityTools ?? {}).flat().filter(Boolean));
+}
+
+function emittedTools(content) {
+  const { data } = parse(content);
+  if (data.tools === undefined) return [];
+  return Array.isArray(data.tools) ? data.tools : String(data.tools).split(',').map((s) => s.trim());
+}
+
+// Returns {files, errors}. Paths are home-relative with forward slashes.
+export function buildTool(adapter, roles, models, agentsMd) {
+  const errors = [];
+  const tiers = models[adapter.id];
+  if (!tiers) return { files: [], errors: [`${adapter.id}: no entry in models.json`] };
+  const files = [...adapter.renderRulebook(agentsMd, renderNotes(adapter))];
+  for (const role of roles) {
+    const tierModel = tiers[role.tier];
+    if (!tierModel) errors.push(`${adapter.id}: no model for tier ${role.tier}`);
+    else files.push(adapter.renderAgent(role, tierModel));
+  }
+  const allowed = allowedTools(adapter);
+  const editTools = new Set(adapter.capabilityTools?.edit ?? []);
+  for (const f of files) {
+    f.path = f.path.replace(/\\/g, '/');
+    const limit = adapter.limits?.ruleBytes;
+    if (limit && f.path === adapter.home.rulebook) {
+      const size = Buffer.byteLength(f.content, 'utf8');
+      if (size >= limit) errors.push(`${adapter.id}: ${f.path} is ${size} bytes; the limit is under ${limit}`);
+    }
+    if (!f.path.startsWith(`${adapter.home.agentsDir}/`)) continue;
+    let tools;
+    try {
+      tools = emittedTools(f.content);
+    } catch (e) {
+      errors.push(`${adapter.id}: ${f.path}: ${e.message}`);
+      continue;
+    }
+    for (const t of tools) if (!allowed.has(t)) errors.push(`${adapter.id}: ${f.path} emits unknown tool ${t}`);
+    const role = roles.find((r) => f.path.endsWith(`/${r.name}.md`));
+    if (role?.access === 'read-only') {
+      for (const t of tools) if (editTools.has(t)) errors.push(`${adapter.id}: read-only ${role.name} gets ${t}`);
+    }
+  }
+  return { files, errors };
+}
+
+async function buildAll(repo, toolId, { local = true } = {}) {
+  const roles = loadRoles(repo);
+  const models = loadModels(repo, { local });
+  const agentsMd = read(path.join(repo, 'AGENTS.md'));
+  const adapters = await loadAdapters(repo);
+  const picked = !toolId || toolId === 'all' ? adapters : adapters.filter((a) => a.id === toolId);
+  if (!picked.length) throw new Error(`unknown tool ${toolId}; known: ${adapters.map((a) => a.id).join(', ')}`);
+  return picked.map((adapter) => ({ adapter, ...buildTool(adapter, roles, models, agentsMd) }));
+}
+
+function checkedInTargets(results) {
+  const claude = results.find((r) => r.adapter.id === 'claude-code');
+  const prefix = `${claude.adapter.home.root}/`;
+  return claude.files
+    .filter((f) => f.path !== `${prefix}AGENTS.md`)
+    .map((f) => ({ rel: f.path.slice(prefix.length), content: f.content }));
+}
+
+function stamp(d = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+function args(argv) {
+  const out = { _: [] };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith('--')) {
+      const key = a.slice(2);
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith('--')) out[key] = true;
+      else out[key] = argv[++i];
+    } else out._.push(a);
+  }
+  return out;
+}
+
+export function parseAgyModels(text) {
+  const found = {};
+  for (const line of normalizeEol(text).split('\n')) {
+    const m = /^\s*(\S*flash\S*-(low|medium|high))\s/.exec(`${line} `);
+    if (m) found[{ low: 'low', medium: 'mid', high: 'high' }[m[2]]] ??= m[1];
+  }
+  const missing = ['low', 'mid', 'high'].filter((t) => !found[t]);
+  if (missing.length) return { error: `cannot tell the ${missing.join(', ')} flash slug(s) from this list` };
+  return { fragment: { antigravity: { headless: { low: found.low, mid: found.mid, high: found.high } } } };
+}
+
+export async function main(argv, io = { out: console.log, err: console.error, stdin: () => fs.readFileSync(0, 'utf8') }) {
+  const opt = args(argv);
+  const cmd = opt._[0];
+  const repo = path.resolve(opt.repo ?? DEFAULT_REPO);
+  const fail = (msg) => {
+    io.err(msg);
+    return 1;
+  };
+
+  if (cmd === 'build') {
+    const outDir = path.resolve(repo, opt.out ?? 'dist');
+    const results = await buildAll(repo, opt.tool ?? 'all');
+    let code = 0;
+    for (const { adapter, files, errors } of results) {
+      if (errors.length) {
+        errors.forEach((e) => io.err(e));
+        code = 1;
+        continue;
+      }
+      for (const f of files) {
+        const target = path.join(outDir, adapter.id, ...f.path.split('/'));
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, f.content);
+        io.out(`${adapter.id}/${f.path} ${Buffer.byteLength(f.content)} bytes`);
+      }
+      for (const g of adapter.gaps) io.out(`  gap: ${g}`);
+    }
+    return code;
+  }
+
+  if (cmd === 'check') {
+    const results = await buildAll(repo, 'all', { local: false });
+    const problems = results.flatMap((r) => r.errors);
+    for (const { rel, content } of checkedInTargets(results)) {
+      const file = path.join(repo, ...rel.split('/'));
+      if (!fs.existsSync(file)) problems.push(`${rel}: missing (run node tools/orc.mjs sync)`);
+      else if (read(file) !== content) {
+        const a = read(file).split('\n');
+        const b = content.split('\n');
+        const i = a.findIndex((line, n) => line !== b[n]);
+        problems.push(`${rel}: differs from generated at line ${i + 1} (run node tools/orc.mjs sync)`);
+      }
+    }
+    if (problems.length) {
+      problems.forEach((p) => io.err(`FAIL ${p}`));
+      return 1;
+    }
+    io.out(`check ok: ${results.length} adapters, ${results.reduce((n, r) => n + r.files.length, 0)} files`);
+    return 0;
+  }
+
+  if (cmd === 'sync') {
+    const results = await buildAll(repo, 'claude-code', { local: false });
+    if (results[0].errors.length) return fail(results[0].errors.join('\n'));
+    for (const { rel, content } of checkedInTargets(results)) {
+      fs.writeFileSync(path.join(repo, ...rel.split('/')), content);
+      io.out(`wrote ${rel}`);
+    }
+    return 0;
+  }
+
+  if (cmd === 'install') {
+    const toolId = opt.tool;
+    if (!toolId || toolId === true || toolId === 'all') return fail('install needs --tool <id>');
+    if (toolId === 'claude-code' && !opt.home) {
+      return fail('refusing --tool claude-code without --home: the live ~/.claude is synced by hand');
+    }
+    const home = path.resolve(typeof opt.home === 'string' ? opt.home : (await import('node:os')).homedir());
+    const [{ adapter, files, errors }] = await buildAll(repo, toolId);
+    if (errors.length) return fail(errors.join('\n'));
+    const when = stamp();
+    for (const f of files) {
+      const target = path.join(home, ...f.path.split('/'));
+      const exists = fs.existsSync(target);
+      const state = !exists ? 'create' : read(target) === normalizeEol(f.content) ? 'unchanged' : 'replace';
+      if (opt.apply && state !== 'unchanged') {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        if (state === 'replace') fs.copyFileSync(target, `${target}.orc-backup-${when}`);
+        fs.writeFileSync(target, f.content);
+      }
+      io.out(`${opt.apply ? 'applied' : 'would'} ${state}: ${target}`);
+    }
+    if (!opt.apply) io.out(`dry run for ${adapter.id}; add --apply to write`);
+    return 0;
+  }
+
+  if (cmd === 'models') {
+    if (opt.tool !== 'antigravity' || !opt['from-stdin']) return fail('usage: models --tool antigravity --from-stdin');
+    const { fragment, error } = parseAgyModels(io.stdin());
+    if (error) return fail(`${error}; paste the output of "agy models"`);
+    io.out(JSON.stringify(fragment, null, 2));
+    return 0;
+  }
+
+  return fail('usage: node tools/orc.mjs build|check|sync|install|models [options]');
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main(process.argv.slice(2)).then(
+    (code) => process.exit(code),
+    (e) => {
+      console.error(e.message);
+      process.exit(1);
+    },
+  );
+}

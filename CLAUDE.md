@@ -1,165 +1,18 @@
-# Orchestration (applies in every project)
+@AGENTS.md
 
-The orchestrator is the main session, on whatever model it runs (Fable 5.2 at medium effort today), and it is not the worker. It plans, writes the spec, dispatches, reads reports, makes the judgment calls, and integrates. It does not bulk-read code, bulk-refactor, or write docs when a cheaper agent can. It does read the final diff before reporting anything done.
+# Claude Code
 
-Inline, no agent: a one-line fix, a single grep, anything under about five tool calls. Dispatch overhead costs more than the work.
+The board address for this machine (see Orchestration Board): @board.local.md
 
-## Roster (`~/.claude/agents/`)
+- **Dispatch:** always pass `subagent_type` with the roster name. A bare Agent call, or any agent definition with no model, runs on Opus 5.5 at high effort through `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_SUBAGENT_EFFORT` in `settings.json`; agents marked `model: inherit` still follow the session, and built-in Explore and Plan keep their own model. Pass `model:` only to override the roster for one dispatch (a Mid-tier override is `model: "sonnet"`). The orchestrator runs on Fable 5.2 at medium effort today.
+- **Tiers:** Low = haiku, Mid = sonnet (high effort), High = opus (high effort), from `models.json`; `node tools/orc.mjs sync` writes them into `agents/*.md`.
+- **Resume and stop:** resume a builder with SendMessage; stop a drifting agent with TaskStop. Parallel builders get `isolation: "worktree"`.
+- **Ask:** the durable-rules question is one multiSelect `AskUserQuestion`.
+- **Automation:** Ultracode and Workflow are the multi-agent automation features that stay off unless asked.
+- **Board, artifact backend:** only Claude Code writes it, with ArtifactData (load with ToolSearch `select:ArtifactData`; if absent, `select:mcp__claude-artifacts__db_get,mcp__claude-artifacts__db_write` with the UUID slug). Its `BOARD:` line adds `slug <uuid>` after the address. A headless `claude -p` run cannot approve board writes.
+- **Hooks:** `tools/board-reminder.ps1` leaves a marker when a builder, refuter or debugger finishes and reminds the orchestrator to update the session on its next dispatch, board write or prompt. SubagentStop output goes to the finishing agent and keeps it running, so reaching the orchestrator takes a marker relayed by PostToolUse or UserPromptSubmit. The worklog and peon hooks are Claude Code extras (`settings.example.json`).
+- **Skills:** repo-owned skills inherit the session model; never pin one.
+- **Cost log:** the orchestrator's context size comes from the status line or `/context`.
 
-| Agent | Model | Use for |
-|---|---|---|
-| `scout` | haiku | find files, symbols, call sites; returns locations, never file bodies. Locations only: a question that decides a design goes to the orchestrator's own grep or a researcher, and one scout per question, never two with adjacent briefs |
-| `researcher` | sonnet, high | read docs/source/web and report facts; unconfirmed claims marked UNVERIFIED |
-| `builder` | opus, high | implement from a written spec, run build and tests |
-| `refuter` | opus, high | review the builder's diff against the spec, rerun tests, ACCEPT or REWORK |
-| `debugger` | opus, high | root cause only, when a failure is not obvious |
-
-Always pass `subagent_type`. A bare Agent call, or any agent definition with no model, runs on Opus 5.5 at high effort through `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_SUBAGENT_EFFORT` in `settings.json`; agents marked `model: inherit` still follow the session, and built-in Explore and Plan keep their own model. Pass `model:` only to override the roster for one dispatch. Repo-owned skills such as `/pre-pr-review` keep inheriting the session model; do not pin a model inside a checked-in skill.
-
-## Marching orders (every dispatch, in this order)
-
-1. Goal, one sentence.
-2. Scope: exact files or URLs.
-3. May change / must not change.
-4. Must verify: the commands to run.
-5. Do not: the traps for this task.
-6. Output format and cap (default 40 lines).
-7. Known: facts already established, so the agent does not rediscover them.
-8. Scratch path: `<session scratchpad>/<agent>-<topic>.md` for anything over the cap. The next agent reads the file; the report to the orchestrator is the path plus a short summary.
-9. Data precondition (builders and refuters): name the rows or paths the feature depends on (which senders populate CUSTOMER_ID, which users have two facilities) and require the agent to query them, not exercise one seeded row. The loop verifies the spec; this line is what makes the spec verify the requirement.
-10. Board (builders and refuters): `BOARD: <board URL> slug <uuid> card cards/<card id> stage <label>`, so the agent posts its milestones and moves its own stage on its card (see Orchestration Board). Give the full `cards/<id>` path: on 10729 a builder looked the card up wrong, reported it missing and skipped every board write.
-
-## Orchestration Board
-
-The board URL for this machine lives in an untracked file, so the public repo carries no personal link (a new machine creates its own after publishing its board): @board.local.md
-
-Every orchestrated task goes on the live board, in every project, so Cooper can watch progress from any device. An orchestrated task is any task that dispatches a builder, refuter or debugger; inline work and lone scout or researcher lookups stay off the board.
-
-- **Start:** before the first dispatch, create the session doc and one card per ticket or task in a single batch.
-- **During:** write at each dispatch, check-in, report, rework and commit. Run a heartbeat on any dispatch expected to run past ~30 min.
-  - A builder round added after the start (review fixes, a follow-up) gets its own card before it is dispatched. On 18216 the review-fix round ran cardless until Cooper asked.
-- **Finish:** mark the session Done with `completed` when the task ends, including when it is abandoned or handed off.
-- **Durable-rules check (before Done, every orchestrated task):**
-  1. List what the run taught that should outlive it: reusable patterns, feedback that generalises, rule-shaped review findings, traps, process lessons.
-  2. Drop what the repo's mapped docs already hold.
-  3. Ask Cooper with one multiSelect `AskUserQuestion` which to write down.
-  4. Write each picked rule where it bites: the repo doc on the branch, the skill (with a version bump), or this file. Then report what was written and what was declined.
-  5. Never wait to be asked. On 18055 the flyout, drag and write-path rules were written only after he asked.
-  - In AcmeApp, `/start` Step 11.5 runs this check.
-- Every hours roll-up (`worklog.ps1 <date>`, in any project) ends by running `~/.claude/tools/worklog/sync-timeline.ps1 -Date <date> -Force` and uploading the pending files to the board (worklog README "Uploading"), so the Time page matches the roll-up without a "sync my timeline".
-- The protocol (fields, which write at which moment, the ArtifactData recipe) is the "Writing protocol" section of `~/.claude/orchestration/board/README.md`. Read it at the start of each orchestrated task; it is the single source.
-- The session doc and `tokens` are orchestrator work, like ticket hygiene: the orchestrator writes them between dispatches and never hands them to a builder. Agents write only their own card: its progress lines, `note` and the stage named in their `BOARD:` line. When the orchestrator sets `tokens` it reads the card and corrects any stage the agent did not move. A hook (`tools/board-reminder.ps1`) reminds the orchestrator to update the session when an agent finishes, on its next dispatch, board write or prompt. A failed board write is reported once and never blocks the task.
-- The page's code lives in the same folder (git repo, public GitHub `Co0pDawg/Orc-Dashboard`). Data changes never need a republish.
-
-## Build loop
-
-Orchestrator spec → `builder` → `refuter` → orchestrator.
-
-- REWORK: send the must-fixes to the same builder with SendMessage so its context survives, then dispatch a fresh refuter. After two REWORK rounds the orchestrator reads the diff itself and decides.
-- Parallel is fine for read-only work: scouts, researchers, refuters. Never two writers on the same files. Parallel builders get `isolation: "worktree"`.
-- Rate-limit guard: no more than three Opus-tier agents in flight at once; stage wider fan-outs 3+3 with the mandatory agent first. Never launch an Opus fan-out or refuter right after a builder that spent over 300k tokens: refute inline, use a Sonnet refuter (`model: "sonnet"`), or wait. A 429'd dispatch costs the launch and the wait and returns nothing.
-- Builder and refuter reports state the test-run log timestamps against the time of the last code edit. A green run older than the last edit is not evidence (a stale green was caught this way on 2026-09-30).
-- Run-and-commit work stays on Opus builders, or the brief says to wait for the run to finish: a Sonnet builder handed back mid-run and the orchestrator had to finish it.
-- Batch related fixes into one builder dispatch so large files are read once.
-- An agent that drifts off its orders gets stopped (TaskStop), not waited on.
-- After stopping a builder (a pause, a TaskStop), report its state from its last actions (notes file, logs, `git status`, any database it upgraded), not from the plan. It may be mid-mutation, so the resume brief says to check for a leftover mutation and restore from the builder's backups first. On 18356 the pause report said the database was untouched; the builder had already upgraded it and left a half-applied mutation.
-- Ultracode and Workflow stay off unless explicitly asked; when on, cap the agent count in the script.
-- Decisions and progress go into a handoff doc (`docs/superpowers/handoffs/` when the repo has it) so the next session reads the file instead of rebuilding context.
-- Keep replies and agent reports short. Ask for detail when it is needed, not by default.
-
-### Test runs (learned on PR 5896, 2026-09-14 — ~3 h of a 7 h loop was re-running suites)
-
-- Builders run only the filtered tests for what they touched. The orchestrator runs each full test project **once**, at the end, in the background, while the refuter does its static pass — never per builder, never per refuter. "The end" is after the review's fix round: on PR 6393 they ran during the review panel, the panel forced code changes, and they ran again.
-  - Check a spec's test filter against the real class names before dispatch (`dotnet test --list-tests --filter ...`, or a grep of the test classes the diff touches). On 18356 the fix-round filter `~ChangeRequest` missed two controller test classes; the builder noticed and widened it.
-- Full runs go by project name, sequentially. Never `dotnet test` a solution that contains a Playwright/UI project (AcmeApp's `UITests` waits on an app forever). Two vstest hosts in one worktree at once has killed a run silently — serialise.
-- A refuter reruns only targeted and mutation tests, `--no-build` where possible.
-- When a builder's notification is late or its task id has vanished, read its report file and run logs on disk; do not wait on the notification.
-- When a builder reports a behaviour finding that contradicts an earlier builder or refuter, the orchestrator reads the code and the fixture itself before speccing a fix — the last one was a fixture artefact and cost only a comment.
-- A cross-cutting rule (e.g. "null weight reads as 0 lb") goes in one spec; the other spec references it. Two specs stating it independently drifted apart within one round.
-- Parallel builders: split by file ownership, one in a second worktree, and `git apply` the smaller diff onto the main one. Zero overlap both times it was used.
-  - Carry a worktree's changes with `git diff HEAD --binary`, never plain `git diff`, which drops staged deletions. On 18200, 11 deleted files went missing from a moved diff.
-  - Never `git stash` in a worktree. Every worktree shares one stash stack. On 2026-10-29 a `stash push` failed silently, and the `stash pop` after it applied another branch's stash ("17660 B-F").
-- In Git Bash with `MSYS_NO_PATHCONV=1`, native tools (`git -C`, `python`, `pip --target`) misread `/c/...` paths. Pass them `C:/...`. On 2026-11-02 this created a stray folder at the drive root and made a force-push fail.
-- After merging into the worktree Cooper's app runs from, rebuild and restart that app and apply the branch's schema to its DB. On 11/02 a develop merge under his running app left it compiling the new views on the fly against old assemblies, and every page failed until the restart.
-- Give a long git merge or push a timeout and read its result before the next step. On 11/02 a merge stalled in the background and the investor branch stayed 3 commits behind until it was rerun.
-- Record the PID of every app or test host you start, and stop only that PID. Stopping by command-line match killed a builder's app on port 7399.
-- A script that starts an app never captures or pipes that step's output (`$x = & step`, `if (-not (step))`, `*> file`): the app inherits the pipe and the capture waits for it forever. Start it with `Start-Process ... -WindowStyle Hidden -PassThru` and `WaitForExit()`. On 18298 a combined Playwright run sat 2 h 15 m after `ticket-env.ps1 start` without running a test.
-- Live-app verification (Playwright, browser checks) gets its own builder in its own worktree with its own DB copy, so it never shares build output with a code builder.
-- When the runtime-validator comes back with no browser (the chrome-devtools servers did not connect), an XL peer review still gets a browser pass before its fixes count as verified: a builder drives Chromium with `playwright-core` from `UITests/bin/Debug/net10.0/.playwright` against a `ticket-env.ps1` app. On PR 6425 that pass found a phone-width overflow the static panel and the HTTP-only run could not see.
-- Keep the machine awake (Windows: `SetThreadExecutionState` with `[uint32]2147483651` in a background loop) from the first long dispatch until the last dispatch's results are in, not until the work "looks done". Stopping it at midnight on 2026-10-28 let Modern Standby hang a builder's Playwright run for 2 h 48 m.
-- A test that fails in Arrange on a page-load timeout while another app or builder shares the same DB copy is contention until a rerun says otherwise: rerun it alone before treating it as a failure (4 of 4 passed alone on 2026-10-29).
-- When SQL logins time out or report "insufficient memory in the buffer pool", check free RAM before blaming the app. Run `dotnet build-server shutdown` to free the idle MSBuild and compiler servers.
-  - Keep at most one test host and one builder app running alongside Cooper's own app and browsers.
-  - On 2026-10-29, 1 GB of 32 GB was free and every screenshot and query hung.
-- `publish_files` attaches a file only by the path it resolves to: the long path in its real casing, not the scratchpad's 8.3 `COOPER~1.DAV` form or a differently cased folder. On 18242 it refused two tries; the second refusal named the path to use.
-
-### Pre-PR review tier (learned 2026-09-30 to 10-01 — review was 34% of agent tokens, ~90k per reviewer run)
-
-The refuter already reran the work, checked conventions and proved each test can fail, so the full review panel on top of it is mostly duplicated effort. On seven refuter-accepted, test-only PRs the full panel produced one warning (doc wording) and otherwise only suggestions and nits; on PRs with product code it found real issues across several agents. Pick the tier before launching review:
-
-- **Light tier.** Applies when all three hold:
-  1. The diff is tests and docs only (attribute-only hook edits in views, such as `data-testid`, count as test-only).
-  2. A refuter returned ACCEPT after mutation checks.
-  3. The refuter's brief included the repo's test-convention reviewer definition as its checklist (AcmeApp: `docs/agents/playwright-reviewer.md`).
-
-  Run the repo's review skill scoped to the docs/comment agent only (AcmeApp: `/pre-pr-review <branch> develop comments`). The orchestrator reads the full diff itself. Write the calibration log as usual.
-- **Full tier.** Use it for anything else: product code, schema or SQL, config, money or security paths, or no refuter ACCEPT. Run every agent the skill selects, staged 3+3.
-- **Escalate.** If the light-tier agent or the orchestrator's diff read finds anything beyond doc wording, run the full tier.
-- **Nits** (suggestion/nit severity) get fixed by the orchestrator inline only when cheap and in a file already in the diff. Otherwise they are logged `not-actioned`. A builder round is never spent on nits alone, and a rerun is not triggered for a comment-only change; rebuild instead.
-- **Cheap reviewers.** In a full-tier run, pass `model: "sonnet"` when dispatching `secondary-artifacts`, `type-design-analyzer` and `code-simplifier`; the skill itself stays unpinned. On PR 6372 those three raised only suggestions and nits. This rests on that one run, and one of those suggestions was a real 500 (a 12/31/9999 end date), so drop the override if a Sonnet run misses something like it.
-
-### Specs, bugs and shared resources
-
-- A spec for a new action lists each role and whether it can reach the action, turn it off, and open any page an email names. On Epic 18199 the Schedule button lived only on a page rollup-only members could not open, so they could not create a schedule or stop one's emails. Two refuters and the full review panel passed it; a teammate caught it.
-- Check a PR's status right before merging work into its branch. On Epic 18199, PR 6367 completed mid-round and its branch was deleted while a merge sat unpushed; pushing it would have recreated the branch.
-- When a push widens an open PR's scope, update its description in the same step, before asking about anything else. On 18193 PR 6397 completed while the update waited for approval, so its description never mentions time off.
-- A spec for a recurring job says what happens to a missed run, a cancelled run and a failed item. On Epic 18199 two builders and two refuters passed jobs that lost a missed period and reported cancelled runs as done, until the full review panel raised them.
-- A spec for a new write path into a table lists the procs and queries that read that table and walks each one. On 18192 Add punch could save an open punch that then blocked the employee's clock-in; two rounds passed it until the review panel read the clock-in proc.
-  - The walk covers what each reader assumes about the row (its length, its lifetime), and every caller of a shared proc, the Mobile API included. On 18356 the plan listed the readers of a long-lived timeslot hold, but availability sized a hold by the searched service and the mobile claim had no catch for the refusal; six refuter passes missed both, and the full review panel and the fix-round refuter caught them.
-- A spec that reuses an existing event, email or notice names what that event actually sends, read from its handler. On 18274 approval reused `ReservationUpdated`, whose only email is the reminder "appointment has moved" one; two refuters passed it and only the live pass caught it.
-- A spec for a feature that closes or blocks on other actions lists every path that changes the record (for a reservation: check-in, guest removal, extend, itinerary edits, cancel) and says for each whether the customer is told. On 18274 check-in and guest removal were missed until the full review panel; a removed guest's add-ons would have been re-billed on approval.
-- A refuter's database probe runs every mutating action inside a transaction it rolls back, and reads the row's state before acting on it. On 18274 a refuter ran Cancel for real on a seeded reservation because its request was Denied, not Pending, and could not fully restore it.
-- A change to an agent definition cannot be tested from the session that made it, and a headless `claude -p` run cannot approve board writes. Test it in a new session, or paste the new rule into the brief and say the definition file itself is unproven. On 18245 a test builder followed its old rules.
-- A spec that relies on a hook confirms in the Claude Code hooks docs where the output goes before design. SubagentStop output goes to the finishing agent and keeps it running, so reaching the orchestrator takes a marker relayed by PostToolUse or UserPromptSubmit.
-- A UI feature gets a mockup on a Design-canvas artifact, approved by Cooper, before any builder is dispatched. Each artboard has light/dark and state tweaks, and the builder's spec names the approved artboards as the visual spec. On 18055 the mockup round settled the layout, overlaps, locked states and flyout before any code, and the later design feedback (from teammates) was CSS-only.
-- A refuter brief for a change that adds a foreign key, a relationship or a multi-row delete asks it to capture the SQL Server command batch (an EF interceptor, no database needed), not just to rerun the tests. The in-memory provider hides statement order and FK enforcement. On 18201 every test was green while deleting an Enterprise would have returned a 500; only the refuter's command-batch probe caught it.
-- A spec for a shared or public login lists every path that can reach that login from outside its own organization: attach by email, set a password, rename. On PR 6393 default-deny protected sessions inside the demo org, and three refuter ACCEPTs and a live check missed that a visitor could attach the login to their own org; the full review panel caught it.
-- Before offering a sentinel value as an option, grep what reads the column. On PR 6393 "a bill day that never matches" looked simple, then needed 6 date clamps and a second question to Cooper.
-- A ticket rule that depends on what a column means (a price source, a status, a date) gets a backtest on real data before the plan locks it. On 18208 the AC priced bookings from a column that was NULL on 99.98% of rows; the backtest caught it before any code, and the build then found the real source (Pending invoices).
-- Live checks of anything relative to today (projections, to-date comparisons, a scorecard's today tiles) run on a DB copy restored within the last few days. On 18208 the 9/30 copy had no October revenue, so growth and earned-to-date read 0 until a 10/27 backup was restored.
-- Marketing screenshots of a feature are taken after that feature's review and performance fixes land. The 18220 projection shot was taken twice more as the KPI layout and comparisons changed under it.
-- A showcase-retake brief first confirms the restored backup holds the image's org, or names the seed procedure to run on the throwaway copy, and greps how many views use the image, since a shared image needs a new file name and view edits. On PR 6425 the first retake dispatch came back blocked on both and needed a resume.
-- When the base branch is merged in after a Playwright run, rerun the touched suite before pushing, or say plainly in the report that it was not rerun. On PR 6425 the six new tests last ran before the develop merge.
-- A spec for a visual check names the states to look at and has the builder seed each one, not just open pages. Examples: a theme pass, dark mode, a restyle; states such as a booked appointment, a locked block, a +N overlap, an open flyout. The PR 6323 theme pass captured 45 screenshots of empty calendars, so the locked stripes, drag states and flyout went unchecked under the themes.
-- A test that claims something did not happen gets a timing mutation from the refuter (the action delayed a few hundred ms), not only a logic one. On 10729 three "Cancel posts nothing" tests stayed green against a delayed submit, because their next navigation ended the page first.
-- A spec whose feature acts on a group (a multi-guest reservation, linked records) walks one non-first member through the server's rule. The 18055 spec said "lift the guests together" but not which arrival the stale check compares, so a second guest's drag was always refused; only the full review panel caught it.
-- A spec for a search, filter or lookup UI lists the three inputs staff will type most (a partial number, a phone's last 4, part of an email) and walks each one through the planned matching rules to the result it shows. It also checks every new placeholder and label against its rendered width. Every review gate passed PR 6243, then Cooper's first live test found that a partial reservation number listed only invoices, that email needed an "@", and that the placeholder was cut off. The day-1 data already showed invoice numbers embed the reservation number.
-- A spec for a script that runs unattended tests each limit it claims on real data (a path filter over `git ls-files`, a real diff through the real gate) and checks native exit codes, because PowerShell's `$ErrorActionPreference = 'Stop'` does not cover them. On 18261 I reported limits as "enforced by the script" before this; review found about 446 sensitive files passing the path filter and the session able to push.
-- A cheap model's yes/no check saves usage; it does not enforce anything. On 18261 Haiku gave opposite size verdicts on identical tickets across two runs. Put the real limit in code after the expensive step.
-- A test-coverage spec says "hook-only view edits (`data-testid`/`id` attributes) are in scope". Saying "no product code" made a builder skip hooks that the repo rules require in the same PR.
-- After fetching the base branch, check whether the docs a spec tells agents to edit have changed shape (the UITests map was condensed mid-week). Point the spec at the current format.
-- The orchestrator confirms every defect a builder reports by reading the code before filing it. The bug says how it was confirmed ("reproduced live" or "verified by code read"). The root-cause wording gets checked too: one bug was filed with the builder's wrong cause and needed a correction comment.
-- Live app runs share one dev database. Run at most two apps at once, and stagger a refuter's rerun after the builder's. A test that fails in Arrange on a load timeout or a closed browser gets one rerun before it counts as a failure, and both results are reported.
-- Open PRs that edit a shared doc (a map or index) get their merge status checked whenever the base branch moves. Resolve conflicts in the base branch's current format.
-
-## Versioning the setup
-
-`~/.claude` is a git repo (public GitHub `Co0pDawg/Orc-istration`) with an allow-list `.gitignore`. This file, `settings.example.json`, `agents/*.md`, `orchestration/README.md` and `tools/` are tracked; transcripts, credentials, memory, plugins, `settings.json`, the cost logs and `board.local.md` are not (the repo is public). After changing a tracked file, commit and push it in the same session; `README.md` there covers restoring and tracking a new file. The board is its own repo (`orchestration/board`, `Co0pDawg/Orc-Dashboard`).
-
-When anything leaves a public repo's allow-list, scan all of that repo's history for people's names and internal terms, not just the current files. Untracking keeps the old commits: on 2026-11-02, 139 cost logs were found in history this way, long after they stopped being tracked.
-
-## Orchestration cost log
-
-Every orchestrated task writes one record to `~/.claude/orchestration/log/<date>-<project>-<slug>.md` before the orchestrator reports done: one row per dispatch (agent, model, purpose, tokens, tool uses, minutes, result, `earned`/`marginal`/`waste` + reason), then Totals, Loop signal, and Spec misses. The Loop signal line names the pre-PR review tier used (light or full) and whether a later review or CI caught anything that tier missed, so the tier rule can be tuned from evidence. Totals also carries the orchestrator's own context: the session context size at task start and at the record's writing (from the status line or `/context`), so a review can compare orchestrator spend against subagent spend. Format and review questions are in `~/.claude/orchestration/README.md`. Token figures come from each agent's completion notification; a resumed agent logs its delta, not the cumulative figure.
-
-# Ticket hygiene (every ADO work item, not just `/start` runs)
-
-The ticket is the record of the work, not the chat. Whenever a session works a work item (implementing, reviewing a PR for it, investigating a bug, splitting a story), keep the ticket current as the work happens, not at the end:
-
-1. **Start:** set the item to `Active` (never backward, never past Active). Post one **Implementation checklist** comment, one unchecked line per planned step, and keep its comment id in the scratchpad. In AcmeApp, post and edit it with `& ./.claude/scripts/ado.ps1 comment-add -Id <id> -BodyFile <file>` / `comment-edit -Id <id> -CommentId <cid> -BodyFile <file>` (`/start` Step 7 shows the flow).
-2. **During:** after each commit or decision, **edit that same comment** (`[ ]` -> `[x]`, add a line for new scope or a deferral with its reason). One comment per run; never a new comment per commit.
-3. **Decisions:** a scope change, a deferral (e.g. "AdSense deferred: needs nonce CSP + CMP"), or a design choice the user made goes on the ticket the moment it is made, so the ticket's last comment wins over the description.
-4. **Sub-tickets:** when work splits, file the child Tasks/Stories immediately (`/create`), link them, and reference the ids in commits and the parent's checklist.
-5. **Done:** final checklist edit lists the PR link, what was verified (build, tests, live app, dark mode/mobile), and what was left out. Resolve state changes only when the user asks.
-
-The orchestrator posts these itself between dispatches; it is orchestrator work, not builder work. If `az` returns nothing, read the error once and retry with what it names; if still blocked, draft the comment in the scratchpad and tell the user, do not skip the update silently.
+What Claude Code cannot do (generated from the adapter's gaps):
+- A role with every capability gets no `tools:` line, so it keeps MCP tools such as ArtifactData; for the read-only refuter that means read-only rests on the role body, not an allowlist.

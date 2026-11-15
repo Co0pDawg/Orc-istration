@@ -6,9 +6,16 @@ Public repo (`Co0pDawg/Orc-istration`) rooted at `~/.claude`. It holds the Claud
 
 | Path | What it is |
 |---|---|
-| `CLAUDE.md` | Global rulebook: roster, marching orders, build loop, board, cost log, ticket hygiene |
+| `AGENTS.md` | Tool-neutral rulebook (the source): roster by tier, marching orders, build loop, board, cost log, ticket hygiene |
+| `CLAUDE.md` | Generated: `@AGENTS.md` plus the Claude Code notes (`node tools/orc.mjs sync`) |
+| `roles/*.md` | Tool-neutral agent roles: tier, access, capabilities, body |
+| `models.json` | Tier (Low, Mid, High) to model, per tool; `models.local.json` (untracked) overrides per machine |
+| `adapters/<tool>.mjs`, `adapters/<tool>.notes.md` | One adapter per tool: file format, tool names, install paths, limits, gaps, and the notes block appended to its rulebook |
+| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `install`, `models` |
+| `tests/` | `npm test`: golden files per tool, install and check tests |
+| `docs/rulebook-notes.md` | The incidents behind the rulebook's rules |
 | `settings.example.json` | Hooks, status line, `enabledPlugins`, `extraKnownMarketplaces`, model settings, with no permissions and `<you>` in place of the user name |
-| `agents/*.md` | Roster: builder, debugger, refuter, researcher, scout |
+| `agents/*.md` | Generated Claude Code roster: builder, debugger, refuter, researcher, scout |
 | `orchestration/README.md` | Cost-log format and review questions |
 | `docs/ops-automation.md` | Outline for unattended `claude -p` jobs |
 | `docs/project-memory.md` | Outline for per-project memory |
@@ -40,6 +47,30 @@ Your own board: publish a copy of the board repo from Claude Code under **your**
 The setup assumes Windows with PowerShell 7 and Git Bash. On macOS or Linux, the worklog hooks and scheduled-task script need porting.
 
 `orchestration/board/` is a separate repo, https://github.com/Co0pDawg/Orc-Dashboard (the live board page and its notes). It is ignored here; clone it on its own.
+
+## Other tools
+
+The rulebook and roles are tool-neutral; an adapter per tool turns them into that tool's files. Round A covers:
+
+| Tool | Rulebook | Agents | Gaps |
+|---|---|---|---|
+| Claude Code | `~/.claude/CLAUDE.md` + `AGENTS.md` | `~/.claude/agents/` | Everything works; the refuter keeps every tool (for the board) so read-only rests on its body |
+| Antigravity CLI | `~/.gemini/AGENTS.md` (24,000-byte cap) | `~/.gemini/config/agents/` | Models only flash/pro; no per-agent effort; no subagent-stop hook; read-only via allowlist only; local board only |
+| Gemini CLI | `~/.gemini/GEMINI.md` | `~/.gemini/agents/` | No effort key; no nested or documented parallel subagents; no subagent-stop hook; read-only via allowlist only; local board only |
+
+The full gap list for each tool is printed by `build` and appended to its rulebook. Commands (Node 22+, no dependencies):
+
+```
+node tools/orc.mjs build --tool all              # writes dist/<tool>/... (untracked)
+node tools/orc.mjs install --tool antigravity    # dry run: prints create / replace / unchanged per file
+node tools/orc.mjs install --tool antigravity --apply   # writes; a replaced file is first copied to <file>.orc-backup-<stamp>
+```
+
+`install` never deletes and only writes the files it generates. It refuses `--tool claude-code` without `--home`, because this repo is the live `~/.claude`: edit `AGENTS.md`, `roles/` or `adapters/`, then run `node tools/orc.mjs sync` and `npm test` (which runs `check`).
+
+Antigravity models are per account. Run `agy models | node tools/orc.mjs models --tool antigravity --from-stdin` and save the printed fragment as `models.local.json` so headless runs use slugs your account has.
+
+The hooks (board reminder, worklog, peon) stay Claude Code extras for now; on other tools, updating the board after each agent report is a build-loop step.
 
 ## How the .gitignore works
 
