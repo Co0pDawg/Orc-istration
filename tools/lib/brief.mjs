@@ -32,9 +32,11 @@ export function briefTemplate(items, role) {
 }
 
 const firstWord = (label) => label.split(/[\s/]+/)[0].toLowerCase();
-const COMMAND = /`[^`\n]+`|^\s*```|\b(npm|npx|node|git|python3?|pytest|dotnet|pwsh|powershell|cargo|go|make|gradle|mvn|yarn|pnpm|bash|sh)\s+\S/m;
+// A command is a code span, a fence, or a line that starts with a runner word followed by an argument, so
+// "Make sure the node tests pass" names no command.
+const COMMAND = /`[^`\n]+`|^\s*```|^\s*(?:[-*]\s+)?(npm|npx|node|git|python3?|pytest|dotnet|pwsh|powershell|cargo|go|make|gradle|mvn|yarn|pnpm|bash|sh)\s+\S/m;
 const CAP = /\d+\s*(lines?|words|characters|chars|bytes|tokens|items)\b|\b(cap|max(imum)?|at most)\b[^\n]*\d/i;
-const BOARD = /^BOARD: \S+(?: slug \S+)? card cards\/[\w.:@+~-]+ stage \S.*$/;
+const BOARD = /^BOARD: (?:none$|\S+(?: slug \S+)? card cards\/[\w.:@+~-]+ stage \S.*$)/;
 
 // Returns one string per problem. Items: the rulebook's; with a role that is not a writer, writer-only items are
 // not required. Without a role every item is checked when present and the writer-only items are optional.
@@ -42,11 +44,33 @@ export function lintBrief(text, items, role) {
   const problems = [];
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
   const found = [];
-  for (const l of lines) {
-    const m = /^(\d+)\.\s+(.*)$/.exec(l);
-    if (m) found.push({ n: Number(m[1]), body: [m[2]] });
-    else if (found.length) found.at(-1).body.push(l);
-  }
+  // Content outside the items: before item 1 only blank lines and one leading title heading; after an item's own
+  // lines (indented, or inside a fence) only blank lines and the BOARD line; no item numbered past the rulebook's.
+  const firstText = lines.findIndex((x) => x.trim());
+  let fence = false;
+  let after = false;
+  lines.forEach((l, i) => {
+    const outside = (why) => problems.push(`line ${i + 1}: ${why}: "${l.trim().slice(0, 40)}"`);
+    const m = fence ? null : /^(\d+)\.\s+(.*)$/.exec(l);
+    if (m) {
+      if (Number(m[1]) > items.length) outside(`item ${m[1]} is past the rulebook's ${items.length} items`);
+      found.push({ n: Number(m[1]), body: [m[2]] });
+      after = false;
+      return;
+    }
+    const isFence = /^\s*```/.test(l);
+    if (!found.length) {
+      if (l.trim() && !(i === firstText && /^#\s/.test(l))) outside('text before item 1');
+      return;
+    }
+    if (!after && !fence && !isFence && l.trim() && !/^\s/.test(l) && !/^BOARD:/.test(l)) after = true;
+    if (isFence) fence = !fence;
+    if (after) {
+      if (l.trim() && !/^BOARD:/.test(l)) outside('text outside the items');
+      return;
+    }
+    found.at(-1).body.push(l);
+  });
   const expected = role ? forRole(items, role) : items;
   const required = role ? expected : items.filter((i) => !i.writerOnly);
   expected.forEach((item, i) => {

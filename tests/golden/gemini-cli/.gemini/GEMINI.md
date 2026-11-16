@@ -113,4 +113,4 @@ What Gemini CLI cannot do (generated from the adapter's gaps):
 - No subagent-stop hook: the board update after an agent report is a build-loop step.
 - Read-only is enforced only by the tools allowlist; run_shell_command can still change files, so the role body forbids edits.
 - No native user-level AGENTS.md: the rulebook is installed as GEMINI.md.
-- No headless recipe: `orc.mjs dispatch` cannot run this tool (no documented headless syntax in the research).
+- No headless recipe: `gemini -p "<prompt>" -m <model> -o json` is documented, but no flag selects a subagent, so the role body could not be applied; `orc.mjs dispatch` does not run this tool.

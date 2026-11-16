@@ -548,3 +548,113 @@ test('models validation rejects bad ids, tiers, efforts and values in both files
   }
   assert.doesNotThrow(() => loadModels(copy));
 });
+
+test('dispatch refuses an argv brief over the command-line limit or with a NUL; nothing is spawned', () => {
+  const dir = tempDir('stub-big');
+  const env = { ORC_TOOL_BIN_ANTIGRAVITY: stub(dir) };
+  const big = briefFile(goodBrief({ 7: `context ${'x'.repeat(40000)}` }));
+  const r = isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', big], env);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /brief is \d+ bytes; this tool takes the brief as a command-line argument, limit about 32,000 on Windows/);
+  const nul = briefFile(goodBrief({ 7: 'has a \0 byte' }));
+  const n = isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', nul], env);
+  assert.equal(n.code, 1);
+  assert.match(n.err, /NUL byte/);
+  assert.ok(!fs.existsSync(path.join(dir, 'argv.json')), 'the stub never ran');
+});
+
+test('dispatch names the executable and the override when the tool is not installed', () => {
+  const missing = path.join(tempDir('nobin'), 'agy-not-here.exe');
+  const r = isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile()], { ORC_TOOL_BIN_ANTIGRAVITY: missing });
+  assert.equal(r.code, 127);
+  assert.match(r.err, /cannot start .*agy-not-here\.exe: .*not installed or not on PATH; set ORC_TOOL_BIN_ANTIGRAVITY/);
+});
+
+test('gemini-cli gap says the headless syntax exists and why dispatch does not use it', async () => {
+  const gemini = (await import('../adapters/gemini-cli.mjs')).default;
+  assert.ok(gemini.gaps.some((g) => /`gemini -p "<prompt>" -m <model> -o json` is documented, but no flag selects a subagent/.test(g)));
+  assert.equal(typeof gemini.headless, 'undefined');
+});
+
+test('review-tier: prompts count as product; uncommitted changes warn', async () => {
+  for (const p of ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'roles/scout.md', 'agents/scout.md', '.claude/x.md', '.agents/x.md', '.codex/AGENTS.md',
+    '.cursor/agents/a.md', '.gemini/GEMINI.md', 'profiles/p.md', 'adapters/codex.notes.md', 'skills/x/SKILL.md', 'a/b.agent.md']) {
+    assert.equal(classify([p]).tier, 'Full', p);
+  }
+  assert.equal(classify(['README.md', 'docs/rulebook-notes.md', 'tests/a.test.mjs']).tier, 'Light-eligible');
+  const start = { 'README.md': 'r\n' };
+  const dir = repoWith(start);
+  commit(dir, (d) => fs.writeFileSync(path.join(d, 'README.md'), 'r2\n'));
+  const clean = await run(['review-tier', '--base', 'base', '--repo-dir', dir]);
+  assert.doesNotMatch(clean.err, /uncommitted/);
+  fs.writeFileSync(path.join(dir, 'src.js'), 'x\n');
+  const dirty = await run(['review-tier', '--base', 'base', '--repo-dir', dir]);
+  assert.match(dirty.err, /WARN 1 uncommitted change\(s\) are not in base\.\.\.HEAD/);
+  assert.match(dirty.out, /^Light-eligible/);
+});
+
+test('hooks: a non-object settings file is refused; a BOM is kept; a failed write leaves no backup', () => {
+  const home = tempDir('hookhome');
+  const file = path.join(home, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  for (const text of ['[]', '"x"', 'null', '3']) {
+    fs.writeFileSync(file, text);
+    const r = isolated(['hooks', '--home', home, '--apply']);
+    assert.equal(r.code, 1, text);
+    assert.match(r.err, /not a JSON object at the top level; nothing written/);
+    assert.equal(fs.readFileSync(file, 'utf8'), text);
+  }
+  fs.writeFileSync(file, '\uFEFF{\n  "model": "mine"\n}\n');
+  assert.equal(isolated(['hooks', '--home', home, '--apply']).code, 0);
+  const after = fs.readFileSync(file, 'utf8');
+  assert.equal(after.charCodeAt(0), 0xfeff, 'BOM kept');
+  assert.equal(JSON.parse(after.slice(1)).model, 'mine');
+  // A directory where the temp file goes makes the write fail before any backup is made.
+  const home2 = tempDir('hookhome');
+  const file2 = path.join(home2, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(file2), { recursive: true });
+  fs.writeFileSync(file2, '{}\n');
+  const fakeHome = tempDir('fakehome');
+  const env = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome };
+  const pre = `
+    const fs = require('node:fs'); const real = fs.writeFileSync;
+    fs.writeFileSync = (p, ...a) => { if (String(p).includes('.orc-tmp-')) { const e = new Error('EACCES: denied'); e.code = 'EACCES'; throw e; } return real(p, ...a); };`;
+  const preFile = path.join(tempDir('pre'), 'deny.cjs');
+  fs.writeFileSync(preFile, pre);
+  const r = spawnSync(process.execPath, ['--require', preFile, ORC, 'hooks', '--home', home2, '--apply'], { env, encoding: 'utf8' });
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /EACCES/);
+  assert.deepEqual(fs.readdirSync(path.dirname(file2)), ['settings.json'], 'no backup and no temp file left');
+  assert.deepEqual(fs.readdirSync(fakeHome), []);
+});
+
+test('brief lint: text outside the items, a command-like item 4, and BOARD: none', () => {
+  const items = parseMarchingOrders(AGENTS);
+  assert.deepEqual(lintBrief(`# Brief for scout\n\n${goodBrief()}\n`, items), [], 'a title heading is allowed');
+  assert.match(lintBrief(`Hello agent,\n${goodBrief()}`, items).join('\n'), /line 1: text before item 1: "Hello agent,"/);
+  const tail = lintBrief(`${goodBrief()}\n\nThanks, and good luck\n`, items).join('\n');
+  assert.match(tail, /line \d+: text outside the items: "Thanks, and good luck"/);
+  assert.match(lintBrief(`${goodBrief()}\n11. one more\n   x`, items).join('\n'), /item 11 is past the rulebook's 10 items/);
+  assert.match(lintBrief(goodBrief({ 4: 'Make sure the node tests pass' }), items).join('\n'), /item 4 \(Must verify\) names no command/);
+  assert.deepEqual(lintBrief(goodBrief({ 4: 'node --test tests/' }), items), []);
+  assert.deepEqual(lintBrief(goodBrief({ 4: '```\n   npm test\n   ```' }), items), []);
+  assert.deepEqual(lintBrief(goodBrief({ 10: 'BOARD: none' }), items, 'refuter'), []);
+  assert.match(lintBrief(goodBrief({ 10: 'BOARD: nothing' }), items).join('\n'), /BOARD line does not match/);
+});
+
+test('costlog: malformed events are skipped and counted; an end event with no time is not also "no end event"', () => {
+  for (const events of [{ text: 'x' }, 'nope', 7, [1, 'a', null, ['x'], { text: 5 }]]) {
+    const data = { sessions: { s: { title: 't', events } }, cards: {} };
+    const md = costlog(data, 's');
+    assert.match(md, /## Totals/, JSON.stringify(events));
+  }
+  const bad = costlog({ sessions: { s: { events: [1, 'a', null, { at: '2026-11-15T09:00:00Z', text: 'scout dispatched on #a', card: 'c' }] } }, cards: {} }, 's');
+  assert.match(bad, /TODO: 3 board event\(s\) skipped/);
+  const noAt = costlog({ sessions: { s: { events: [
+    { at: '2026-11-15T09:00:00Z', text: 'scout dispatched on #a', card: 'c' },
+    { text: 'scout done: 2 paths', card: 'c' },
+  ] } }, cards: {} }, 's');
+  const row = noAt.split('\n').find((l) => l.startsWith('| 1 |'));
+  assert.match(row, /TODO \(no time on the start or end event\) \| scout done: 2 paths/);
+  assert.doesNotMatch(noAt, /no end event/);
+});

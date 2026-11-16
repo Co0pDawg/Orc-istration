@@ -10,7 +10,19 @@ export const LIGHT_PATTERNS = [
   { kind: 'doc', re: /(^|\/)docs\// },
 ];
 
-export const isLightPath = (p) => LIGHT_PATTERNS.some(({ re }) => re.test(p.replace(/\\/g, '/')));
+// Prompts are product in this repo: rulebooks, roles, agent files, tool folders, profiles, adapter notes and skills
+// decide behaviour, so they force Full even though most are Markdown.
+export const PRODUCT_PATTERNS = [
+  /(^|\/)(AGENTS|CLAUDE|GEMINI|SKILL)\.md$/i,
+  /(^|\/)[^/]+\.agent\.md$/i,
+  /^(roles|agents|profiles|\.claude|\.agents|\.codex|\.cursor|\.gemini)\//,
+  /^adapters\/[^/]+\.notes\.md$/,
+];
+
+export const isLightPath = (p) => {
+  const n = p.replace(/\\/g, '/');
+  return !PRODUCT_PATTERNS.some((re) => re.test(n)) && LIGHT_PATTERNS.some(({ re }) => re.test(n));
+};
 
 export function classify(paths) {
   const deciding = paths.filter((p) => !isLightPath(p));
@@ -28,6 +40,14 @@ export function changedPaths(repoDir, base) {
   return r.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
 }
 
+// Uncommitted changes are not in base...HEAD, so the tier would ignore them.
+export function uncommitted(repoDir) {
+  const r = spawnSync('git', ['status', '--porcelain'], { cwd: repoDir, encoding: 'utf8', shell: false });
+  return r.status === 0 ? r.stdout.split('\n').filter(Boolean).length : 0;
+}
+
 export function reviewTier(repoDir, base) {
-  return classify(changedPaths(repoDir, base));
+  const n = uncommitted(repoDir);
+  const warning = n ? `${n} uncommitted change(s) are not in ${base}...HEAD and are not classified; commit them first` : null;
+  return { ...classify(changedPaths(repoDir, base)), warning };
 }

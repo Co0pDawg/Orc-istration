@@ -17,9 +17,36 @@ export function safeRel(home, rel, root) {
   const parts = rel.split('/');
   if (parts.some((p) => p === '' || p === '.' || p === '..')) return null;
   if (!rel.startsWith(`${root}/`) && rel !== root) return null;
-  const abs = path.resolve(home, ...parts);
+  return path.resolve(home, ...parts);
+}
+
+// Containment on the real file system, checked before any write, copy, backup or delete: every existing segment
+// below the tool root must be a plain directory or file (no symlink or junction), and the real path of the deepest
+// existing ancestor must stay under the real path of <home>/<tool root>. Returns an error string or null.
+export function escapes(home, root, abs) {
   const rootAbs = path.resolve(home, ...root.split('/'));
-  return abs.startsWith(rootAbs + path.sep) || abs === rootAbs ? abs : null;
+  const rel = path.relative(rootAbs, abs);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return `${abs} is outside ${rootAbs}`;
+  if (!fs.existsSync(rootAbs)) return null;
+  const realRoot = fs.realpathSync(rootAbs);
+  let cur = rootAbs;
+  let deepest = rootAbs;
+  let link = null;
+  for (const part of rel ? rel.split(path.sep) : []) {
+    cur = path.join(cur, part);
+    let st;
+    try {
+      st = fs.lstatSync(cur);
+    } catch {
+      break;
+    }
+    if (st.isSymbolicLink()) link ??= cur;
+    deepest = cur;
+  }
+  const real = fs.realpathSync(deepest);
+  if (real !== realRoot && !real.startsWith(realRoot + path.sep)) return `${abs} resolves outside ${realRoot}`;
+  if (link) return `${link} is a symlink or junction; refusing to follow it`;
+  return null;
 }
 
 // Returns {manifest: null} when absent, {manifest} when valid, {error} when corrupt or foreign.

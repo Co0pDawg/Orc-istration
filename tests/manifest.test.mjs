@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { main } from '../tools/orc.mjs';
+import { createHash } from 'node:crypto';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORC = path.join(REPO, 'tools', 'orc.mjs');
@@ -136,7 +137,7 @@ test('a corrupt or foreign manifest is rejected and nothing is deleted or follow
   const bad = [
     'not json',
     JSON.stringify({ tool: 'codex', version: 1, files: {} }),
-    ...['../victim.md', '.gemini/../../victim.md', victim.replace(/\\/g, '/'), 'C:/x.md', '.gemini\\..\\..\\victim.md', '/etc/x', 'other/x.md'].map((p) =>
+    ...['../victim.md', '.gemini/../../victim.md', victim.replace(/\\/g, '/'), 'C:/x.md', '.gemini\\..\\..\\victim.md', '/etc/x', 'other/x.md', '.gemini/x/../AGENTS.md'].map((p) =>
       JSON.stringify({ tool: 'antigravity', version: 1, files: { [p]: { sha256: '0'.repeat(64) } } })),
   ];
   for (const text of bad) {
@@ -154,4 +155,98 @@ test('a corrupt or foreign manifest is rejected and nothing is deleted or follow
     assert.equal(fs.readFileSync(victim, 'utf8'), 'keep me\n');
     assert.match((await run(['status', '--tool', 'antigravity', '--home', home])).err, /WARN .*ignoring it/);
   }
+});
+
+// A junction below the tool root that points outside the home must never be followed.
+function junctionHome(name) {
+  const home = tempDir(name);
+  const outside = tempDir(`${name}-outside`);
+  const canary = path.join(outside, 'victim.txt');
+  fs.writeFileSync(canary, 'keep me\n');
+  return { home, outside, canary };
+}
+const canJunction = (() => {
+  const d = tempDir('jprobe');
+  try {
+    fs.mkdirSync(path.join(d, 't'));
+    fs.symlinkSync(path.join(d, 't'), path.join(d, 'l'), 'junction');
+    return true;
+  } catch {
+    return false;
+  }
+})();
+const skip = canJunction ? false : 'this platform cannot create a junction or directory symlink';
+
+test('junction: uninstall and stale-role delete refuse a manifest path through a junction; the canary survives', { skip }, async () => {
+  const { home, outside, canary } = junctionHome('junc');
+  assert.equal((await run(['install', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
+  fs.symlinkSync(outside, path.join(home, '.gemini', 'link'), 'junction');
+  const mfile = path.join(home, '.gemini', '.orc-manifest.antigravity.json');
+  const mf = JSON.parse(fs.readFileSync(mfile, 'utf8'));
+  mf.files['.gemini/link/victim.txt'] = { sha256: createHash('sha256').update(fs.readFileSync(canary)).digest('hex') };
+  fs.writeFileSync(mfile, JSON.stringify(mf));
+  const before = tree(path.join(home, '.gemini', 'config'));
+  const st = await run(['install', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.equal(st.code, 1);
+  assert.match(st.err, /refused: .*victim\.txt resolves outside/);
+  const un = await run(['uninstall', '--tool', 'antigravity', '--home', home, '--apply', '--force']);
+  assert.equal(un.code, 1);
+  assert.match(un.err, /refused: .*victim\.txt resolves outside/);
+  assert.equal(fs.readFileSync(canary, 'utf8'), 'keep me\n');
+  assert.deepEqual(tree(path.join(home, '.gemini', 'config')), before, 'nothing deleted inside the home either');
+  assert.ok(fs.existsSync(mfile));
+});
+
+test('junction: install refuses to write through a junction planted at the agents dir', { skip }, async () => {
+  const { home, outside, canary } = junctionHome('junc-w');
+  fs.mkdirSync(path.join(home, '.gemini', 'config'), { recursive: true });
+  fs.symlinkSync(outside, path.join(home, '.gemini', 'config', 'agents'), 'junction');
+  const r = await run(['install', '--tool', 'antigravity', '--home', home, '--apply', '--force']);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /refused: .*resolves outside/);
+  assert.deepEqual(fs.readdirSync(outside), ['victim.txt']);
+  assert.equal(fs.readFileSync(canary, 'utf8'), 'keep me\n');
+  assert.ok(!fs.existsSync(path.join(home, '.gemini', 'AGENTS.md')), 'all or nothing');
+});
+
+test('a manifest entry that is a directory refuses uninstall and the stale delete before anything is deleted', async () => {
+  const home = tempDir('mf-dir');
+  assert.equal((await run(['install', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
+  fs.mkdirSync(path.join(home, '.gemini', 'adir'));
+  const mfile = path.join(home, '.gemini', '.orc-manifest.antigravity.json');
+  const mf = JSON.parse(fs.readFileSync(mfile, 'utf8'));
+  mf.files['.gemini/adir'] = { sha256: '0'.repeat(64) };
+  fs.writeFileSync(mfile, JSON.stringify(mf));
+  const before = tree(home);
+  for (const argv of [['uninstall', '--apply'], ['install', '--apply']]) {
+    const r = await run([...argv, '--tool', 'antigravity', '--home', home]);
+    assert.equal(r.code, 1, argv[0]);
+    assert.match(r.err, /adir \(in the manifest\) is not a regular file/);
+  }
+  assert.deepEqual(tree(home), before);
+});
+
+test('manifest: a rulebook edited since install is REPLACE EDITED even with its marker', async () => {
+  const home = tempDir('mf-marker');
+  assert.equal((await run(['install', '--tool', 'codex', '--home', home, '--apply'])).code, 0);
+  const rule = path.join(home, '.codex', 'AGENTS.md');
+  fs.appendFileSync(rule, 'my edit\n');
+  const r = await run(['install', '--tool', 'codex', '--home', home, '--apply']);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /refused \(edited since install.*AGENTS\.md/);
+  assert.match(fs.readFileSync(rule, 'utf8'), /my edit/);
+});
+
+test('junction: a link that stays inside the tool root is still refused', { skip }, async () => {
+  const home = tempDir('junc-in');
+  assert.equal((await run(['install', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
+  fs.symlinkSync(path.join(home, '.gemini', 'config'), path.join(home, '.gemini', 'inner'), 'junction');
+  const mfile = path.join(home, '.gemini', '.orc-manifest.antigravity.json');
+  const mf = JSON.parse(fs.readFileSync(mfile, 'utf8'));
+  mf.files['.gemini/inner/agents/scout.md'] = mf.files['.gemini/config/agents/scout.md'];
+  fs.writeFileSync(mfile, JSON.stringify(mf));
+  const r = await run(['uninstall', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /refused: .*inner is a symlink or junction/);
+  assert.ok(fs.existsSync(path.join(home, '.gemini', 'config', 'agents', 'scout.md')));
 });

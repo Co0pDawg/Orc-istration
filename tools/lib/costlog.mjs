@@ -24,14 +24,24 @@ const minutes = (a, b) => {
 const cell = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
 
 // Rows: one per dispatch event; the span ends at the next top-level event naming the same card.
+// Events that are not objects with a text are skipped and counted, never a crash.
+export function usableEvents(session) {
+  const raw = Array.isArray(session.events) ? session.events : session.events == null ? [] : [session.events];
+  const events = raw.filter((e) => e && typeof e === 'object' && !Array.isArray(e) && typeof e.text === 'string');
+  return { events, skipped: raw.length - events.length };
+}
+
 export function dispatchRows(session) {
-  const events = (Array.isArray(session.events) ? session.events : []).filter((e) => e && typeof e.text === 'string');
+  const { events } = usableEvents(session);
   const rows = [];
   events.forEach((e, i) => {
     const m = DISPATCH.exec(e.text);
     if (!m) return;
     const end = e.card ? events.slice(i + 1).find((x) => x.card === e.card) : undefined;
-    rows.push({ agent: m[1], task: m[2], card: e.card ?? null, start: e.at, end: end?.at ?? null, minutes: end ? minutes(e.at, end.at) : null, result: end?.text ?? null });
+    const span = end ? minutes(e.at, end.at) : null;
+    // An end event without usable times still ends the span: its text is the Result, the time is a TODO.
+    const time = !end ? 'TODO (no end event)' : span === null ? 'TODO (no time on the start or end event)' : span;
+    rows.push({ agent: m[1], task: m[2], card: e.card ?? null, start: e.at, end: end?.at ?? null, minutes: span, time, result: end?.text ?? null });
   });
   return rows;
 }
@@ -55,8 +65,7 @@ export function costlog(data, sessionId) {
   out.push('|---|---|---|---|---|---|---|---|---|---|---|');
   rows.forEach((r, i) => {
     const purpose = r.card && cardOf[r.card]?.title ? cardOf[r.card].title : `#${r.task}`;
-    const time = r.minutes ?? 'TODO (no end event)';
-    out.push(`| ${i + 1} | ${cell(r.agent)} | TODO | ${cell(purpose)} | ${cell(r.card ?? '-')} | ${cell(r.start)} | see card | TODO | ${time} | ${cell(r.result ?? 'TODO (no end event)')} | TODO |`);
+    out.push(`| ${i + 1} | ${cell(r.agent)} | TODO | ${cell(purpose)} | ${cell(r.card ?? '-')} | ${cell(r.start ?? 'TODO')} | see card | TODO | ${r.time} | ${cell(r.result ?? 'TODO (no end event)')} | TODO |`);
   });
   out.push('', '## Per card', '');
   out.push('| Card | Title | Agent | Dispatches | Tokens | Commit | Stages |');
@@ -71,13 +80,15 @@ export function costlog(data, sessionId) {
     out.push(`| ${cell(id)} | ${cell(c.title)} | ${cell(c.agent ?? '')} | ${n} | ${c.tokens ?? 'TODO'} | ${cell(c.commit ?? '')} | ${cell(stages)} |`);
   }
   const mins = rows.reduce((s, r) => s + (r.minutes ?? 0), 0);
-  const open = rows.filter((r) => r.minutes === null).length;
-  const reworks = (session.events ?? []).filter((e) => /\brework\b/i.test(e?.text ?? '')).length;
+  const open = rows.filter((r) => r.result === null).length;
+  const { events, skipped } = usableEvents(session);
+  const reworks = events.filter((e) => /\brework\b/i.test(e.text)).length;
   out.push('', '## Totals', '');
   out.push(`- Tokens: ${tokensKnown ? tokenSum : 'TODO'} (sum of card tokens${tokensKnown ? '' : '; a card has no numeric tokens'})`);
   out.push(`- Wall clock: ${mins} min across ${rows.length} dispatch(es)${open ? `; ${open} without an end event (TODO)` : ''}`);
   out.push('- Orchestrator context: TODO k → TODO k');
   out.push('- Model per dispatch, Tools, Value: TODO', '');
+  if (skipped) out.push(`TODO: ${skipped} board event(s) skipped (not an object with a text)`, '');
   out.push(`## Loop signal`, '', `TODO (board events mentioning rework: ${reworks})`, '');
   out.push('## Spec misses', '', 'TODO', '');
   return out.join('\n');

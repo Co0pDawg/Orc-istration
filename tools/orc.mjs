@@ -7,12 +7,12 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse, normalizeEol, isGenerated } from './lib/frontmatter.mjs';
 import { parseRole } from './lib/roles.mjs';
-import { sha256, diskHash, loadManifest, writeManifest, safeRel } from './lib/manifest.mjs';
+import { sha256, diskHash, loadManifest, writeManifest, safeRel, escapes } from './lib/manifest.mjs';
 import { knownTools, validateModels } from './lib/models.mjs';
 import { briefTemplate, lintBrief, parseMarchingOrders } from './lib/brief.mjs';
 import { reviewTier } from './lib/reviewtier.mjs';
 import { costlog, readBoardExport } from './lib/costlog.mjs';
-import { dispatchPlan, runDispatch, formatCommand } from './lib/dispatch.mjs';
+import { dispatchPlan, runDispatch, formatCommand, argvProblem, binEnv } from './lib/dispatch.mjs';
 import { mergeHooks, formatLike } from './lib/hooks.mjs';
 
 const DEFAULT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -376,6 +376,24 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     if (loaded.error) return fail(`${loaded.error}; remove or fix the manifest by hand`);
     const manifest = loaded.manifest;
     const recorded = manifest?.files ?? {};
+    const root = adapter.home.root;
+    // Every install target and every manifest path is checked on the real file system before anything is read or
+    // written: a symlink or junction below the tool root refuses the whole install.
+    const unsafe = [];
+    for (const f of files.filter((x) => x.install !== false)) {
+      const why = escapes(home, root, path.join(home, ...f.path.split('/')));
+      if (why) unsafe.push(why);
+    }
+    for (const rel of Object.keys(recorded)) {
+      const t = safeRel(home, rel, root);
+      const why = escapes(home, root, t);
+      if (why) unsafe.push(why);
+      else if (fs.existsSync(t) && !fs.lstatSync(t).isFile()) unsafe.push(`${t} (in the manifest) is not a regular file`);
+    }
+    if (unsafe.length) {
+      unsafe.forEach((u) => io.err(`refused: ${u}`));
+      return fail('nothing written: unsafe target path(s)');
+    }
     // Plan every target first: one refused file refuses the whole install, so it is never half applied.
     const plan = files
       .filter((f) => f.install !== false)
@@ -386,10 +404,9 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         let state = !exists ? 'create' : current === normalizeEol(f.content) ? 'unchanged' : 'replace';
         if (state === 'replace') {
           const m = recorded[f.path];
-          // In the manifest: untouched since install replaces; edited by hand is refused. Otherwise only
-          // rulebooks and TOML agents carry a marker; any other differing file is treated as hand-written.
-          // A file that still carries the generated-by marker replaces as before (existing tests pin this).
-          if (m && diskHash(target) !== m.sha256 && !isGenerated(current)) state = 'REPLACE EDITED';
+          // In the manifest the hash decides: untouched since install replaces, edited by hand is refused. With no
+          // manifest entry only rulebooks and TOML agents carry a marker; any other differing file is hand-written.
+          if (m && diskHash(target) !== m.sha256) state = 'REPLACE EDITED';
           else if (!m && !isGenerated(current)) state = 'REPLACE HAND-WRITTEN';
         }
         return { f, target, exists, state };
@@ -461,10 +478,37 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     if (error) return fail(error);
     if (!manifest) return fail(`no install manifest at ${file}: remove ${adapter.id}'s files by hand`);
     const when = stamp(io.now ? io.now() : new Date());
+    // Validate every entry and build the whole plan before deleting anything.
+    const root = adapter.home.root;
+    const steps = [];
+    const bad = [];
     for (const [rel, m] of Object.entries(manifest.files)) {
-      const target = safeRel(home, rel, adapter.home.root);
+      const target = safeRel(home, rel, root);
+      const why = escapes(home, root, target);
+      if (why) {
+        bad.push(why);
+        continue;
+      }
       if (!fs.existsSync(target)) continue;
-      const edited = diskHash(target) !== m.sha256;
+      if (!fs.lstatSync(target).isFile()) {
+        bad.push(`${target} (in the manifest) is not a regular file`);
+        continue;
+      }
+      try {
+        steps.push({ target, edited: diskHash(target) !== m.sha256 });
+      } catch (e) {
+        bad.push(`${target}: cannot read (${e.message})`);
+      }
+    }
+    for (const rel of manifest.dirs) {
+      const why = escapes(home, root, safeRel(home, rel, root));
+      if (why) bad.push(why);
+    }
+    if (bad.length) {
+      bad.forEach((b) => io.err(`refused: ${b}`));
+      return fail('nothing deleted: the manifest names unsafe or invalid paths');
+    }
+    for (const { target, edited } of steps) {
       if (edited && !opt.force) {
         io.out(`${opt.apply ? 'kept' : 'would keep'} (edited since install; --force deletes it after a backup): ${target}`);
         continue;
@@ -583,7 +627,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   if (cmd === 'review-tier') {
     const base = opt.base ?? 'origin/main';
     try {
-      const { tier, reason } = reviewTier(path.resolve(opt['repo-dir'] ?? process.cwd()), base);
+      const { tier, reason, warning } = reviewTier(path.resolve(opt['repo-dir'] ?? process.cwd()), base);
+      if (warning) io.err(`WARN ${warning}`);
       io.out(`${tier}: ${reason}`);
       if (tier === 'Light-eligible') {
         io.out("Light also needs a refuter ACCEPT after mutation checks, with the repo's test conventions as its checklist (rulebook conditions 2 and 3; not computable here).");
@@ -639,9 +684,11 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       return fail(e.message);
     }
     if (plan.error) return fail(plan.error);
+    const tooBig = argvProblem(plan);
+    if (tooBig) return fail(`dispatch refused: ${tooBig}; nothing started`);
     io.out(formatCommand(plan));
     if (opt['dry-run']) return 0;
-    if (plan.exe.missing) return fail(`cannot run ${plan.command}: not found${plan.exe.shim ? ' (only a .cmd/.bat shim)' : ''}`);
+    if (plan.exe.missing) return fail(`cannot run ${plan.command}: not found${plan.exe.shim ? ' (only a .cmd/.bat shim)' : ''}; set ${binEnv(plan.toolId)} to its full path`);
     return runDispatch(plan, { timeoutSec, err: io.err });
   }
 
@@ -651,11 +698,15 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const source = path.join(repo, opt.node ? 'hooks.node.example.json' : 'settings.example.json');
     const target = path.join(home, '.claude', 'settings.json');
     let original = null;
+    let bom = '';
     let settings = {};
     try {
       if (fs.existsSync(target)) {
-        original = fs.readFileSync(target, 'utf8');
-        settings = JSON.parse(original.replace(/^﻿/, ''));
+        const raw = fs.readFileSync(target, 'utf8');
+        bom = raw.charCodeAt(0) === 0xfeff ? raw[0] : '';
+        original = raw.slice(bom.length);
+        settings = JSON.parse(original);
+        if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return fail(`hooks: ${target} is not a JSON object at the top level; nothing written`);
       }
       const { merged, added } = mergeHooks(settings, JSON.parse(read(source)), home);
       if (!added.length) {
@@ -671,12 +722,25 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         return 0;
       }
       fs.mkdirSync(path.dirname(target), { recursive: true });
+      // Write the new content beside the target first: when that fails, no backup is left behind.
+      const tmp = `${target}.orc-tmp-${process.pid}`;
+      fs.writeFileSync(tmp, bom + formatLike(original, merged));
       if (original !== null) {
         const backup = `${target}.orc-backup-${stamp(io.now ? io.now() : new Date())}`;
-        fs.copyFileSync(target, backup);
+        try {
+          fs.copyFileSync(target, backup);
+        } catch (e) {
+          fs.rmSync(tmp, { force: true });
+          throw e;
+        }
         io.out(`backed up: ${backup}`);
       }
-      fs.writeFileSync(target, formatLike(original, merged));
+      try {
+        fs.renameSync(tmp, target);
+      } catch (e) {
+        fs.rmSync(tmp, { force: true });
+        throw e;
+      }
       io.out(`${original === null ? 'created' : 'updated'} ${target}`);
       return 0;
     } catch (e) {
