@@ -77,7 +77,7 @@ Spec → builder → refuter → orchestrator reads the diff.
 
 ## Pre-PR review tiers
 - **Light**, when all three hold: (1) diff is tests/docs only (attribute-only hook edits count); (2) refuter ACCEPT after mutation checks; (3) refuter's brief used the repo's test conventions as its checklist. Run only a docs/comment review, plus your own full diff read.
-- **Full**: anything else (product code, schema/SQL, config, money or security paths, no ACCEPT). Run a full multi-agent review, staged 3+3.
+- **Full**: anything else (product code, schema/SQL, config, money or security paths, no ACCEPT). Run the review panel, `review/PROCEDURE.md` in the setup checkout (its `review-*` agents install with the roster), staged 3+3.
 - **Escalate** to Full if Light finds anything beyond doc wording.
 - `node tools/orc.mjs review-tier` checks condition (1) against the base branch.
 - Fix nits inline only when cheap and in a file already in the diff; otherwise log `not-actioned`. Never spend a builder round on nits alone.
@@ -103,6 +103,7 @@ Each tool's specifics (dispatch, model mapping, hooks, what it cannot do) are in
 - **Dispatch:** name the agent in the prompt ("use the `scout` agent to ..."); agents live in `~/.codex/agents/<name>.toml`. Parallel threads are capped by `agents.max_concurrent_threads_per_session`; the High-tier cap of three still applies.
 - **Tiers:** Low `gpt-6-luna`, Mid `gpt-6.1-sol`, High `gpt-6-astra` (`models.json`), with `model_reasoning_effort` from the tier.
 - **Board:** local backend only; `install --board <address> --board-repo <path>` adds this machine's Board line.
+- **Review panel:** no slash command here: follow `review/PROCEDURE.md` in the setup checkout, dispatching the `review-*` agents by name. `metrics capture` reads Claude Code transcripts only, so it is unsupported here.
 
 What Codex CLI cannot do (generated from the adapter's gaps):
 - No per-agent tool allowlist, sandbox or approval setting: read-only rests on the role body.

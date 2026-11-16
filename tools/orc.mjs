@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Orchestration generator and installer. Node 22+, standard library only.
-// build | check | sync | install | uninstall | status | models | brief | review-tier | costlog | dispatch | hooks
-// (see README "Other tools")
+// build | check | sync | install | uninstall | status | models | brief | review-tier | costlog | calibration | metrics
+// | dispatch | hooks (see README "Other tools"; calibration and metrics: review/calibration.md, review/metrics.md)
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -12,6 +12,8 @@ import { knownTools, validateModels } from './lib/models.mjs';
 import { briefTemplate, lintBrief, parseMarchingOrders } from './lib/brief.mjs';
 import { reviewTier } from './lib/reviewtier.mjs';
 import { costlog, readBoardExport } from './lib/costlog.mjs';
+import { calibrationReport, DEFAULT_MIN_PRECISION } from './lib/calibration.mjs';
+import { capture, loadRuns, metricsReport, repoTop, DEFAULT_PRICES } from './lib/metrics.mjs';
 import { dispatchPlan, runDispatch, formatCommand, argvProblem, binEnv } from './lib/dispatch.mjs';
 import { mergeHooks, formatLike } from './lib/hooks.mjs';
 import { decodeText, readText } from './lib/text.mjs';
@@ -229,12 +231,12 @@ function stamp(d = new Date()) {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout'];
+const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices'];
 
 // Value options that may repeat; each value may also be comma-separated.
 const LIST_OPTIONS = ['profile'];
 
-const FLAG_OPTIONS = ['apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board'];
+const FLAG_OPTIONS = ['apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print'];
 
 // Accepts `--key value` and `--key=value`. An unknown option is an error, never a silent boolean: a mistyped
 // `--home=<dir>` once fell through to the real home directory.
@@ -708,6 +710,56 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     }
   }
 
+  if (cmd === 'calibration') {
+    const min = opt['min-precision'] === undefined ? DEFAULT_MIN_PRECISION : Number(opt['min-precision']);
+    if (!(min >= 0 && min <= 1)) return fail(`calibration: --min-precision must be a number from 0 to 1, got ${opt['min-precision']}`);
+    try {
+      const logs = path.resolve(opt.logs ?? path.join(repoTop(process.cwd()) ?? process.cwd(), '.orc', 'reviews'));
+      emit(calibrationReport(logs, min));
+      return 0;
+    } catch (e) {
+      return fail(e.message);
+    }
+  }
+
+  if (cmd === 'metrics') {
+    const sub = opt._[1];
+    try {
+      if (sub === 'capture' && opt._.length === 2) {
+        if (opt.mode && !['lite', 'full'].includes(opt.mode)) return fail(`metrics: --mode must be lite or full, got ${opt.mode}`);
+        const { report, file, warnings } = capture({
+          cwd: process.cwd(),
+          workflow: opt.workflow,
+          session: opt.session ?? process.env.CLAUDE_CODE_SESSION_ID,
+          transcript: opt.transcript,
+          log: opt.log,
+          mode: opt.mode,
+          version: opt.version,
+          out: opt.out,
+        });
+        warnings.forEach((w) => io.err(`WARN ${w}`));
+        const json = JSON.stringify(report, null, 2);
+        if (opt.print) {
+          io.out(json);
+          return 0;
+        }
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, `${json}\n`);
+        io.out(file);
+        return 0;
+      }
+      if (sub === 'report' && opt._.length === 2) {
+        const prices = opt.prices ? JSON.parse(read(path.resolve(opt.prices))) : DEFAULT_PRICES;
+        const dir = path.resolve(opt.dir ?? path.join(repoTop(process.cwd()) ?? process.cwd(), '.orc', 'metrics'));
+        emit(metricsReport(loadRuns(dir), prices));
+        return 0;
+      }
+    } catch (e) {
+      return fail(e.message.startsWith('metrics:') ? e.message : `metrics: ${e.message}`);
+    }
+    return fail('usage: metrics capture --workflow <name> [--session <id> | --transcript <path>] [--log <run log>] [--mode lite|full] [--version <v>] [--out <dir>] [--print] | metrics report [--dir <dir>] [--prices <file>] [--out <file>]');
+  }
+
   if (cmd === 'dispatch') {
     if (!opt.tool || !opt.role || !opt.brief) return fail('usage: dispatch --tool <id> --role <name> --brief <file> [--dry-run] [--timeout <seconds>] [--no-lint]');
     let timeoutSec = 0;
@@ -808,7 +860,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     }
   }
 
-  return fail('usage: node tools/orc.mjs build|check|sync|install|uninstall|status|models|brief|review-tier|costlog|dispatch|hooks [options]');
+  return fail('usage: node tools/orc.mjs build|check|sync|install|uninstall|status|models|brief|review-tier|costlog|calibration|metrics|dispatch|hooks [options]');
 }
 
 function isMain() {

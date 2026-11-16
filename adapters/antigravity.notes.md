@@ -4,3 +4,4 @@
 - **Tiers:** subagent `model` is `flash` (Low, Mid) or `pro` (High). A headless run (`agy -p`) takes `--model <slug>` from `models.json` `headless`; refresh the slugs with `agy models | node tools/orc.mjs models --tool antigravity --from-stdin`.
 - **Hooks:** `hooks.json` (SessionStart, PreToolUse, PostToolUse, PreInvocation, PostInvocation, Stop).
 - **Shared `~/.gemini`:** Antigravity may load both `AGENTS.md` and a Gemini CLI `GEMINI.md` there, so two rulebook copies; `install` warns. Remove `~/.gemini/GEMINI.md` unless you also use Gemini CLI.
+- **Review panel:** no slash command here: follow `review/PROCEDURE.md` in the setup checkout, dispatching the `review-*` agents by name. `metrics capture` reads Claude Code transcripts only, so it is unsupported here.

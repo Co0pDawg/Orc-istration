@@ -77,7 +77,7 @@ Spec → builder → refuter → orchestrator reads the diff.
 
 ## Pre-PR review tiers
 - **Light**, when all three hold: (1) diff is tests/docs only (attribute-only hook edits count); (2) refuter ACCEPT after mutation checks; (3) refuter's brief used the repo's test conventions as its checklist. Run only a docs/comment review, plus your own full diff read.
-- **Full**: anything else (product code, schema/SQL, config, money or security paths, no ACCEPT). Run a full multi-agent review, staged 3+3.
+- **Full**: anything else (product code, schema/SQL, config, money or security paths, no ACCEPT). Run the review panel, `review/PROCEDURE.md` in the setup checkout (its `review-*` agents install with the roster), staged 3+3.
 - **Escalate** to Full if Light finds anything beyond doc wording.
 - `node tools/orc.mjs review-tier` checks condition (1) against the base branch.
 - Fix nits inline only when cheap and in a file already in the diff; otherwise log `not-actioned`. Never spend a builder round on nits alone.
@@ -104,6 +104,7 @@ Each tool's specifics (dispatch, model mapping, hooks, what it cannot do) are in
 - **Tiers:** subagent `model` is `flash` (Low, Mid) or `pro` (High). A headless run (`agy -p`) takes `--model <slug>` from `models.json` `headless`; refresh the slugs with `agy models | node tools/orc.mjs models --tool antigravity --from-stdin`.
 - **Hooks:** `hooks.json` (SessionStart, PreToolUse, PostToolUse, PreInvocation, PostInvocation, Stop).
 - **Shared `~/.gemini`:** Antigravity may load both `AGENTS.md` and a Gemini CLI `GEMINI.md` there, so two rulebook copies; `install` warns. Remove `~/.gemini/GEMINI.md` unless you also use Gemini CLI.
+- **Review panel:** no slash command here: follow `review/PROCEDURE.md` in the setup checkout, dispatching the `review-*` agents by name. `metrics capture` reads Claude Code transcripts only, so it is unsupported here.
 
 What Antigravity CLI cannot do (generated from the adapter's gaps):
 - Per-agent model is only inherit, flash or pro: Mid and Low both map to flash, and what flash and pro resolve to is not documented.

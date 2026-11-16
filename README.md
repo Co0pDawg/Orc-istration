@@ -48,6 +48,8 @@ flowchart LR
 | refuter | High | Try to prove the diff wrong against the spec; rerun tests; ACCEPT or REWORK. Never edits. |
 | debugger | High | Root cause for a failure that is not obvious. Reproduces first. |
 
+Six more roles (`review-*`) make up the [review panel](#review-panel) the Full review tier runs.
+
 **The marching orders.** Every dispatch carries the same ten items, in order:
 
 1. Goal, in one sentence.
@@ -115,7 +117,9 @@ Save the last command's output as `models.local.json`. The rest: [Install and Qu
 |---|---|
 | `AGENTS.md` | The tool-neutral rulebook (the source) |
 | `CLAUDE.md`, `agents/*.md` | Generated Claude Code files (`node tools/orc.mjs sync`) |
-| `roles/*.md` | The five agent roles: tier, access, capabilities, body |
+| `roles/*.md` | The agent roles (the five above and the six `review-*` panel roles): tier, access, capabilities, body |
+| `review/` | The review panel: `PROCEDURE.md`, the explorer contract, shared rules, lane selection and `lanes/*.md` |
+| `commands/*.md` | Generated Claude Code slash commands for the review panel (`node tools/orc.mjs sync`) |
 | `profiles/*.md` | Optional rulebook additions (`--profile <name>`); `dotnet-azure-devops` holds the long rulebook's stack rules and general lessons |
 | `models.json` | Tier to model, per tool; `models.local.json` (untracked) overrides |
 | `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
@@ -175,6 +179,14 @@ These commands check or do the manual steps the rulebook asks for. None of them 
 - `check` also validates `models.json` and `models.local.json`: tool ids must be adapters, tiers `low`, `mid`, `high` (plus `headless` slugs per tier), values strings, and `effort` one of `low`, `medium`, `high`, `xhigh`, `max`, `ultra`.
 
 CI (`.github/workflows/test.yml`) runs `npm test` and `check` on Ubuntu and Windows, and the worklog self-test on Windows.
+
+## Review panel
+
+The Full pre-PR review tier runs the review panel, ported from a production setup and made tool-neutral. `review/PROCEDURE.md` is the orchestrator's procedure: select lanes for the diff (`review/selection.md`), run read-only explorers over them in parallel (code, failure, docs, checklist, and design on large diffs), settle each lead with `review-verifier` or the owning explorer, raise under-rated items in a severity review, then write one report and a run log. Each lane is a checklist in `review/lanes/` (code-reviewer, silent-failure-hunter, comment-analyzer, type-design-analyzer, architecture-reviewer, code-simplifier, pr-test-analyzer, ui-test-reviewer, secondary-artifacts, ticket-coverage); `review/contract.md` and `review/shared-rules.md` hold the rules every explorer follows.
+
+Stack-specific checks (tenant scoping, CSRF, migration co-change, UI test hooks, generated files, a documentation map) come from the reviewed repo's own `REVIEW.md`, or the file its rulebook names; without one the lanes skip those checks. A ticket brief comes from ticket text or a brief file you give. Run logs and metrics land in the reviewed repo's `.orc/` folder (`review/calibration.md`, `review/metrics.md`).
+
+In Claude Code, `/pre-pr-review [branch] [base] [scope keywords] [lite|full]`, `/review-verdict` and `/calibration-report` are generated into `commands/`. They find this checkout through the `ORC_HOME` environment variable, else `~/.claude`. Other tools follow `review/PROCEDURE.md` by hand.
 
 ## How the .gitignore works
 
