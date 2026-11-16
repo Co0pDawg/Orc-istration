@@ -41,6 +41,7 @@ Reports are capped at 40 lines; anything longer goes to a scratch file and the r
 The board address for this machine is in `board.local.md` beside the rulebook (untracked), or in the Board line of the tool notes below.
 - A `http://localhost:<port>` address means the local backend: write with `node <board repo>/local/board.js` (`batch` for the Start write, `append` for progress and events, `update` for fields; exit 2 is a version conflict).
 - A `claude.ai/artifact/...` address means the artifact backend, which only Claude Code can write (see its tool notes).
+- Board times come from the clock at the moment of the write (`date -Iseconds`), never an estimate; estimated times once ran 30 minutes ahead.
 
 Every orchestrated task (any task that dispatches a builder, refuter or debugger) goes on the live board. Inline work and lone scout/researcher lookups stay off it.
 - **Start:** before the first dispatch, create the session doc and one card per task in a single batch.
@@ -71,6 +72,9 @@ Spec → builder → refuter → orchestrator reads the diff.
 - Live-app verification gets its own builder, worktree and DB copy. At most 2 apps on a shared dev DB. A setup-timeout failure gets 1 rerun, and both results are reported.
 
 ### Specs and bugs
+- Before speccing work in a repo, fetch and compare the checkout with its remote. One spec was written against a checkout 82 commits behind, and most of it was already done.
+- Before switching a branch or resetting a checkout another session may use, check the board for a session in that repo today, and work in a separate worktree. A branch was once switched under another session's uncommitted edit.
+- A scrub or redaction spec covers every tracked file, fixtures and sample output included; a named list is examples only. A refuter found real feature titles in fixtures outside the named list.
 - Test-coverage specs put hook-only view edits (`data-testid`/`id`) in scope ("no product code" made a builder skip required hooks).
 - After fetching the base branch, check whether the referenced docs changed format.
 - Confirm every defect a builder reports by reading the code, and say how it was confirmed (reproduced live or by code read).
