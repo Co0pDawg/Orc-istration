@@ -1,5 +1,7 @@
 # worklog
 
+The worklog is an example, not part of the method: a Windows-only time tracker built on the Claude Code hooks, tied to one ticket format (`APP-NNNNN`) and to Azure DevOps. Use it as a pattern for your own hooks; the orchestration rules and `tools/orc.mjs` do not depend on it.
+
 Logs which ticket each Claude Code session works on, and what it did, so the day can be pasted into a time-entry portal (15-minute grid).
 
 ## How it works
@@ -94,7 +96,7 @@ With an artifact board, a Claude session uploads each pending file in `~/.claude
 2. ArtifactData `set` with the same url, collection and doc_id, `file_path` = the pending file, and `if_version` = the version from step 1 when the doc exists.
 3. Delete the pending file.
 
-Orchestrator sessions do this at the start of every orchestrated task. Any session does it when Cooper says "sync my timeline", and after every roll-up (`worklog.ps1 <date>`): run `sync-timeline.ps1 -Date <date> -Force` first, since a tick built before the roll-up finished carries no roll-up blocks (10/30: the Time page showed none).
+Orchestrator sessions do this at the start of every orchestrated task. Any session does it when the user says "sync my timeline", and after every roll-up (`worklog.ps1 <date>`): run `sync-timeline.ps1 -Date <date> -Force` first, since a tick built before the roll-up finished carries no roll-up blocks (10/30: the Time page showed none).
 
 ## Known ceilings
 

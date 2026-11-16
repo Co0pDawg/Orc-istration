@@ -1,0 +1,38 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"<home>/.claude/tools/board-reminder.mjs\" relay",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent|ArtifactData|mcp__claude-artifacts__db_.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"<home>/.claude/tools/board-reminder.mjs\" relay",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"<home>/.claude/tools/board-reminder.mjs\" mark",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

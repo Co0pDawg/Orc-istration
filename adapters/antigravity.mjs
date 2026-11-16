@@ -42,6 +42,13 @@ export default {
     if (caps.includes('shell')) fm.commandExecutionPolicy = 'sandbox';
     return { path: `.gemini/config/agents/${role.name}.md`, content: serialize(fm, role.body) };
   },
+  // Headless run (agy --help, v1.5.9): stdin is read only with --input-format stream-json, so the brief is the
+  // -p argument. --effort only when the tier names one.
+  headless(role, tierModel, briefText) {
+    const args = ['-p', briefText, '--agent', role.name, '--model', tierModel.model, '--output-format', 'json'];
+    if (tierModel.effort) args.push('--effort', tierModel.effort);
+    return { command: 'agy', args, stdin: null };
+  },
   renderRulebook(agentsMd, notesMd) {
     return [{ path: '.gemini/AGENTS.md', content: `${generatedMarker('antigravity')}\n${agentsMd}\n${notesMd}` }];
   },

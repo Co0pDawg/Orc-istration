@@ -1,86 +1,184 @@
-# ~/.claude: orchestration setup
+# `Orc-istration`
 
-Public repo (`Co0pDawg/Orc-istration`) rooted at `~/.claude`. It holds the Claude Code orchestration rulebook, the agent roster and two outline docs, so the setup can be restored or reused on another machine.
+<img src="docs/images/orc-istration-banner.svg" alt="Orc-istration banner in a green terminal style: the name, the line 'Run AI coding agents like a small (orc) engineering team', and the build loop from spec to builder to refuter to diff read to pull request, with a rework arrow back to the builder" width="880">
 
-## Tracked files
+[![Tests on main](https://github.com/Co0pDawg/Orc-istration/actions/workflows/test.yml/badge.svg?branch=main&event=push)](https://github.com/Co0pDawg/Orc-istration/actions/workflows/test.yml?query=branch%3Amain+event%3Apush)
+
+**Run AI coding agents like a small engineering team.**
+
+`Orc-istration` is a method and a toolkit for multi-agent coding work. One orchestrator plans and reviews, cheap agents search, expensive agents build, and an adversarial reviewer tries to break each built change before a person sees it. One tool-neutral rulebook and five agent roles are turned into native files for seven agent tools.
+
+It is not an autonomous swarm. A person stays in charge: a spec is written before any code, each built change gets an independent review, and nothing counts as done until the orchestrator has read the final diff.
+
+> **Status: developed and used on Claude Code; early on other tools.** The full loop has run live only on Claude Code. Antigravity CLI has had one live run of a generated agent, and the other five adapters are verified by tests against each tool's documented format. See [Limits](#limits).
+
+Full documentation lives in the [wiki](https://github.com/Co0pDawg/Orc-istration/wiki).
+
+## How it works
+
+- **A spec comes first.** The orchestrator is the main chat session. Before anything is built it writes a ten-item brief called the marching orders.
+- **Cheap agents look, expensive agents build.** A subagent is a separate agent the orchestrator starts with that brief; it works in its own context and returns a short report. Each role runs on a tier (Low, Mid or High), which maps to a cheaper or more capable model per tool. Scouts (Low) find files, researchers (Mid) read docs and report cited facts, and a builder (High) implements exactly the spec and runs the filtered tests.
+- **Every built change is attacked.** A refuter (High), which did not write the code, reviews the diff against the spec, reruns the tests, mutation-checks them, and returns ACCEPT or REWORK.
+- **Rework is bounded.** REWORK goes back to the same builder. After two rounds the orchestrator reads the diff and decides.
+- **The orchestrator signs off.** It reads the final diff itself, picks a pre-PR review tier, and opens a pull request.
+- **You can watch it happen.** Agents post their progress to a live board, one card per task.
+- **Costs are counted.** Every task writes a cost record, and the rules are tuned on that data.
+
+```mermaid
+flowchart LR
+  S["Scout: locations"] --> O
+  R["Researcher: cited facts"] --> O
+  O["Orchestrator writes spec"] --> B["Builder implements"]
+  B --> F["Refuter tries to break it"]
+  F -- "REWORK" --> B
+  F -- "ACCEPT" --> D["Orchestrator reads diff"]
+  D --> P["Pre-PR review"]
+  P --> PR["Pull request"]
+```
+
+## What is in the box
+
+**The roster** (`roles/*.md`):
+
+| Role | Tier | What it does |
+|---|---|---|
+| scout | Low | Find files, symbols and call sites. Returns locations only, never file bodies. |
+| researcher | Mid | Read docs, source or the web; every fact cited or marked UNVERIFIED. |
+| builder | High | Implement exactly the spec, run the build and filtered tests, mutation-check one new test. |
+| refuter | High | Try to prove the diff wrong against the spec; rerun tests; ACCEPT or REWORK. Never edits. |
+| debugger | High | Root cause for a failure that is not obvious. Reproduces first. |
+
+**The marching orders.** Every dispatch carries the same ten items, in order:
+
+1. Goal, in one sentence.
+2. Scope: exact files or URLs.
+3. May change and must not change.
+4. Must verify: the commands to run.
+5. Do not: the known traps.
+6. Output format and cap (40 lines by default).
+7. Known: facts already established.
+8. Scratch path for anything over the cap.
+9. Data precondition: the real rows or paths the feature depends on.
+10. Board: the card and stage the agent updates.
+
+**The board.** A live status page with one block per session and one card per task moving through its stages, so the person running the agents can follow the work without reading transcripts. It lives in its own repo, [Orc-Dashboard](https://github.com/Co0pDawg/Orc-Dashboard).
+
+![The board in its Sleek skin: a session with its activity log on the left and task cards showing stages and progress lines, using demo data](https://raw.githubusercontent.com/Co0pDawg/Orc-Dashboard/main/docs/screenshots/board-sleek.png)
+
+**The cost log.** Every orchestrated task writes one record: a row per dispatch with agent, model, tokens, minutes, result and a value label (`earned`, `marginal` or `waste`). The format and the review questions are in [`orchestration/README.md`](orchestration/README.md).
+
+## Evidence
+
+The first cost review ([`orchestration/README.md`](orchestration/README.md), 13 records) covered about 14.5M subagent tokens over about 110 dispatches. Of those the review labelled, 80 were earned, 9 marginal and 4 waste. The High tier took about 75% of the spend. Scouts were half marginal, and all four wastes were rate-limit failures or a dispatch in the wrong folder. The rules changed because of it: a cap of three High-tier agents in flight, scouts limited to locations, a data-precondition item in the marching orders, and a mandatory orchestrator-context line in each record.
+
+Every change that goes through the build loop gets an independent adversarial review before a person sees it; only small inline fixes (a one-line change, anything under about five tool calls) skip it. The refuter reruns the tests itself and mutation-checks them (it breaks the code and confirms a test fails). The incidents behind each rule are recorded in [`docs/rulebook-notes.md`](docs/rulebook-notes.md).
+
+## Works with
+
+| Tool | What gets generated | Verified how | Main gap |
+|---|---|---|---|
+| Claude Code | `CLAUDE.md` + `agents/*.md` in `~/.claude` | The loop has run on the earlier Claude-only rulebook; the files generated from this repo have not run live yet | Builder and debugger keep MCP tools (no allowlist) |
+| Antigravity CLI | `~/.gemini/AGENTS.md` + `config/agents/` | One headless live run of the scout (2026-11-15) | Models only `flash` or `pro`; no per-agent effort |
+| Gemini CLI | `~/.gemini/GEMINI.md` + `agents/` | Golden-file tests against documented formats | No nested or documented parallel subagents |
+| Codex CLI | `~/.codex/AGENTS.md` + `agents/*.toml` | Golden-file tests against documented formats | No tool allowlist; Windows through WSL2 |
+| Cursor | Project `AGENTS.md` + `~/.cursor/agents/` | Golden-file tests against documented formats | No global rulebook; model ids must be set |
+| GitHub Copilot CLI | `copilot-instructions.md` + `agents/*.agent.md` | Golden-file tests against documented formats | Model ids must be set; coarse tool aliases |
+| OpenCode | `~/.config/opencode/AGENTS.md` + `agents/` | Golden-file tests against documented formats | One documented model id for every tier |
+
+Details per tool: [Supported Tools](https://github.com/Co0pDawg/Orc-istration/wiki/Supported-Tools).
+
+## Quick start
+
+Requires Node 22 or later. No dependencies.
+
+**Claude Code.** This repo is rooted at `~/.claude` (see "Restore on a new machine"). After editing `AGENTS.md`, `roles/` or `adapters/`:
+
+```
+node tools/orc.mjs sync      # regenerates CLAUDE.md and agents/*.md
+npm test                     # golden files, install tests, and check
+```
+
+**Antigravity CLI.** From a clone of this repo:
+
+```
+node tools/orc.mjs check
+node tools/orc.mjs install --tool antigravity                 # dry run
+node tools/orc.mjs install --tool antigravity --apply --board http://localhost:8377/ --board-repo <path to Orc-Dashboard>
+agy models | node tools/orc.mjs models --tool antigravity --from-stdin
+```
+
+Save the last command's output as `models.local.json`. The rest: [Install and Quick Start](https://github.com/Co0pDawg/Orc-istration/wiki/Install-And-Quick-Start).
+
+## Repository layout
 
 | Path | What it is |
 |---|---|
-| `AGENTS.md` | Tool-neutral rulebook (the source): roster by tier, marching orders, build loop, board, cost log, ticket hygiene |
-| `CLAUDE.md` | Generated: `@AGENTS.md` plus the Claude Code notes (`node tools/orc.mjs sync`) |
-| `roles/*.md` | Tool-neutral agent roles: tier, access, capabilities, body |
-| `models.json` | Tier (Low, Mid, High) to model, per tool; `models.local.json` (untracked) overrides per machine |
-| `adapters/<tool>.mjs`, `adapters/<tool>.notes.md` | One adapter per tool: file format, tool names, install paths, limits, gaps, and the notes block appended to its rulebook |
-| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `install`, `models` |
+| `AGENTS.md` | The tool-neutral rulebook (the source) |
+| `CLAUDE.md`, `agents/*.md` | Generated Claude Code files (`node tools/orc.mjs sync`) |
+| `roles/*.md` | The five agent roles: tier, access, capabilities, body |
+| `profiles/*.md` | Optional rulebook additions (`--profile <name>`); `dotnet-azure-devops` holds the long rulebook's stack rules and general lessons |
+| `models.json` | Tier to model, per tool; `models.local.json` (untracked) overrides |
+| `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
+| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks` |
 | `tests/` | `npm test`: golden files per tool, install and check tests |
-| `docs/rulebook-notes.md` | The incidents behind the rulebook's rules |
-| `settings.example.json` | Hooks, status line, `enabledPlugins`, `extraKnownMarketplaces`, model settings, with no permissions and `<you>` in place of the user name |
-| `agents/*.md` | Generated Claude Code roster: builder, debugger, refuter, researcher, scout |
 | `orchestration/README.md` | Cost-log format and review questions |
-| `docs/ops-automation.md` | Outline for unattended `claude -p` jobs |
-| `docs/project-memory.md` | Outline for per-project memory |
-| `tools/peon/peon-hook.ps1` | The single peon-ping hook entry: skips headless runs, then runs `hooks/peon-ping/peon.ps1` |
-| `tools/board-reminder.ps1` | Leaves a marker when a builder, refuter or debugger finishes, and reminds the main session to update the board on its next dispatch, board write or prompt |
-| `tools/peon/peon-nag.ps1` | Replays a peon "input required" line every 2 minutes while a question or approval is pending (gets annoyed after 3), until the transcript moves on, a prompt is sent, or 15 minutes pass. Hooked on PermissionRequest and PreToolUse `AskUserQuestion` (start), UserPromptSubmit and Stop (stop). `PEON_NAG_SECONDS` overrides the interval for testing |
-| `tools/worklog/board-title.ps1` | PostToolUse hook on `ArtifactData`: when a board session doc is written with a `title`, names the Claude Code session the same (appends the `custom-title` line `/rename` writes), so the VS Code session list matches the board. A later `/rename` can win it back |
-| `tools/worklog/` | Time tracking: the hooks' `log-event.ps1`, the `worklog.ps1` roll-up, the board's `sync-timeline.ps1` and its scheduled-task script, with tests. Its data (`~/.claude/worklog/`) stays untracked. Imported with history by `git subtree` |
+| `docs/` | Rulebook incident notes; outlines for unattended runs and project memory |
+| `settings.example.json` | Claude Code hooks, status line and plugins, with no permissions |
+| `hooks.node.example.json` | The board-reminder hooks on Node (`hooks --node`) |
+| `tools/board-reminder.ps1`, `tools/board-reminder.mjs`, `tools/peon/` | Claude Code hooks: board reminder (PowerShell or Node), sound alert while input is pending |
+| `tools/worklog/` | A Windows-only example of time tracking on the hooks (one ticket format, Azure DevOps); not part of the method |
+| `.github/workflows/` | CI: tests and `check` on Ubuntu and Windows |
+
+## Limits
+
+- The full loop has run live only on Claude Code, and that was with the earlier Claude-only rulebook: the rulebook and agent files generated from this repo have not run a live session yet. Antigravity CLI has had one headless run of the generated scout.
+- Gemini CLI, Codex, Cursor, Copilot and OpenCode are verified by tests against documented formats only.
+- Cursor and Copilot need model ids set in `models.local.json`; until then they use `inherit` or the default model.
+- Hooks, the worklog and sound alerts are Claude Code extras. On other tools the board update after each report is a build-loop step.
+- The artifact board backend can be written only from Claude Code; other tools use the local board.
+- The setup assumes Windows with PowerShell 7 and Git Bash; the worklog hooks need porting for macOS or Linux.
 
 ## Which Claude do I need?
 
-Everything here runs in **Claude Code**, which reads `~/.claude`. The claude.ai chat app does not.
-
-| You mainly use | What works |
-|---|---|
-| Claude Code in a terminal (`claude`) | Everything: the rulebook, agents, build loop, worklog hooks, board writes |
-| Claude Code in VS Code or JetBrains | Everything, same as the terminal (same engine, same `~/.claude`) |
-| Claude desktop app, **Code** tab | Everything, same as the terminal |
-| claude.ai chat (web, desktop Chat tab, mobile) | Viewing a board someone shared with you. No agents, hooks or worklog, and no board writes |
-
-Chat-only users:
-
-- To get the full setup, install Claude Code (`npm install -g @anthropic-ai/claude-code`, or open the desktop app's **Code** tab), sign in with the same claude.ai account, then follow "Restore on a new machine" below. The desktop Code tab needs no terminal.
-- To watch someone else's work, ask the owner to share their board (Share menu on the artifact), then open the link in a browser or the app.
-- To borrow only the planning discipline, paste the "Marching orders" and "Build loop" sections of `CLAUDE.md` into a claude.ai Project's instructions. Nothing runs on your machine that way.
-
-Your own board: publish a copy of the board repo from Claude Code under **your** account (cross-organization editors cannot write another account's board data), then put its URL in `~/.claude/board.local.md`. The board repo's README covers publishing.
-
-The setup assumes Windows with PowerShell 7 and Git Bash. On macOS or Linux, the worklog hooks and scheduled-task script need porting.
-
-`orchestration/board/` is a separate repo, https://github.com/Co0pDawg/Orc-Dashboard (the live board page and its notes). It is ignored here; clone it on its own.
+The full setup runs in Claude Code (terminal, IDE extension, or the desktop app's Code tab), which reads `~/.claude`. The claude.ai chat app can only view a board someone shared. To use the planning discipline there, paste the "Marching orders" and "Build loop" sections of `AGENTS.md` into a Project's instructions.
 
 ## Other tools
 
-The rulebook and roles are tool-neutral; an adapter per tool turns them into that tool's files:
-
-| Tool | Rulebook | Agents | Gaps |
-|---|---|---|---|
-| Claude Code | `~/.claude/CLAUDE.md` + `AGENTS.md` | `~/.claude/agents/` | Everything works; the refuter keeps every tool (for the board) so read-only rests on its body |
-| Antigravity CLI | `~/.gemini/AGENTS.md` (24,000-byte cap) | `~/.gemini/config/agents/` | Models only flash/pro; no per-agent effort; no subagent-stop hook; read-only via allowlist only; local board only |
-| Gemini CLI | `~/.gemini/GEMINI.md` | `~/.gemini/agents/` | No effort key; no nested or documented parallel subagents; no subagent-stop hook; read-only via allowlist only; local board only |
-| Codex CLI | `~/.codex/AGENTS.md` (32 KiB cap) | `~/.codex/agents/*.toml` | No tool allowlist (read-only rests on the role body); no hooks in the docs; Windows via WSL2; local board only |
-| Cursor | none global: copy `dist/cursor/project/AGENTS.md` into a project, or paste into User Rules | `~/.cursor/agents/` | Model ids unverified (`inherit` until `models.local.json`); read-only via `readonly: true`; local board only |
-| GitHub Copilot CLI | `~/.copilot/copilot-instructions.md` | `~/.copilot/agents/*.agent.md` | Model ids unverified (none until `models.local.json`); coarse tool aliases, never `agent`; 30,000-character agent bodies; local board only |
-| OpenCode | `~/.config/opencode/AGENTS.md` | `~/.config/opencode/agents/` | One documented model id for every tier; read-only denies `edit` only; no shell hooks; local board only |
-
-Run live so far: Antigravity only (one headless run on 2026-11-15 loaded the generated scout and returned a correct answer). Claude Code uses the checked-in files. Gemini CLI, Codex, Cursor, Copilot and OpenCode are verified by tests only.
-
-The full gap list for each tool is printed by `build` and appended to its rulebook. Commands (Node 22+, no dependencies):
+`build` prints each tool's full gap list and appends it to that tool's rulebook:
 
 ```
 node tools/orc.mjs build --tool all              # writes dist/<tool>/... (untracked)
 node tools/orc.mjs install --tool antigravity    # dry run: prints create / replace / unchanged per file
-node tools/orc.mjs install --tool antigravity --apply --board http://localhost:8377/ --board-repo <path to Orc-Dashboard>
 ```
 
-`--apply` writes; a replaced file is first copied to `<file>.orc-backup-<stamp>` (`-2`, `-3` when that name exists). `--board` and `--board-repo` add a Board line with this machine's address and board command to the installed rulebook; without them `install` warns. Installing both Antigravity and Gemini CLI puts two rulebooks in `~/.gemini`, which Antigravity may both load: `install` warns and names the file to remove. `install` never deletes and only writes the files it generates. It refuses `--tool claude-code` without `--home`, because this repo is the live `~/.claude`: edit `AGENTS.md`, `roles/` or `adapters/`, then run `node tools/orc.mjs sync` and `npm test` (which runs `check`).
+`--apply` writes; a replaced file is first copied to `<file>.orc-backup-<stamp>`. `install` refuses `--tool claude-code` without `--home`, because this repo is designed to be checked out as `~/.claude`. `--board` and `--board-repo` add this machine's board address to the installed rulebook. Installing both Antigravity and Gemini CLI puts two rulebooks in `~/.gemini`; `install` warns and names the file to remove.
 
-Antigravity models are per account. Run `agy models | node tools/orc.mjs models --tool antigravity --from-stdin` and save the printed fragment as `models.local.json` so headless runs use slugs your account has.
+**Manifest.** `install --apply` records every file it wrote, with the sha256 of the bytes, in `<home>/<tool folder>/.orc-manifest.<tool>.json` (for example `~/.gemini/.orc-manifest.antigravity.json`, so Antigravity and Gemini CLI keep separate manifests in the shared folder). It is written last, only when the install succeeded. On re-install a file still matching its recorded hash is replaced without `--force`, so role edits need no `--force`. A file edited by hand since install (`REPLACE EDITED`), or a differing file not in the manifest and without the generated-by marker (`REPLACE HAND-WRITTEN`), refuses the whole install unless `--force` is given (with a backup). A file whose role was removed is deleted when untouched and kept (and reported) when edited; the dry run lists both. A corrupt or foreign manifest, or one naming a path outside the tool folder, is refused and nothing is deleted. Before any write, backup or delete, every target's real path must stay inside the tool folder, and a symlink or junction below the tool folder refuses the whole install or uninstall; so does a manifest entry that is not a regular file.
 
-The hooks (board reminder, worklog, peon) stay Claude Code extras for now; on other tools, updating the board after each agent report is a build-loop step. The worklog can run without Claude: `WORKLOG_SUMMARY_CMD` swaps the description model, and `sync-timeline.ps1` uploads to a local board itself (`tools/worklog/README.md`).
+`uninstall --tool <id> [--home <dir>] [--apply] [--force]` is a dry run by default. It deletes exactly the manifest's files that still match their hash, keeps edited ones (`--force` deletes them after a backup), removes the empty folders install created, and touches nothing else. When it keeps a file, the manifest stays and lists exactly the kept files, so `uninstall --apply --force` can remove them later; otherwise the manifest is removed. Without a manifest it refuses; remove the files by hand. `--tool claude-code` needs `--home`.
+
+`status --tool <id> [--home <dir>]` compares an installed copy with what would be generated now, without writing: each file is `same`, `differs (first difference at line N)`, `edited since install, differs (...)`, `missing`, `stale (role removed)` or `extra` (a file in the agents folder that no role generates, marked `not installed by orc` when a manifest exists; install backups are skipped). It exits 0 only when everything is `same`.
+
+`install --apply` records its `--profile`, `--board` and `--board-repo` values in the manifest (`options`). A later `install` or `status` without those flags reuses them and says so in one line; a flag given replaces the recorded value for that option, and `--no-profile` / `--no-board` clear it.
+
+`build`, `install` and `status` take `--profile <name>` (repeatable or comma-separated) to append `profiles/<name>.md` after the tool notes; `check` and `sync` reject `--profile`, and the goldens use no profile. The rulebook core is the compact, generic `AGENTS.md`; `dotnet-azure-devops` is too large for Antigravity's 24,000-byte cap (the build fails with the size message), so use it with uncapped tools or as a project-level rules file.
+
+## Method tooling
+
+These commands check or do the manual steps the rulebook asks for. None of them writes to the board.
+
+- `brief new [--role <name>] [--out <file>]` (with `--out`, as for `costlog`, an existing file is refused unless `--force` is given) prints the marching-orders template, parsed from the numbered list under "Marching orders" in `AGENTS.md` (items 9 and 10 only for builder, refuter and debugger). `brief lint <file> [--role <name>]` checks a brief: every item present, in order and filled in; nothing but an optional title heading before item 1 and nothing but the `BOARD:` line after the items' own (indented or fenced) lines; item 4 names a command (a code span, a fence, or a line starting with a runner word such as `npm` or `node` and an argument); item 6 states a cap; `BOARD: none` is accepted; a `BOARD:` line has the form `BOARD: <address> card cards/<id> stage <label>` (Claude Code's `slug <uuid>` after the address is accepted). It exits 1 with one line per problem.
+- `review-tier [--base <ref>] [--repo-dir <dir>]` reads `git diff --name-only --no-renames <base>...HEAD` (default base `origin/main`) and prints `Light-eligible` when every path is a test (`tests/`, `test/`, `__tests__/`, `spec/`, `*.test.*`, `*.spec.*`, `*_test.*`) or a doc (`*.md`, `docs/`), else `Full` with the first three deciding paths. Light still needs a refuter ACCEPT after mutation checks (conditions 2 and 3 of "Pre-PR review tiers"). Prompts count as product, not docs: `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `SKILL.md`, `*.agent.md`, `roles/`, `agents/`, `profiles/`, `.claude/`, `.agents/`, `.codex/`, `.cursor/`, `.gemini/` and `adapters/*.notes.md` make it `Full`; uncommitted changes print a warning, since they are not in `<base>...HEAD`.
+- `costlog --session <id> (--board-export <file> | --board <http://localhost:port> --board-repo <dir>) [--out <file>]` drafts a cost log in the "Record format" of `orchestration/README.md`: one row per `<agent> dispatched on #<task>` event, ended by the next top-level event naming the same card (its text is the Result). Card `tokens` go in a per-card table, because the board records tokens per card, not per dispatch. Model, tools, value, project, orchestrator context, loop signal and spec misses are `TODO`. `--board` reads through `node <board-repo>/local/board.js export`.
+- `dispatch --tool <id> --role <name> --brief <file> [--dry-run] [--timeout <seconds>] [--no-lint]` runs one role headlessly at its tier: Antigravity as `agy -p <brief> --agent <role> --model <models.json headless slug> --output-format json` (agy reads stdin only in stream-json mode, so the brief is one argument), Claude Code as `claude -p --agent <role> --model <tier model>` with the brief on stdin. Other tools exit 1 with "no headless recipe". The brief is linted first, is never put through a shell, `--dry-run` prints the command and exits 0, a real run streams the tool's output and exits with its code, and `--timeout` (whole seconds, 1 to 86,400) kills the process tree (exit 124); Ctrl-C or a kill of orc kills the tree too (exit 130 or 143). The brief is read once, BOM-stripped and UTF-16 decoded, and that text goes to the tool. `ORC_TOOL_BIN_<TOOL>` (e.g. `ORC_TOOL_BIN_CLAUDE_CODE`) points at the executable; a Windows `.cmd` shim is not started. A brief passed as an argument is refused (nothing started) when it holds a NUL byte or the command line would pass about 32,000 bytes; a tool that is not installed is named with its override variable.
+- `hooks --home <dir> [--apply] [--node]` merges only the `hooks` block of `settings.example.json` (or, with `--node`, of `hooks.node.example.json`: the board reminder as `node <home>/.claude/tools/board-reminder.mjs`, no PowerShell) into `<home>/.claude/settings.json`, creating it when absent. `<you>` paths become the real home. A hook is added only when no hook under that event and matcher runs the identical command; the same command under a different matcher is added beside it, with a note naming the existing matcher; existing keys and hooks are never removed, reordered or rewritten. It is a dry run without `--apply`; `--apply` backs the file up first (only once the new content could be written), keeps a UTF-8 BOM, and refuses a file whose top level is not a JSON object. `--home` has no default.
+- `check` also validates `models.json` and `models.local.json`: tool ids must be adapters, tiers `low`, `mid`, `high` (plus `headless` slugs per tier), values strings, and `effort` one of `low`, `medium`, `high`, `xhigh`, `max`, `ultra`.
+
+CI (`.github/workflows/test.yml`) runs `npm test` and `check` on Ubuntu and Windows, and the worklog self-test on Windows.
 
 ## How the .gitignore works
 
-It is an allow-list: `/*` ignores everything in `~/.claude`, then `!` lines re-include named files and folders. Transcripts, `.credentials.json`, caches, plugins, memory and logs therefore never get staged.
+It is an allow-list: `/*` ignores everything in `~/.claude`, then `!` lines re-include named files and folders. Transcripts, credentials, caches, plugins, memory and logs never get staged.
 
 To track a new file:
 
@@ -90,7 +188,7 @@ To track a new file:
 
 ## Restore on a new machine
 
-`~/.claude` usually exists already (Claude Code creates it), so do not `git clone` into it.
+`~/.claude` usually exists already (Claude Code creates it), so do not `git clone` into it. Back up any existing `CLAUDE.md` first, because `checkout -f` replaces it.
 
 ```
 cd ~/.claude
@@ -100,24 +198,21 @@ git fetch origin
 git checkout -f main        # overwrites tracked files only; ignored files stay
 ```
 
-If git reports "dubious ownership" (folder created by another account or an elevated shell), trust it once:
-
-```
-git config --global --add safe.directory C:/Users/<user>/.claude
-```
-
-Back up any existing `CLAUDE.md` first, because `checkout -f` replaces it. Copy `settings.example.json` to `settings.json` and replace `<you>` with your user name; `settings.json` is not tracked, because its allow list collects local paths and one-off commands. Then clone the board repo into `orchestration/board`.
+If git reports "dubious ownership", run `git config --global --add safe.directory C:/Users/<user>/.claude` once. Do not copy `settings.example.json` over `settings.json`: run `node tools/orc.mjs hooks --home <your home>` to see the hook entries it would add, then add `--apply` (it backs up `settings.json` and adds only missing hooks, with `<you>` replaced). Use `--node` for the board reminder without PowerShell. The example's other keys (`model`, `statusLine`, `enabledPlugins`, `extraKnownMarketplaces`, `effortLevel`, `env`, `modelSettings`, `autoUpdatesChannel`, `theme`, `agentPushNotifEnabled`) are optional preferences: copy any you want by hand. Clone the board repo into `orchestration/board`, and put the board address in `~/.claude/board.local.md`.
 
 ## Not in the repo (reinstall or recreate)
 
-- Plugins and marketplaces named in `settings.example.json`: `enabledPlugins` lists pr-review-toolkit, frontend-design, superpowers, code-review, code-simplifier, mattpocock-skills (all from `claude-plugins-official`) and ponytail; `extraKnownMarketplaces` adds the `ponytail` marketplace from GitHub `DietrichGebert/ponytail`. Install via `/plugin`.
-- Status line: `statusLine.command` points into `plugins/cache/ponytail/...`, so it works only after the ponytail plugin is installed. The version in the path may need updating.
-- peon-ping (sound alerts, Orc Peon pack by default): install it into `hooks/peon-ping/`, then set `"default_pack": "peon"` and `"enabled": true` in its `config.json`, and turn every category off except `input.required`, so it sounds only for action items (approvals, questions), never for turn ends or reports you would learn to tune out. Its installer adds its own hook entries to `settings.json`; delete them and keep only the async `tools/peon/peon-hook.ps1` entries on PermissionRequest and Notification. The installer's set registers both `peon.ps1` and `peon.sh` on every event, including each tool call, so sounds play twice and subagent tool calls flood the transcript with hook lines. The wrapper also stays silent in headless runs (`claude -p`). Without peon-ping installed, the wrapper does nothing.
-- Credentials: log in again (`/login`); also `az login` and `gh auth login` if used.
-- Project memory: `projects/<project>/memory/` is not tracked. See `docs/project-memory.md`.
-- Scheduled tasks and their scripts (`scripts/`, `cleanup/`, `buildwatch/`): not tracked; see `docs/ops-automation.md`. Task Scheduler entries must be recreated by hand.
-- The worklog's 15-minute sync task: run `pwsh -NoProfile -File ~/.claude/tools/worklog/register-timeline-task.ps1` once. It and `worklog.ps1` look for `ado.ps1` at `$env:ORC_ADO_SCRIPT` (default `C:\src\your-repo\.claude\scripts\ado.ps1`); set `ORC_ADO_SCRIPT` or `WORKLOG_ADO` if your AcmeApp checkout lives elsewhere.
+- Plugins and marketplaces named in `settings.example.json` (`enabledPlugins`, `extraKnownMarketplaces`): install them with `/plugin`. The status line points into the ponytail plugin's cache, so it works only after that plugin is installed.
+- peon-ping (sound alerts): install it into `hooks/peon-ping/` and keep only the `tools/peon/peon-hook.ps1` entries on PermissionRequest and Notification; delete the entries its installer adds. Turn every category off except `input.required`. Without peon-ping the wrapper does nothing.
+- Credentials: log in again (`/login`, and `gh auth login` if used).
+- Project memory (`projects/<project>/memory/`): see `docs/project-memory.md`.
+- Scheduled tasks and their scripts: see `docs/ops-automation.md`; recreate Task Scheduler entries by hand.
+- The worklog's 15-minute sync task: run `pwsh -NoProfile -File ~/.claude/tools/worklog/register-timeline-task.ps1` once, and set `ORC_ADO_SCRIPT` or `WORKLOG_ADO` (`tools/worklog/README.md`).
 
 ## Contributing
 
-Teammates: push a branch and open a pull request against `main`. `main` is protected: a PR needs one approving review from the code owner (`CODEOWNERS`), and the owner pushes directly. Report bugs and ideas in [Issues](https://github.com/Co0pDawg/Orc-istration/issues).
+Push a branch and open a pull request against `main`. Report bugs and ideas in [Issues](https://github.com/Co0pDawg/Orc-istration/issues).
+
+---
+
+<sub>Built with Orc-istration 🧌</sub>

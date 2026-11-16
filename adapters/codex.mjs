@@ -13,6 +13,7 @@ export default {
     'No imports in AGENTS.md: the whole rulebook is one file (32 KiB default cap).',
     'No hook system in the research: the board update after an agent report is a build-loop step.',
     'Windows support is through WSL2 per the docs.',
+    'No headless recipe: `orc.mjs dispatch` cannot run this tool (no documented headless syntax in the research).',
   ],
   renderAgent(role, tierModel) {
     const effort = role.effort ?? tierModel.effort;
