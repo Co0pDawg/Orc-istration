@@ -697,6 +697,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const home = path.resolve(opt.home);
     const source = path.join(repo, opt.node ? 'hooks.node.example.json' : 'settings.example.json');
     const target = path.join(home, '.claude', 'settings.json');
+    const unsafe = escapes(home, '.claude', target);
+    if (unsafe) return fail(`hooks: ${unsafe}; nothing written`);
     let original = null;
     let bom = '';
     let settings = {};
@@ -725,22 +727,25 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       // Write the new content beside the target first: when that fails, no backup is left behind.
       const tmp = `${target}.orc-tmp-${process.pid}`;
       fs.writeFileSync(tmp, bom + formatLike(original, merged));
+      let backup = null;
       if (original !== null) {
-        const backup = `${target}.orc-backup-${stamp(io.now ? io.now() : new Date())}`;
+        backup = `${target}.orc-backup-${stamp(io.now ? io.now() : new Date())}`;
         try {
           fs.copyFileSync(target, backup);
         } catch (e) {
           fs.rmSync(tmp, { force: true });
           throw e;
         }
-        io.out(`backed up: ${backup}`);
       }
       try {
         fs.renameSync(tmp, target);
       } catch (e) {
+        // The target could not be replaced (read-only, locked): leave no temp file and no stray backup.
         fs.rmSync(tmp, { force: true });
+        if (backup) fs.rmSync(backup, { force: true });
         throw e;
       }
+      if (backup) io.out(`backed up: ${backup}`);
       io.out(`${original === null ? 'created' : 'updated'} ${target}`);
       return 0;
     } catch (e) {

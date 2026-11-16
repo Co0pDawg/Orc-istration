@@ -27,6 +27,19 @@ export function escapes(home, root, abs) {
   const rootAbs = path.resolve(home, ...root.split('/'));
   const rel = path.relative(rootAbs, abs);
   if (rel.startsWith('..') || path.isAbsolute(rel)) return `${abs} is outside ${rootAbs}`;
+  // The tool root itself, and every folder between the home and it, must not be a link either: a `.gemini`
+  // junction would otherwise redirect every write and delete outside the home. The home's own path may be linked.
+  let seg = path.resolve(home);
+  for (const part of root.split('/')) {
+    seg = path.join(seg, part);
+    let st;
+    try {
+      st = fs.lstatSync(seg);
+    } catch {
+      break;
+    }
+    if (st.isSymbolicLink()) return `${seg} is a symlink or junction; refusing to follow it`;
+  }
   if (!fs.existsSync(rootAbs)) return null;
   const realRoot = fs.realpathSync(rootAbs);
   let cur = rootAbs;
@@ -66,6 +79,8 @@ export function loadManifest(home, adapter) {
   const root = adapter.home.root;
   for (const [rel, v] of Object.entries(m.files)) {
     if (!safeRel(home, rel, root)) return bad(`path ${JSON.stringify(rel)} is outside ${root}`);
+    // A manifest never lists a manifest: uninstall would delete it mid-run and then fail on it.
+    if (rel.split('/').pop().startsWith('.orc-manifest.')) return bad(`path ${JSON.stringify(rel)} names a manifest file`);
     if (!v || !/^[0-9a-f]{64}$/.test(v.sha256)) return bad(`bad sha256 for ${rel}`);
   }
   const dirs = m.dirs ?? [];

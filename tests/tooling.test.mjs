@@ -632,8 +632,16 @@ test('brief lint: text outside the items, a command-like item 4, and BOARD: none
   const items = parseMarchingOrders(AGENTS);
   assert.deepEqual(lintBrief(`# Brief for scout\n\n${goodBrief()}\n`, items), [], 'a title heading is allowed');
   assert.match(lintBrief(`Hello agent,\n${goodBrief()}`, items).join('\n'), /line 1: text before item 1: "Hello agent,"/);
-  const tail = lintBrief(`${goodBrief()}\n\nThanks, and good luck\n`, items).join('\n');
-  assert.match(tail, /line \d+: text outside the items: "Thanks, and good luck"/);
+  // Lines after an item's number belong to that item, indented or not: real briefs put unindented bullets and
+  // lettered sub-steps under an item. (An earlier rule called these "text outside the items" and refused them.)
+  const realistic = goodBrief({
+    2: 'Files:\n- src/a.ts\n- src/b.ts',
+    4: 'Run every item:\na. `npm test`\nb. `node tools/orc.mjs check`\n\nPaste the tails.',
+    5: 'Known traps:\n* do not push\n* do not touch the real home',
+  });
+  assert.deepEqual(lintBrief(realistic, items), [], 'unindented bullets and lettered lines under an item are part of it');
+  assert.deepEqual(lintBrief(`${goodBrief()}\n\nThanks, and good luck\n`, items), [], 'closing text is part of the last item');
+  assert.match(lintBrief(goodBrief({ 2: '' }), items).join('\n'), /item 2 \(Scope\) is empty/);
   assert.match(lintBrief(`${goodBrief()}\n11. one more\n   x`, items).join('\n'), /item 11 is past the rulebook's 10 items/);
   assert.match(lintBrief(goodBrief({ 4: 'Make sure the node tests pass' }), items).join('\n'), /item 4 \(Must verify\) names no command/);
   assert.deepEqual(lintBrief(goodBrief({ 4: 'node --test tests/' }), items), []);
@@ -657,4 +665,28 @@ test('costlog: malformed events are skipped and counted; an end event with no ti
   const row = noAt.split('\n').find((l) => l.startsWith('| 1 |'));
   assert.match(row, /TODO \(no time on the start or end event\) \| scout done: 2 paths/);
   assert.doesNotMatch(noAt, /no end event/);
+});
+
+test('hooks: a settings file that cannot be replaced leaves no stray backup or temp file', () => {
+  const home = tempDir('hooks-ro');
+  const dir = path.join(home, '.claude');
+  fs.mkdirSync(dir, { recursive: true });
+  const target = path.join(dir, 'settings.json');
+  fs.writeFileSync(target, '{"a":1}\n');
+  fs.chmodSync(target, 0o444);
+  const fakeHome = tempDir('fakehome');
+  const env = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome };
+  const r = spawnSync(process.execPath, [ORC, 'hooks', '--home', home, '--apply'], { env, encoding: 'utf8' });
+  fs.chmodSync(target, 0o644);
+  const left = fs.readdirSync(dir);
+  if (r.status !== 0) {
+    // Windows refuses to rename over a read-only file: the original must be intact with nothing beside it.
+    assert.equal(fs.readFileSync(target, 'utf8'), '{"a":1}\n');
+    assert.deepEqual(left, ['settings.json']);
+  } else {
+    // POSIX allows the rename: then exactly one backup holds the original.
+    assert.equal(left.filter((f) => f.includes('.orc-backup-')).length, 1);
+    assert.ok(!left.some((f) => f.includes('.orc-tmp-')));
+  }
+  assert.deepEqual(fs.readdirSync(fakeHome), []);
 });

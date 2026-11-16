@@ -44,31 +44,24 @@ export function lintBrief(text, items, role) {
   const problems = [];
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
   const found = [];
-  // Content outside the items: before item 1 only blank lines and one leading title heading; after an item's own
-  // lines (indented, or inside a fence) only blank lines and the BOARD line; no item numbered past the rulebook's.
+  // Content outside the items: before item 1 only blank lines and one leading title heading; no item numbered past
+  // the rulebook's. Every line after an item's number belongs to that item until the next numbered line, indented
+  // or not: real briefs put unindented bullets and lettered sub-steps under an item.
   const firstText = lines.findIndex((x) => x.trim());
   let fence = false;
-  let after = false;
   lines.forEach((l, i) => {
     const outside = (why) => problems.push(`line ${i + 1}: ${why}: "${l.trim().slice(0, 40)}"`);
     const m = fence ? null : /^(\d+)\.\s+(.*)$/.exec(l);
     if (m) {
       if (Number(m[1]) > items.length) outside(`item ${m[1]} is past the rulebook's ${items.length} items`);
       found.push({ n: Number(m[1]), body: [m[2]] });
-      after = false;
       return;
     }
-    const isFence = /^\s*```/.test(l);
     if (!found.length) {
       if (l.trim() && !(i === firstText && /^#\s/.test(l))) outside('text before item 1');
       return;
     }
-    if (!after && !fence && !isFence && l.trim() && !/^\s/.test(l) && !/^BOARD:/.test(l)) after = true;
-    if (isFence) fence = !fence;
-    if (after) {
-      if (l.trim() && !/^BOARD:/.test(l)) outside('text outside the items');
-      return;
-    }
+    if (/^\s*```/.test(l)) fence = !fence;
     found.at(-1).body.push(l);
   });
   const expected = role ? forRole(items, role) : items;
