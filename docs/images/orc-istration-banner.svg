@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" width="1280" height="360" role="img" aria-labelledby="t d">
+  <title id="t">Orc-istration</title>
+  <desc id="d">Terminal-style banner: the name Orc-istration, the line "Run AI coding agents like a small engineering team", and a diagram of the build loop from spec to builder to refuter to pull request.</desc>
+  <defs>
+    <pattern id="scan" width="4" height="4" patternUnits="userSpaceOnUse">
+      <rect width="4" height="2" fill="#ffffff" opacity="0.018"/>
+    </pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#6fdc6f"/>
+    </marker>
+    <marker id="arrowAmber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#e0a83a"/>
+    </marker>
+  </defs>
+
+  <rect width="1280" height="360" rx="14" fill="#0a0f0a"/>
+  <rect width="1280" height="360" rx="14" fill="url(#scan)"/>
+  <rect x="1.5" y="1.5" width="1277" height="357" rx="13" fill="none" stroke="#2f7a2f" stroke-width="3"/>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace">
+    <!-- prompt line -->
+    <text x="56" y="76" font-size="22" fill="#6fdc6f">orc@board<tspan fill="#8a968a">:</tspan><tspan fill="#7fb4ff">~</tspan><tspan fill="#8a968a">$ </tspan><tspan fill="#d6e6d6">orchestrate --spec task.md</tspan></text>
+
+    <!-- wordmark -->
+    <text x="54" y="176" font-size="88" font-weight="700" fill="#b8ffb0" letter-spacing="1">ORC-ISTRATION</text>
+
+    <!-- tagline -->
+    <text x="58" y="226" font-size="25" fill="#d6e6d6">Run AI coding agents like a small engineering team.</text>
+
+    <!-- loop diagram -->
+    <g font-size="19" stroke-width="2" fill="none">
+      <!-- spec -->
+      <rect x="58" y="270" width="150" height="50" rx="7" stroke="#6fdc6f"/>
+      <text x="133" y="302" text-anchor="middle" fill="#d6e6d6" stroke="none">spec</text>
+      <line x1="208" y1="295" x2="262" y2="295" stroke="#6fdc6f" marker-end="url(#arrow)"/>
+      <!-- builder -->
+      <rect x="266" y="270" width="170" height="50" rx="7" stroke="#6fdc6f"/>
+      <text x="351" y="302" text-anchor="middle" fill="#d6e6d6" stroke="none">builder</text>
+      <line x1="436" y1="286" x2="490" y2="286" stroke="#6fdc6f" marker-end="url(#arrow)"/>
+      <line x1="490" y1="306" x2="440" y2="306" stroke="#e0a83a" stroke-dasharray="6 5" marker-end="url(#arrowAmber)"/>
+      <!-- refuter -->
+      <rect x="494" y="270" width="170" height="50" rx="7" stroke="#6fdc6f"/>
+      <text x="579" y="302" text-anchor="middle" fill="#d6e6d6" stroke="none">refuter</text>
+      <line x1="664" y1="295" x2="718" y2="295" stroke="#6fdc6f" marker-end="url(#arrow)"/>
+      <!-- diff read -->
+      <rect x="722" y="270" width="190" height="50" rx="7" stroke="#6fdc6f"/>
+      <text x="817" y="302" text-anchor="middle" fill="#d6e6d6" stroke="none">diff read</text>
+      <line x1="912" y1="295" x2="966" y2="295" stroke="#6fdc6f" marker-end="url(#arrow)"/>
+      <!-- pull request -->
+      <rect x="970" y="270" width="210" height="50" rx="7" stroke="#b8ffb0" fill="#143214"/>
+      <text x="1075" y="302" text-anchor="middle" fill="#b8ffb0" stroke="none">pull request</text>
+    </g>
+    <text x="465" y="343" text-anchor="middle" font-size="15" fill="#e0a83a">rework</text>
+
+    <!-- corner status -->
+    <text x="1224" y="76" text-anchor="end" font-size="18" fill="#8a968a">7 tools <tspan fill="#2f7a2f">|</tspan> 5 roles <tspan fill="#2f7a2f">|</tspan> 1 rulebook</text>
+  </g>
+</svg>

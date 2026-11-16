@@ -1,19 +1,28 @@
-# Orc-istration
+# `Orc-istration`
 
-Orc-istration is a method and a toolkit for running a team of AI coding agents the way a lead runs a small engineering team: one orchestrator plans and reviews, cheap agents search, expensive agents build, and an adversarial reviewer tries to break each built change before a person sees it. One tool-neutral rulebook and five agent roles are turned into native files for seven agent tools.
+<img src="docs/images/orc-istration-banner.svg" alt="Orc-istration banner in a green terminal style: the name, the line 'Run AI coding agents like a small engineering team', and the build loop from spec to builder to refuter to diff read to pull request, with a rework arrow back to the builder" width="880">
 
-The orchestrator is the main chat session. A subagent is a separate agent the orchestrator starts with a written brief; it works in its own context and returns a short report. Each subagent role runs on a tier (Low, Mid or High), which maps to a cheaper or more capable model per tool.
+[![Tests on main](https://github.com/Co0pDawg/Orc-istration/actions/workflows/test.yml/badge.svg?branch=main&event=push)](https://github.com/Co0pDawg/Orc-istration/actions/workflows/test.yml?query=branch%3Amain+event%3Apush)
+
+**Run AI coding agents like a small engineering team.**
+
+`Orc-istration` is a method and a toolkit for multi-agent coding work. One orchestrator plans and reviews, cheap agents search, expensive agents build, and an adversarial reviewer tries to break each built change before a person sees it. One tool-neutral rulebook and five agent roles are turned into native files for seven agent tools.
+
+It is not an autonomous swarm. A person stays in charge: a spec is written before any code, each built change gets an independent review, and nothing counts as done until the orchestrator has read the final diff.
+
+> **Status: developed and used on Claude Code; early on other tools.** The full loop has run live only on Claude Code. Antigravity CLI has had one live run of a generated agent, and the other five adapters are verified by tests against each tool's documented format. See [Limits](#limits).
 
 Full documentation lives in the [wiki](https://github.com/Co0pDawg/Orc-istration/wiki).
 
 ## How it works
 
-1. The orchestrator writes a spec: a ten-item brief called the marching orders.
-2. Scouts (Low tier) find files; researchers (Mid tier) read docs and report cited facts.
-3. A builder (High tier) implements exactly the spec and runs the filtered tests.
-4. A refuter (High tier) reviews the diff against the spec, reruns the tests, mutation-checks them, and returns ACCEPT or REWORK.
-5. REWORK goes back to the same builder. After two rounds the orchestrator reads the diff and decides.
-6. The orchestrator reads the final diff itself, picks a pre-PR review tier, and opens a pull request.
+- **A spec comes first.** The orchestrator is the main chat session. Before anything is built it writes a ten-item brief called the marching orders.
+- **Cheap agents look, expensive agents build.** A subagent is a separate agent the orchestrator starts with that brief; it works in its own context and returns a short report. Each role runs on a tier (Low, Mid or High), which maps to a cheaper or more capable model per tool. Scouts (Low) find files, researchers (Mid) read docs and report cited facts, and a builder (High) implements exactly the spec and runs the filtered tests.
+- **Every built change is attacked.** A refuter (High), which did not write the code, reviews the diff against the spec, reruns the tests, mutation-checks them, and returns ACCEPT or REWORK.
+- **Rework is bounded.** REWORK goes back to the same builder. After two rounds the orchestrator reads the diff and decides.
+- **The orchestrator signs off.** It reads the final diff itself, picks a pre-PR review tier, and opens a pull request.
+- **You can watch it happen.** Agents post their progress to a live board, one card per task.
+- **Costs are counted.** Every task writes a cost record, and the rules are tuned on that data.
 
 ```mermaid
 flowchart LR
@@ -68,7 +77,7 @@ Every change that goes through the build loop gets an independent adversarial re
 
 | Tool | What gets generated | Verified how | Main gap |
 |---|---|---|---|
-| Claude Code | `CLAUDE.md` + `agents/*.md` in `~/.claude` | The loop has run on the earlier Claude-only rulebook; the generated files keep identical agent settings but have not run live yet | Builder and debugger keep MCP tools (no allowlist) |
+| Claude Code | `CLAUDE.md` + `agents/*.md` in `~/.claude` | The loop has run on the earlier Claude-only rulebook; the files generated from this repo have not run live yet | Builder and debugger keep MCP tools (no allowlist) |
 | Antigravity CLI | `~/.gemini/AGENTS.md` + `config/agents/` | One headless live run of the scout (2026-11-15) | Models only `flash` or `pro`; no per-agent effort |
 | Gemini CLI | `~/.gemini/GEMINI.md` + `agents/` | Golden-file tests against documented formats | No nested or documented parallel subagents |
 | Codex CLI | `~/.codex/AGENTS.md` + `agents/*.toml` | Golden-file tests against documented formats | No tool allowlist; Windows through WSL2 |
@@ -122,7 +131,7 @@ Save the last command's output as `models.local.json`. The rest: [Install and Qu
 
 ## Limits
 
-- The full loop has run live only on Claude Code, and that was with the earlier Claude-only rulebook: the regenerated files keep each agent's settings identical but have not run a live session yet. Antigravity CLI has had one headless run of the generated scout.
+- The full loop has run live only on Claude Code, and that was with the earlier Claude-only rulebook: the rulebook and agent files generated from this repo have not run a live session yet. Antigravity CLI has had one headless run of the generated scout.
 - Gemini CLI, Codex, Cursor, Copilot and OpenCode are verified by tests against documented formats only.
 - Cursor and Copilot need model ids set in `models.local.json`; until then they use `inherit` or the default model.
 - Hooks, the worklog and sound alerts are Claude Code extras. On other tools the board update after each report is a build-loop step.
@@ -201,3 +210,7 @@ If git reports "dubious ownership", run `git config --global --add safe.director
 ## Contributing
 
 Push a branch and open a pull request against `main`. Report bugs and ideas in [Issues](https://github.com/Co0pDawg/Orc-istration/issues).
+
+---
+
+<sub>Built with Orc-istration 🧌</sub>
