@@ -1,14 +1,15 @@
 # Rulebook notes: the incidents behind the rules
 
 Reference material moved out of the rulebook (`AGENTS.md`) to keep it under Antigravity's 24,000-byte rules cap. Each
-entry is the original wording, under the rule it explains. The rules themselves stay in `AGENTS.md`.
+entry is the original wording, under the rule it explains. The rules themselves live in the core rulebook (`AGENTS.md`)
+and the optional profile (`profiles/dotnet-azure-devops.md`).
 
 ## Marching orders
 - Board line, full `cards/<id>` path: on 10729 a builder looked the card up wrong, reported it missing and skipped every board write.
 
 ## Orchestration Board
 - Late builder rounds get a card: on 18216 the review-fix round ran cardless until the owner asked.
-- Durable-rules check, never wait to be asked: on 18055 the flyout, drag and write-path rules were written only after he asked.
+- Durable-rules check, never wait to be asked: on 18055 the flyout, drag and write-path rules were written only after the owner asked.
 
 ## Build loop
 - Stale green: a stale green was caught this way on 2026-09-30.

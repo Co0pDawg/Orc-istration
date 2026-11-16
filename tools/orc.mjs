@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Orchestration generator and installer. Node 22+, standard library only.
-// build | check | sync | install | status | models   (see README "Other tools")
+// build | check | sync | install | uninstall | status | models   (see README "Other tools")
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse, normalizeEol, isGenerated } from './lib/frontmatter.mjs';
 import { parseRole } from './lib/roles.mjs';
+import { sha256, diskHash, loadManifest, writeManifest, safeRel } from './lib/manifest.mjs';
 
 const DEFAULT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -356,7 +357,11 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       }
     }
     const when = stamp(io.now ? io.now() : new Date());
-    // Plan every target first: one hand-written file refuses the whole install, so it is never half applied.
+    const loaded = loadManifest(home, adapter);
+    if (loaded.error) return fail(`${loaded.error}; remove or fix the manifest by hand`);
+    const manifest = loaded.manifest;
+    const recorded = manifest?.files ?? {};
+    // Plan every target first: one refused file refuses the whole install, so it is never half applied.
     const plan = files
       .filter((f) => f.install !== false)
       .map((f) => {
@@ -364,33 +369,109 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         const exists = fs.existsSync(target);
         const current = exists ? read(target) : null;
         let state = !exists ? 'create' : current === normalizeEol(f.content) ? 'unchanged' : 'replace';
-        // Only rulebooks and TOML agents carry a marker; any other differing file is treated as hand-written.
-        if (state === 'replace' && !isGenerated(current)) state = 'REPLACE HAND-WRITTEN';
+        if (state === 'replace') {
+          const m = recorded[f.path];
+          // In the manifest: untouched since install replaces; edited by hand is refused. Otherwise only
+          // rulebooks and TOML agents carry a marker; any other differing file is treated as hand-written.
+          // A file that still carries the generated-by marker replaces as before (existing tests pin this).
+          if (m && diskHash(target) !== m.sha256 && !isGenerated(current)) state = 'REPLACE EDITED';
+          else if (!m && !isGenerated(current)) state = 'REPLACE HAND-WRITTEN';
+        }
         return { f, target, exists, state };
       });
-    const blocked = opt.force ? [] : plan.filter((p) => p.state === 'REPLACE HAND-WRITTEN');
+    const generated = new Set(plan.map((p) => p.f.path));
+    const stale = Object.entries(recorded)
+      .filter(([rel]) => !generated.has(rel))
+      .map(([rel, m]) => {
+        const target = safeRel(home, rel, adapter.home.root);
+        if (!fs.existsSync(target)) return { rel, target, state: 'gone' };
+        return { rel, target, m, state: diskHash(target) === m.sha256 ? 'delete' : 'keep' };
+      });
+    const refusedStates = ['REPLACE HAND-WRITTEN', 'REPLACE EDITED'];
+    const blocked = opt.force ? [] : plan.filter((p) => refusedStates.includes(p.state));
+    const kind = blocked.some((p) => p.state === 'REPLACE EDITED') ? 'hand-written or edited' : 'hand-written';
     if (opt.apply && blocked.length) {
-      for (const p of blocked) io.err(`refused (hand-written; pass --force to replace it, with a backup): ${p.target}`);
-      return fail(`nothing written: ${blocked.length} hand-written file(s) in the way`);
+      for (const p of blocked) {
+        const why = p.state === 'REPLACE EDITED' ? 'edited since install' : 'hand-written';
+        io.err(`refused (${why}; pass --force to replace it, with a backup): ${p.target}`);
+      }
+      return fail(`nothing written: ${blocked.length} ${kind} file(s) in the way`);
     }
+    const next = { tool: adapter.id, version: 1, installedAt: new Date().toISOString(), files: {}, dirs: [...(manifest?.dirs ?? [])] };
     for (const { f, target, exists, state } of plan) {
       if (opt.apply && state !== 'unchanged') {
+        for (let d = path.dirname(target), rel = path.posix.dirname(f.path); !fs.existsSync(d); d = path.dirname(d), rel = path.posix.dirname(rel)) {
+          if (safeRel(home, rel, adapter.home.root) && !next.dirs.includes(rel)) next.dirs.push(rel);
+        }
         fs.mkdirSync(path.dirname(target), { recursive: true });
         if (exists) {
           let backup = `${target}.orc-backup-${when}`;
           for (let n = 2; fs.existsSync(backup); n++) backup = `${target}.orc-backup-${when}-${n}`;
           fs.copyFileSync(target, backup);
         }
-        fs.writeFileSync(target, f.content);
-      }
-      const sep = state === 'REPLACE HAND-WRITTEN' ? '' : ':';
+        const bytes = Buffer.from(f.content, 'utf8');
+        fs.writeFileSync(target, bytes);
+        next.files[f.path] = { sha256: sha256(bytes) };
+      } else if (opt.apply) next.files[f.path] = { sha256: diskHash(target) };
+      const sep = refusedStates.includes(state) ? '' : ':';
       io.out(`${opt.apply ? 'applied' : 'would'} ${state}${sep} ${target}`);
     }
+    for (const s of stale) {
+      if (s.state === 'gone') continue;
+      if (s.state === 'delete') {
+        if (opt.apply) fs.rmSync(s.target);
+        io.out(`${opt.apply ? 'deleted' : 'would delete'} (role removed): ${s.target}`);
+      } else {
+        if (opt.apply) next.files[s.rel] = { sha256: s.m.sha256 };
+        io.out(`${opt.apply ? 'kept' : 'would keep'} (role removed, edited since install): ${s.target}`);
+      }
+    }
+    if (opt.apply) writeManifest(loaded.file, next);
     if (adapter.installNote) io.out(adapter.installNote);
     if (!opt.apply) {
       io.out(`dry run for ${adapter.id}; add --apply to write`);
-      if (blocked.length) io.out(`--apply would refuse: ${blocked.length} hand-written file(s) in the way (use --force to replace them, with backups)`);
+      if (blocked.length) io.out(`--apply would refuse: ${blocked.length} ${kind} file(s) in the way (use --force to replace them, with backups)`);
     }
+    return 0;
+  }
+
+  if (cmd === 'uninstall') {
+    const toolId = opt.tool;
+    if (!toolId || toolId === 'all') return fail('uninstall needs --tool <id>');
+    if (toolId === 'claude-code' && !opt.home) return fail('refusing --tool claude-code without --home: the live ~/.claude is synced by hand');
+    const home = path.resolve(opt.home ?? (await import('node:os')).homedir());
+    const adapter = (await loadAdapters(repo)).find((a) => a.id === toolId);
+    if (!adapter) return fail(`unknown tool ${toolId}`);
+    const { manifest, file, error } = loadManifest(home, adapter);
+    if (error) return fail(error);
+    if (!manifest) return fail(`no install manifest at ${file}: remove ${adapter.id}'s files by hand`);
+    const when = stamp(io.now ? io.now() : new Date());
+    for (const [rel, m] of Object.entries(manifest.files)) {
+      const target = safeRel(home, rel, adapter.home.root);
+      if (!fs.existsSync(target)) continue;
+      const edited = diskHash(target) !== m.sha256;
+      if (edited && !opt.force) {
+        io.out(`${opt.apply ? 'kept' : 'would keep'} (edited since install; --force deletes it after a backup): ${target}`);
+        continue;
+      }
+      if (opt.apply) {
+        if (edited) fs.copyFileSync(target, `${target}.orc-backup-${when}`);
+        fs.rmSync(target);
+      }
+      io.out(`${opt.apply ? 'deleted' : 'would delete'}${edited ? ' (edited, backed up)' : ''}: ${target}`);
+    }
+    if (opt.apply) {
+      fs.rmSync(file);
+      // Only directories install created, deepest first, and only when empty.
+      for (const rel of [...manifest.dirs].sort((x, y) => y.length - x.length)) {
+        const d = safeRel(home, rel, adapter.home.root);
+        if (fs.existsSync(d) && !fs.readdirSync(d).length) {
+          fs.rmdirSync(d);
+          io.out(`removed empty directory: ${d}`);
+        }
+      }
+      io.out(`removed manifest: ${file}`);
+    } else io.out(`dry run for ${adapter.id}; add --apply to delete`);
     return 0;
   }
 
@@ -402,6 +483,9 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const [{ adapter, files, errors }] = await buildAll(repo, toolId, { extraNotes: boardNotes(opt), profiles });
     if (errors.length) return fail(errors.join('\n'));
     const installed = files.filter((f) => f.install !== false);
+    const loaded = loadManifest(home, adapter);
+    if (loaded.error) io.err(`WARN ${loaded.error}; ignoring it`);
+    const recorded = loaded.manifest?.files ?? null;
     const ours = new Set();
     let clean = true;
     for (const f of installed) {
@@ -411,10 +495,18 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       if (!fs.existsSync(target)) state = 'missing';
       else {
         const line = firstDiffLine(read(target), normalizeEol(f.content));
-        if (line) state = `differs (first difference at line ${line})`;
+        if (line && recorded?.[f.path] && diskHash(target) !== recorded[f.path].sha256) state = `edited since install, differs (first difference at line ${line})`;
+        else if (line) state = `differs (first difference at line ${line})`;
       }
       if (state !== 'same') clean = false;
       io.out(`${state}: ${target}`);
+    }
+    for (const rel of Object.keys(recorded ?? {})) {
+      const target = safeRel(home, rel, adapter.home.root);
+      if (ours.has(target) || !fs.existsSync(target)) continue;
+      ours.add(target);
+      clean = false;
+      io.out(`stale (role removed): ${target}`);
     }
     // Files in the agents folder that no role generates; install backups (*.orc-backup-*) are not counted.
     const agentsDir = path.join(home, ...adapter.home.agentsDir.split('/'));
@@ -423,7 +515,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         const p = path.join(agentsDir, e.name);
         if (!e.isFile() || ours.has(p) || e.name.includes('.orc-backup-')) continue;
         clean = false;
-        io.out(`extra: ${p}`);
+        io.out(`extra: ${p}${recorded ? ' (not installed by orc)' : ''}`);
       }
     }
     io.out(clean ? `status ${adapter.id}: all same` : `status ${adapter.id}: out of date (install --apply updates it)`);
@@ -438,7 +530,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     return 0;
   }
 
-  return fail('usage: node tools/orc.mjs build|check|sync|install|status|models [options]');
+  return fail('usage: node tools/orc.mjs build|check|sync|install|uninstall|status|models [options]');
 }
 
 function isMain() {

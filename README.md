@@ -110,7 +110,7 @@ Save the last command's output as `models.local.json`. The rest: [Install and Qu
 | `profiles/*.md` | Optional rulebook additions (`--profile <name>`); `dotnet-azure-devops` holds the long rulebook's stack rules and general lessons |
 | `models.json` | Tier to model, per tool; `models.local.json` (untracked) overrides |
 | `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
-| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `install`, `status`, `models` |
+| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `install`, `uninstall`, `status`, `models` |
 | `tests/` | `npm test`: golden files per tool, install and check tests |
 | `orchestration/README.md` | Cost-log format and review questions |
 | `docs/` | Rulebook incident notes; outlines for unattended runs and project memory |
@@ -140,11 +140,15 @@ node tools/orc.mjs build --tool all              # writes dist/<tool>/... (untra
 node tools/orc.mjs install --tool antigravity    # dry run: prints create / replace / unchanged per file
 ```
 
-`--apply` writes; a replaced file is first copied to `<file>.orc-backup-<stamp>`. `install` refuses to replace a file it did not generate unless `--force` is given (with a backup), never deletes, and refuses `--tool claude-code` without `--home`, because this repo is designed to be checked out as `~/.claude`. `--board` and `--board-repo` add this machine's board address to the installed rulebook. Installing both Antigravity and Gemini CLI puts two rulebooks in `~/.gemini`; `install` warns and names the file to remove.
+`--apply` writes; a replaced file is first copied to `<file>.orc-backup-<stamp>`. `install` refuses `--tool claude-code` without `--home`, because this repo is designed to be checked out as `~/.claude`. `--board` and `--board-repo` add this machine's board address to the installed rulebook. Installing both Antigravity and Gemini CLI puts two rulebooks in `~/.gemini`; `install` warns and names the file to remove.
 
-`status --tool <id> [--home <dir>]` compares an installed copy with what would be generated now, without writing: each file is `same`, `differs (first difference at line N)`, `missing` or `extra` (a file in the agents folder that no role generates; install backups are skipped). It exits 0 only when everything is `same`. Pass the same `--board`, `--board-repo` and `--profile` options the install used.
+**Manifest.** `install --apply` records every file it wrote, with the sha256 of the bytes, in `<home>/<tool folder>/.orc-manifest.<tool>.json` (for example `~/.gemini/.orc-manifest.antigravity.json`, so Antigravity and Gemini CLI keep separate manifests in the shared folder). It is written last, only when the install succeeded. On re-install a file still matching its recorded hash is replaced without `--force`, so role edits need no `--force`. A file edited by hand since install (`REPLACE EDITED`), or a differing file not in the manifest and without the generated-by marker (`REPLACE HAND-WRITTEN`), refuses the whole install unless `--force` is given (with a backup). A file whose role was removed is deleted when untouched and kept (and reported) when edited; the dry run lists both. A corrupt or foreign manifest, or one naming a path outside the tool folder, is refused and nothing is deleted.
 
-`build` and `install` take `--profile <name>` (repeatable or comma-separated) to append `profiles/<name>.md` after the tool notes; `check`, `sync` and the goldens use no profile. The rulebook core is the compact, generic `AGENTS.md`; `dotnet-azure-devops` is too large for Antigravity's 24,000-byte cap (the build fails with the size message), so use it with uncapped tools or as a project-level rules file.
+`uninstall --tool <id> [--home <dir>] [--apply] [--force]` is a dry run by default. It deletes exactly the manifest's files that still match their hash, keeps edited ones (`--force` deletes them after a backup), removes the manifest and the empty folders install created, and touches nothing else. Without a manifest it refuses; remove the files by hand. `--tool claude-code` needs `--home`.
+
+`status --tool <id> [--home <dir>]` compares an installed copy with what would be generated now, without writing: each file is `same`, `differs (first difference at line N)`, `edited since install, differs (...)`, `missing`, `stale (role removed)` or `extra` (a file in the agents folder that no role generates, marked `not installed by orc` when a manifest exists; install backups are skipped). It exits 0 only when everything is `same`. Pass the same `--board`, `--board-repo` and `--profile` options the install used.
+
+`build`, `install` and `status` take `--profile <name>` (repeatable or comma-separated) to append `profiles/<name>.md` after the tool notes; `check` and `sync` reject `--profile`, and the goldens use no profile. The rulebook core is the compact, generic `AGENTS.md`; `dotnet-azure-devops` is too large for Antigravity's 24,000-byte cap (the build fails with the size message), so use it with uncapped tools or as a project-level rules file.
 
 ## How the .gitignore works
 
