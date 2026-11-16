@@ -53,6 +53,7 @@ Every orchestrated task (any task that dispatches a builder, refuter or debugger
 ## Build loop
 Spec → builder → refuter → orchestrator reads the diff.
 - REWORK: resume the same builder with the must-fixes, then send a fresh refuter. After 2 rounds, read the diff yourself and decide.
+  - When the must-fixes are only tests plus one small guard, you may accept inline instead: rerun the tests after the builder's last edit and every mutant the refuter saw survive, and record that the orchestrator accepted.
 - Read-only agents may run in parallel. Never put two writers on the same files. Parallel builders each get their own worktree, split by file ownership; `git apply` the smaller diff onto the main worktree.
 - At most 3 high-tier agents in flight; stage fan-outs 3+3, with the mandatory agent first. After a builder that used >300k tokens, refute inline, use a Mid-tier refuter, or wait.
 - Fresh evidence only: a green test run older than the last edit doesn't count.
@@ -73,6 +74,9 @@ Spec → builder → refuter → orchestrator reads the diff.
 - Test-coverage specs put hook-only view edits (`data-testid`/`id`) in scope ("no product code" made a builder skip required hooks).
 - After fetching the base branch, check whether the referenced docs changed format.
 - Confirm every defect a builder reports by reading the code, and say how it was confirmed (reproduced live or by code read).
+- A spec that adds a top-level path in a repo whose `.gitignore` is an allow-list names the ignore entry, and tests that read `git ls-files` run on intent-added (`git add -N`) files.
+- A tool that writes file paths into a report others may read keeps them repo-relative, or redacts them, when its output goes outside the repo.
+- Live-test new or changed agent definitions from a fresh session whose project has no agents of the same names: a project's own agents shadow user-level ones.
 
 ## Pre-PR review tiers
 - **Light**, when all three hold: (1) diff is tests/docs only (attribute-only hook edits count); (2) refuter ACCEPT after mutation checks; (3) refuter's brief used the repo's test conventions as its checklist. Run only a docs/comment review, plus your own full diff read.
