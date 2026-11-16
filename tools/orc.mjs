@@ -14,22 +14,13 @@ import { reviewTier } from './lib/reviewtier.mjs';
 import { costlog, readBoardExport } from './lib/costlog.mjs';
 import { dispatchPlan, runDispatch, formatCommand, argvProblem, binEnv } from './lib/dispatch.mjs';
 import { mergeHooks, formatLike } from './lib/hooks.mjs';
+import { decodeText, readText } from './lib/text.mjs';
 
 const DEFAULT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-// Text from a file or stdin: strips a UTF-8 BOM, decodes UTF-16 LE/BE with a BOM (Windows PowerShell 5.1 pipes UTF-16).
-export function decodeText(buf) {
-  if (typeof buf === 'string') return normalizeEol(buf.replace(/^﻿/, ''));
-  let text;
-  if (buf[0] === 0xff && buf[1] === 0xfe) text = buf.subarray(2).toString('utf16le');
-  else if (buf[0] === 0xfe && buf[1] === 0xff) text = Buffer.from(buf.subarray(2)).swap16().toString('utf16le');
-  else text = buf.toString('utf8').replace(/^﻿/, '');
-  return normalizeEol(text);
-}
-
-function read(file) {
-  return decodeText(fs.readFileSync(file));
-}
+// Text from a file or stdin goes through the one shared reader (tools/lib/text.mjs).
+export { decodeText };
+const read = readText;
 
 export function loadRoles(repo) {
   const dir = path.join(repo, 'roles');
@@ -96,12 +87,35 @@ export function loadProfiles(repo, names = []) {
 }
 
 // The Board line that install adds, so status compares against the same text.
-function boardNotes(opt) {
-  if (!opt.board) return [];
-  const cli = `${opt['board-repo'].replace(/\\/g, '/')}/local/board.js`;
-  const port = /^https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)/.exec(opt.board)?.[1];
+function boardNotes({ board, boardRepo }) {
+  if (!board) return [];
+  const cli = `${boardRepo.replace(/\\/g, '/')}/local/board.js`;
+  const port = /^https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)/.exec(board)?.[1];
   const portNote = port ? ` (set \`ORC_BOARD_PORT=${port}\`)` : '';
-  return [`- **Board:** this machine's board address is \`${opt.board}\`; write it with \`node "${cli}"\`${portNote}.`];
+  return [`- **Board:** this machine's board address is \`${board}\`; write it with \`node "${cli}"\`${portNote}.`];
+}
+
+// Install options (profiles, board) come from the flags; with none of them given, from the manifest's `options`.
+// Each option given replaces the recorded one; --no-profile and --no-board clear them.
+function installOptions(opt, manifest, io) {
+  const rec = manifest?.options ?? {};
+  const reused = [];
+  let profiles = opt.profile ?? [];
+  if (opt['no-profile']) profiles = [];
+  else if (!opt.profile && Array.isArray(rec.profiles) && rec.profiles.length) {
+    profiles = rec.profiles;
+    reused.push(`profile ${profiles.join(',')}`);
+  }
+  let board = opt.board ?? null;
+  let boardRepo = opt['board-repo'] ?? null;
+  if (opt['no-board']) board = boardRepo = null;
+  else if (!opt.board && typeof rec.board === 'string' && typeof rec.boardRepo === 'string') {
+    board = rec.board;
+    boardRepo = rec.boardRepo;
+    reused.push(`board ${board}`);
+  }
+  if (reused.length) io.out(`using the options recorded at install: ${reused.join('; ')} (pass --no-profile or --no-board to clear)`);
+  return { profiles, board, boardRepo };
 }
 
 export function allowedTools(adapter) {
@@ -220,7 +234,7 @@ const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'pr
 // Value options that may repeat; each value may also be comma-separated.
 const LIST_OPTIONS = ['profile'];
 
-const FLAG_OPTIONS = ['apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node'];
+const FLAG_OPTIONS = ['apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board'];
 
 // Accepts `--key value` and `--key=value`. An unknown option is an error, never a silent boolean: a mistyped
 // `--home=<dir>` once fell through to the real home directory.
@@ -274,6 +288,9 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   const repo = path.resolve(opt.repo ?? DEFAULT_REPO);
   const profiles = opt.profile ?? [];
   if (profiles.length && !['build', 'install', 'status'].includes(cmd)) return fail('--profile applies to build, install and status only');
+  if ((opt['no-profile'] || opt['no-board']) && !['install', 'status'].includes(cmd)) return fail('--no-profile and --no-board apply to install and status only');
+  if (opt['no-profile'] && opt.profile) return fail('pass --profile or --no-profile, not both');
+  if (opt['no-board'] && (opt.board || opt['board-repo'])) return fail('pass --board or --no-board, not both');
   try {
     loadProfiles(repo, profiles);
   } catch (e) {
@@ -361,9 +378,19 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     }
     if (!opt.board !== !opt['board-repo']) return fail('pass --board and --board-repo together, or neither');
     const home = path.resolve(opt.home ?? (await import('node:os')).homedir());
-    const extraNotes = boardNotes(opt);
-    if (!opt.board) io.err('WARN the board address is not set: pass --board <address> --board-repo <path> so the rulebook names it');
-    const [{ adapter, files, errors }] = await buildAll(repo, toolId, { extraNotes, profiles });
+    const known = (await loadAdapters(repo)).find((a) => a.id === toolId);
+    const early = known ? loadManifest(home, known) : {};
+    if (early.error) return fail(`${early.error}; remove or fix the manifest by hand`);
+    const chosen = installOptions(opt, early.manifest, io);
+    const extraNotes = boardNotes(chosen);
+    if (!chosen.board) io.err('WARN the board address is not set: pass --board <address> --board-repo <path> so the rulebook names it');
+    let built;
+    try {
+      [built] = await buildAll(repo, toolId, { extraNotes, profiles: chosen.profiles });
+    } catch (e) {
+      return fail(e.message);
+    }
+    const { adapter, files, errors } = built;
     if (errors.length) return fail(errors.join('\n'));
     for (const c of adapter.conflicts ?? []) {
       const other = path.join(home, ...c.path.split('/'));
@@ -429,7 +456,14 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       }
       return fail(`nothing written: ${blocked.length} ${kind} file(s) in the way`);
     }
-    const next = { tool: adapter.id, version: 1, installedAt: new Date().toISOString(), files: {}, dirs: [...(manifest?.dirs ?? [])] };
+    const next = {
+      tool: adapter.id,
+      version: 1,
+      installedAt: new Date().toISOString(),
+      options: { profiles: chosen.profiles, board: chosen.board, boardRepo: chosen.boardRepo },
+      files: {},
+      dirs: [...(manifest?.dirs ?? [])],
+    };
     for (const { f, target, exists, state } of plan) {
       if (opt.apply && state !== 'unchanged') {
         for (let d = path.dirname(target), rel = path.posix.dirname(f.path); !fs.existsSync(d); d = path.dirname(d), rel = path.posix.dirname(rel)) {
@@ -495,7 +529,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         continue;
       }
       try {
-        steps.push({ target, edited: diskHash(target) !== m.sha256 });
+        steps.push({ rel, sha: m.sha256, target, edited: diskHash(target) !== m.sha256 });
       } catch (e) {
         bad.push(`${target}: cannot read (${e.message})`);
       }
@@ -508,8 +542,10 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       bad.forEach((b) => io.err(`refused: ${b}`));
       return fail('nothing deleted: the manifest names unsafe or invalid paths');
     }
-    for (const { target, edited } of steps) {
+    const kept = {};
+    for (const { rel, sha, target, edited } of steps) {
       if (edited && !opt.force) {
+        kept[rel] = { sha256: sha };
         io.out(`${opt.apply ? 'kept' : 'would keep'} (edited since install; --force deletes it after a backup): ${target}`);
         continue;
       }
@@ -520,7 +556,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       io.out(`${opt.apply ? 'deleted' : 'would delete'}${edited ? ' (edited, backed up)' : ''}: ${target}`);
     }
     if (opt.apply) {
-      fs.rmSync(file);
+      const keep = Object.keys(kept).length > 0;
+      if (!keep) fs.rmSync(file);
       // Only directories install created, deepest first, and only when empty.
       for (const rel of [...manifest.dirs].sort((x, y) => y.length - x.length)) {
         const d = safeRel(home, rel, adapter.home.root);
@@ -529,7 +566,12 @@ export async function main(argv, io = { out: console.log, err: console.error, st
           io.out(`removed empty directory: ${d}`);
         }
       }
-      io.out(`removed manifest: ${file}`);
+      if (keep) {
+        // The kept files stay listed, so `uninstall --apply --force` can still remove them.
+        const dirs = manifest.dirs.filter((rel) => fs.existsSync(safeRel(home, rel, adapter.home.root)));
+        writeManifest(file, { ...manifest, files: kept, dirs });
+        io.out(`kept manifest listing ${Object.keys(kept).length} kept file(s): ${file}`);
+      } else io.out(`removed manifest: ${file}`);
     } else io.out(`dry run for ${adapter.id}; add --apply to delete`);
     return 0;
   }
@@ -539,11 +581,19 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     if (!toolId || toolId === 'all') return fail('status needs --tool <id>');
     if (!opt.board !== !opt['board-repo']) return fail('pass --board and --board-repo together, or neither');
     const home = path.resolve(opt.home ?? (await import('node:os')).homedir());
-    const [{ adapter, files, errors }] = await buildAll(repo, toolId, { extraNotes: boardNotes(opt), profiles });
+    const known = (await loadAdapters(repo)).find((a) => a.id === toolId);
+    const loaded = known ? loadManifest(home, known) : {};
+    if (loaded.error) io.err(`WARN ${loaded.error}; ignoring it`);
+    const chosen = installOptions(opt, loaded.manifest, io);
+    let built;
+    try {
+      [built] = await buildAll(repo, toolId, { extraNotes: boardNotes(chosen), profiles: chosen.profiles });
+    } catch (e) {
+      return fail(e.message);
+    }
+    const { adapter, files, errors } = built;
     if (errors.length) return fail(errors.join('\n'));
     const installed = files.filter((f) => f.install !== false);
-    const loaded = loadManifest(home, adapter);
-    if (loaded.error) io.err(`WARN ${loaded.error}; ignoring it`);
     const recorded = loaded.manifest?.files ?? null;
     const ours = new Set();
     let clean = true;
@@ -592,6 +642,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   // Writes `text` to --out, or prints it.
   const emit = (text) => {
     if (opt.out) {
+      if (fs.existsSync(path.resolve(opt.out)) && !opt.force) throw new Error(`refusing to overwrite ${path.resolve(opt.out)}; pass --force to replace it`);
       fs.writeFileSync(path.resolve(opt.out), text);
       io.out(`wrote ${path.resolve(opt.out)}`);
     } else io.out(text.replace(/\n$/, ''));
@@ -661,8 +712,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     if (!opt.tool || !opt.role || !opt.brief) return fail('usage: dispatch --tool <id> --role <name> --brief <file> [--dry-run] [--timeout <seconds>] [--no-lint]');
     let timeoutSec = 0;
     if (opt.timeout !== undefined) {
-      timeoutSec = Number(opt.timeout);
-      if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) return fail('--timeout needs a number of seconds above 0');
+      timeoutSec = /^\d+$/.test(opt.timeout) ? Number(opt.timeout) : NaN;
+      if (!(timeoutSec >= 1 && timeoutSec <= 86400)) return fail(`--timeout needs a whole number of seconds from 1 to 86400, got ${opt.timeout}`);
     }
     let plan;
     try {
@@ -672,14 +723,15 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       if (typeof adapter.headless !== 'function') return fail(`no headless recipe for ${adapter.id}`);
       const briefPath = path.resolve(opt.brief);
       if (!fs.existsSync(briefPath)) return fail(`no brief at ${briefPath}`);
+      const briefText = read(briefPath);
       if (!opt['no-lint']) {
-        const problems = lintBrief(read(briefPath), marchingOrders(), role.name);
+        const problems = lintBrief(briefText, marchingOrders(), role.name);
         if (problems.length) {
           problems.forEach((p) => io.err(p));
           return fail(`dispatch refused: the brief fails lint (${problems.length} problem(s)); fix it or pass --no-lint`);
         }
       }
-      plan = dispatchPlan(adapter, role, loadModels(repo), briefPath);
+      plan = dispatchPlan(adapter, role, loadModels(repo), briefText);
     } catch (e) {
       return fail(e.message);
     }
@@ -715,7 +767,10 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         io.out(`nothing to add: every hook in ${path.basename(source)} is already in ${target}`);
         return 0;
       }
-      for (const a of added) io.out(`${opt.apply ? 'added' : 'would add'} ${a.event}${a.matcher ? ` [${a.matcher}]` : ''}: ${a.command}`);
+      for (const a of added) {
+        io.out(`${opt.apply ? 'added' : 'would add'} ${a.event}${a.matcher ? ` [${a.matcher}]` : ''}: ${a.command}`);
+        if (a.otherMatchers?.length) io.out(`  note: the same command already runs under matcher ${a.otherMatchers.map((m) => JSON.stringify(m)).join(', ')}; that entry is left as it is`);
+      }
       if (original !== null && formatLike(original, settings) !== original) {
         io.err(`WARN ${target} is not in plain indented JSON layout; writing it re-indents the existing content (values and order unchanged)`);
       }

@@ -1,5 +1,4 @@
 // Antigravity CLI (agy). Syntax source: antigravity.google/docs/subagents, /rules, /hooks, /cli/headless.
-import fs from 'node:fs';
 import { serialize, generatedMarker } from '../tools/lib/frontmatter.mjs';
 import { ALL_CAPABILITIES } from '../tools/lib/roles.mjs';
 
@@ -45,8 +44,8 @@ export default {
   },
   // Headless run (agy --help, v1.5.9): stdin is read only with --input-format stream-json, so the brief is the
   // -p argument. --effort only when the tier names one.
-  headless(role, tierModel, briefPath) {
-    const args = ['-p', fs.readFileSync(briefPath, 'utf8'), '--agent', role.name, '--model', tierModel.model, '--output-format', 'json'];
+  headless(role, tierModel, briefText) {
+    const args = ['-p', briefText, '--agent', role.name, '--model', tierModel.model, '--output-format', 'json'];
     if (tierModel.effort) args.push('--effort', tierModel.effort);
     return { command: 'agy', args, stdin: null };
   },

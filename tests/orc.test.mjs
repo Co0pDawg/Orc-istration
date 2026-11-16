@@ -302,7 +302,7 @@ test('status: same, differs, missing, extra; never writes', async () => {
   const c = await run(['status', '--tool', 'claude-code', '--home', ch, ...board]);
   assert.equal(c.code, 0, c.out);
   for (const p of ['CLAUDE.md', 'AGENTS.md', 'refuter.md']) assert.match(c.out, new RegExp(`same: .*${p.replace('.', '\\.')}`));
-  assert.equal((await run(['status', '--tool', 'claude-code', '--home', ch])).code, 1, 'without the board line CLAUDE.md differs');
+  assert.equal((await run(['status', '--tool', 'claude-code', '--home', ch, '--no-board'])).code, 1, 'without the board line CLAUDE.md differs');
   assert.match((await run(['status', '--home', ch])).err, /status needs --tool/);
 });
 

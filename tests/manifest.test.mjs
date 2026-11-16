@@ -112,8 +112,16 @@ test('uninstall: shared .gemini keeps two manifests; uninstalling one leaves the
   assert.deepEqual(tree(home), before, 'dry run deletes nothing');
   const ap = cli('uninstall', '--tool', 'antigravity', '--apply');
   assert.equal(ap.status, 0, ap.stderr);
-  assert.deepEqual(tree(home), [...gemini, '.gemini/config/agents/refuter.md'].sort());
+  assert.deepEqual(tree(home), [...gemini, '.gemini/.orc-manifest.antigravity.json', '.gemini/config/agents/refuter.md'].sort(), 'the manifest stays, listing the kept file');
+  const kept = JSON.parse(fs.readFileSync(path.join(home, '.gemini', '.orc-manifest.antigravity.json'), 'utf8'));
+  assert.deepEqual(Object.keys(kept.files), ['.gemini/config/agents/refuter.md'], 'manifest lists exactly the kept file');
+  // The advertised follow-up now works: --force removes the kept file (with a backup) and the manifest.
+  const forced = cli('uninstall', '--tool', 'antigravity', '--apply', '--force');
+  assert.equal(forced.status, 0, forced.stderr);
+  assert.match(forced.stdout, /deleted \(edited, backed up\): .*refuter\.md/);
   assert.ok(!fs.existsSync(path.join(home, '.gemini', '.orc-manifest.antigravity.json')));
+  assert.ok(!fs.existsSync(path.join(home, '.gemini', 'config', 'agents', 'refuter.md')));
+  assert.ok(tree(home).some((f) => /config\/agents\/refuter\.md\.orc-backup-/.test(f)));
   assert.equal(cli('status', '--tool', 'gemini-cli').status, 0);
   assert.match(spawnSync(process.execPath, [ORC, 'uninstall', '--tool', 'claude-code'], { env, encoding: 'utf8' }).stderr, /without --home/);
   assert.deepEqual(fs.readdirSync(fakeHome), [], 'the isolated HOME stays empty');

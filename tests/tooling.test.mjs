@@ -308,7 +308,7 @@ test('dispatch refuses a tool without a recipe and a failing brief', () => {
   assert.equal(r.code, 1);
   assert.match(r.err, /names no command[\s\S]*dispatch refused: the brief fails lint/);
   assert.equal(isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', bad, '--dry-run', '--no-lint']).code, 0);
-  assert.match(isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', good, '--timeout', 'x']).err, /--timeout needs a number/);
+  assert.match(isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', good, '--timeout', 'x', '--dry-run']).err, /--timeout needs a whole number of seconds from 1 to 86400, got x/);
 });
 
 // The stub stands in for agy/claude: it records argv and stdin, then exits with a chosen code or sleeps.
@@ -320,6 +320,7 @@ const dir = ${JSON.stringify(dir)};
 const stdin = process.stdin.isTTY ? '' : await new Promise((r) => { let s = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (c) => (s += c)); process.stdin.on('end', () => r(s)); process.stdin.on('error', () => r(s)); });
 fs.writeFileSync(dir + '/argv.json', JSON.stringify(process.argv.slice(2)));
 fs.writeFileSync(dir + '/stdin.txt', stdin);
+fs.writeFileSync(dir + '/stub.pid', String(process.pid));
 if (process.env.STUB_SLEEP) {
   const g = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
   fs.writeFileSync(dir + '/grandchild.pid', String(g.pid));
@@ -689,4 +690,173 @@ test('hooks: a settings file that cannot be replaced leaves no stray backup or t
     assert.ok(!left.some((f) => f.includes('.orc-tmp-')));
   }
   assert.deepEqual(fs.readdirSync(fakeHome), []);
+});
+
+// ---------- final rework R1-R10 ----------
+
+test('R1/R8: UTF-16 LE and UTF-8-BOM briefs reach the tool as the decoded UTF-8 text', () => {
+  const text = goodBrief({ 7: 'Unicode: café → ✓' });
+  const encodings = {
+    utf16le: Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text.replace(/\n/g, '\r\n'), 'utf16le')]),
+    bom: Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(text, 'utf8')]),
+  };
+  for (const [name, bytes] of Object.entries(encodings)) {
+    const brief = path.join(tempDir('enc'), `${name}.md`);
+    fs.writeFileSync(brief, bytes);
+    for (const [tool, role] of [['antigravity', 'scout'], ['claude-code', 'builder']]) {
+      const dir = tempDir('stub');
+      const env = { [`ORC_TOOL_BIN_${tool.toUpperCase().replace('-', '_')}`]: stub(dir) };
+      const r = isolated(['dispatch', '--tool', tool, '--role', role, '--brief', brief], env);
+      assert.equal(r.code, 0, `${name} ${tool}: ${r.err}`);
+      const got = tool === 'antigravity'
+        ? JSON.parse(fs.readFileSync(path.join(dir, 'argv.json'), 'utf8'))[1]
+        : fs.readFileSync(path.join(dir, 'stdin.txt'), 'utf8');
+      assert.equal(got, text, `${name} ${tool}: decoded once, clean UTF-8`);
+    }
+  }
+});
+
+test('R8: costlog reads a UTF-16 LE export', async () => {
+  const file = path.join(tempDir('cost16'), 'export.json');
+  fs.writeFileSync(file, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(JSON.stringify(EXPORT), 'utf16le')]));
+  const r = await run(['costlog', '--session', SID, '--board-export', file]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /\| 1 \| builder \|/);
+});
+
+test('R4: costlog --board takes a 3 MB export from the board CLI', async () => {
+  const boardRepo = tempDir('bigboard');
+  fs.mkdirSync(path.join(boardRepo, 'local'));
+  const big = structuredClone(EXPORT);
+  big.cards.padding = { session: 'other', title: 'x'.repeat(3 * 1024 * 1024) };
+  fs.writeFileSync(path.join(boardRepo, 'local', 'export.json'), JSON.stringify(big));
+  fs.writeFileSync(path.join(boardRepo, 'local', 'board.js'), "process.stdout.write(require('node:fs').readFileSync(__dirname + '/export.json'));\n");
+  fs.writeFileSync(path.join(boardRepo, 'package.json'), '{"type":"commonjs"}');
+  const r = await run(['costlog', '--session', SID, '--board', 'http://localhost:8399', '--board-repo', boardRepo]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /\| 1 \| builder \|/);
+});
+
+test('R2: board-reminder.mjs runs when started through a junction or symlink', (t) => {
+  const link = path.join(tempDir('rlink'), 'tools');
+  try {
+    fs.symlinkSync(path.join(REPO, 'tools'), link, 'junction');
+  } catch (e) {
+    t.skip(`cannot create a directory link here (${e.code})`);
+    return;
+  }
+  const root = tempDir('reminder');
+  fs.writeFileSync(path.join(root, 'board.local.md'), 'x\n');
+  fs.mkdirSync(path.join(root, 'board-reminders'));
+  fs.writeFileSync(path.join(root, 'board-reminders', 's.a'), 'builder\n');
+  const r = spawnSync(process.execPath, [path.join(link, 'board-reminder.mjs'), 'relay'], {
+    env: { ...process.env, BOARD_REMINDER_ROOT: root },
+    input: JSON.stringify({ session_id: 's', hook_event_name: 'UserPromptSubmit' }),
+    encoding: 'utf8',
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Board: builder finished/);
+});
+
+const NO_SIGNALS = process.platform === 'win32'
+  && 'Windows cannot deliver SIGINT/SIGTERM to another process; process.kill there terminates orc without running its handlers';
+
+test('R3: a signal to orc kills the dispatched tree', { skip: NO_SIGNALS }, async () => {
+  const { spawn } = await import('node:child_process');
+  const fakeHome = tempDir('fakehome');
+  for (const [sig, code] of [['SIGTERM', 143], ['SIGINT', 130]]) {
+    const dir = tempDir('stub');
+    const child = spawn(process.execPath, [ORC, 'dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile()], {
+      env: { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome, ORC_TOOL_BIN_ANTIGRAVITY: stub(dir), STUB_SLEEP: '1' },
+      stdio: 'ignore',
+    });
+    const until = Date.now() + 15000;
+    while (!fs.existsSync(path.join(dir, 'grandchild.pid')) && Date.now() < until) await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 200));
+    const exited = new Promise((r) => child.on('exit', (c) => r(c)));
+    child.kill(sig);
+    assert.equal(await exited, code, sig);
+    for (const f of ['stub.pid', 'grandchild.pid']) {
+      const pid = Number(fs.readFileSync(path.join(dir, f), 'utf8'));
+      const end = Date.now() + 5000;
+      while (alive(pid) && Date.now() < end) await new Promise((r) => setTimeout(r, 100));
+      assert.equal(alive(pid), false, `${sig}: ${f} killed`);
+    }
+  }
+  assert.deepEqual(fs.readdirSync(fakeHome), []);
+});
+
+test('R7: --timeout must be a whole number from 1 to 86400 seconds', () => {
+  const brief = briefFile();
+  for (const bad of ['3600000', '0', '1.5', '86401', '-1e3']) {
+    const r = isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', brief, `--timeout=${bad}`, '--dry-run']);
+    assert.equal(r.code, 1, bad);
+    assert.ok(r.err.includes(`--timeout needs a whole number of seconds from 1 to 86400, got ${bad}`), r.err);
+    assert.doesNotMatch(r.out, /command:/, 'nothing planned or started');
+  }
+  assert.equal(isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', brief, '--timeout', '86400', '--dry-run']).code, 0);
+});
+
+test('R9: --out refuses to overwrite an existing file unless --force', async () => {
+  const dir = tempDir('out');
+  const exportFile = path.join(dir, 'export.json');
+  fs.writeFileSync(exportFile, JSON.stringify(EXPORT));
+  for (const argv of [['brief', 'new'], ['costlog', '--session', SID, '--board-export', exportFile]]) {
+    const out = path.join(dir, `${argv[0]}.md`);
+    fs.writeFileSync(out, 'mine\n');
+    const r = await run([...argv, '--out', out]);
+    assert.equal(r.code, 1, argv[0]);
+    assert.ok(r.err.includes(`refusing to overwrite ${out}; pass --force`), r.err);
+    assert.equal(fs.readFileSync(out, 'utf8'), 'mine\n');
+    assert.equal((await run([...argv, '--out', out, '--force'])).code, 0);
+    assert.notEqual(fs.readFileSync(out, 'utf8'), 'mine\n');
+  }
+});
+
+test('R10: the same command under another matcher is added beside it, with a note; the old entry is untouched', () => {
+  const home = tempDir('hookhome');
+  const file = path.join(home, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const group = EXAMPLE.hooks.PostToolUse.find((g) => g.matcher.startsWith('Agent|ArtifactData'));
+  const relay = group.hooks[0].command.replaceAll('C:\\Users\\<you>', home);
+  const old = { matcher: 'Agent', hooks: [{ type: 'command', command: relay, timeout: 10 }] };
+  fs.writeFileSync(file, `${JSON.stringify({ hooks: { PostToolUse: [old] } }, null, 2)}\n`);
+  const r = isolated(['hooks', '--home', home, '--apply']);
+  assert.equal(r.code, 0, r.err);
+  assert.ok(r.out.includes(`added PostToolUse [${group.matcher}]: ${relay}`), r.out);
+  assert.match(r.out, /note: the same command already runs under matcher "Agent"; that entry is left as it is/);
+  const s = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(s.hooks.PostToolUse[0], old, 'old entry first and intact');
+  assert.ok(s.hooks.PostToolUse.some((g) => g.matcher === group.matcher && g.hooks.some((h) => h.command === relay)));
+  assert.match(isolated(['hooks', '--home', home, '--apply']).out, /nothing to add/);
+});
+
+test('R6: install options are remembered; plain status and install reuse them; --no-profile clears', async () => {
+  const home = tempDir('opthome');
+  const boardRepo = tempDir('boardrepo');
+  const base = ['--tool', 'claude-code', '--home', home];
+  const manifest = () => JSON.parse(fs.readFileSync(path.join(home, '.claude', '.orc-manifest.claude-code.json'), 'utf8'));
+  const first = await run(['install', ...base, '--profile', 'dotnet-azure-devops', '--board', 'http://localhost:8377', '--board-repo', boardRepo, '--apply']);
+  assert.equal(first.code, 0, first.err);
+  assert.deepEqual(manifest().options, { profiles: ['dotnet-azure-devops'], board: 'http://localhost:8377', boardRepo });
+  const st = await run(['status', ...base]);
+  assert.equal(st.code, 0, st.out);
+  assert.match(st.out, /using the options recorded at install: profile dotnet-azure-devops; board http:\/\/localhost:8377/);
+  assert.match(st.out, /all same/);
+  const again = await run(['install', ...base, '--apply']);
+  assert.equal(again.code, 0, again.err);
+  assert.doesNotMatch(again.out, /applied (create|replace)/, 'everything unchanged');
+  const rulebook = path.join(home, '.claude', 'CLAUDE.md');
+  assert.match(fs.readFileSync(rulebook, 'utf8'), /# Profile: dotnet-azure-devops/);
+  assert.match(fs.readFileSync(rulebook, 'utf8'), /\*\*Board:\*\* this machine's board address is `http:\/\/localhost:8377`/);
+  const cleared = await run(['install', ...base, '--no-profile', '--apply']);
+  assert.equal(cleared.code, 0, cleared.err);
+  assert.doesNotMatch(fs.readFileSync(rulebook, 'utf8'), /# Profile:/);
+  assert.match(fs.readFileSync(rulebook, 'utf8'), /\*\*Board:\*\*/, 'the board is kept when only the profile is cleared');
+  assert.deepEqual(manifest().options.profiles, []);
+  const noBoard = await run(['install', ...base, '--no-board', '--apply']);
+  assert.equal(noBoard.code, 0, noBoard.err);
+  assert.doesNotMatch(fs.readFileSync(rulebook, 'utf8'), /\*\*Board:\*\*/);
+  assert.equal((await run(['install', ...base, '--no-board', '--board', 'http://localhost:1', '--board-repo', boardRepo])).code, 1);
+  assert.equal((await run(['build', '--no-profile'])).code, 1);
 });

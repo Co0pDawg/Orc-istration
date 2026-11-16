@@ -1,5 +1,4 @@
 // Claude Code: generates the checked-in CLAUDE.md and agents/*.md (the repo is rooted at ~/.claude).
-import fs from 'node:fs';
 import { serialize, generatedMarker } from '../tools/lib/frontmatter.mjs';
 import { ALL_CAPABILITIES } from '../tools/lib/roles.mjs';
 
@@ -36,8 +35,8 @@ export default {
     return { path: `.claude/agents/${role.name}.md`, content: serialize(fm, role.body) };
   },
   // Headless run: `claude -p --agent <name> --model <model>` with the brief on stdin (no effort flag is documented).
-  headless(role, tierModel, briefPath) {
-    return { command: 'claude', args: ['-p', '--agent', role.name, '--model', tierModel.model], stdin: fs.readFileSync(briefPath, 'utf8') };
+  headless(role, tierModel, briefText) {
+    return { command: 'claude', args: ['-p', '--agent', role.name, '--model', tierModel.model], stdin: briefText };
   },
   renderRulebook(agentsMd, notesMd) {
     return [

@@ -3,16 +3,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { readText } from './text.mjs';
+
+export const EXPORT_MAX_BYTES = 256 * 1024 * 1024;
 
 const DISPATCH = /^(\S+) dispatched on #(\S+)/;
 
 export function readBoardExport({ file, board, boardRepo }) {
-  if (file) return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
+  if (file) return JSON.parse(readText(file));
   const cli = path.join(boardRepo, 'local', 'board.js');
   if (!fs.existsSync(cli)) throw new Error(`no board CLI at ${cli}`);
   const port = /^https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)/.exec(board)?.[1];
   if (!port) throw new Error(`--board must be http://localhost:<port>, got ${board}`);
-  const r = spawnSync(process.execPath, [cli, 'export'], { encoding: 'utf8', shell: false, env: { ...process.env, ORC_BOARD_PORT: port } });
+  const r = spawnSync(process.execPath, [cli, 'export'], { encoding: 'utf8', shell: false, maxBuffer: EXPORT_MAX_BYTES, env: { ...process.env, ORC_BOARD_PORT: port } });
+  if (r.error?.code === 'ENOBUFS') throw new Error(`board export is larger than ${EXPORT_MAX_BYTES / 1024 / 1024} MiB; export to a file and pass --board-export`);
   if (r.status !== 0) throw new Error(`board export failed: ${(r.stderr || r.error?.message || '').trim()}`);
   return JSON.parse(r.stdout);
 }

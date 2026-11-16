@@ -26,13 +26,14 @@ export function resolveExecutable(name, toolId, env = process.env) {
   return { command: name, pre: [], missing: true, shim };
 }
 
-export function dispatchPlan(adapter, role, models, briefPath, env = process.env) {
+// `briefText` is the decoded brief (tools/lib/text.mjs), read once by the caller.
+export function dispatchPlan(adapter, role, models, briefText, env = process.env) {
   if (typeof adapter.headless !== 'function') return { error: `no headless recipe for ${adapter.id}` };
   const tiers = models[adapter.id] ?? {};
   const base = tiers[role.tier] ?? {};
   const tierModel = { model: tiers.headless?.[role.tier] ?? base.model, effort: role.effort ?? base.effort };
   if (!tierModel.model) return { error: `no ${role.tier} model for ${adapter.id} in models.json` };
-  const spec = adapter.headless(role, tierModel, briefPath);
+  const spec = adapter.headless(role, tierModel, briefText);
   const exe = resolveExecutable(spec.command, adapter.id, env);
   return { ...spec, toolId: adapter.id, exe, argv: [...exe.pre, ...spec.args] };
 }
@@ -87,6 +88,18 @@ export function runDispatch(plan, { timeoutSec, err = console.error } = {}) {
       return;
     }
     let timedOut = false;
+    let signalled = null;
+    // Ctrl-C or a kill of orc must not leave a detached agent running: kill the tree, then exit 128+signal.
+    const CODES = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129, SIGBREAK: 149 };
+    const signals = process.platform === 'win32' ? ['SIGINT', 'SIGBREAK'] : ['SIGINT', 'SIGTERM', 'SIGHUP'];
+    const onSignal = (sig) => {
+      if (signalled) return;
+      signalled = sig;
+      err(`dispatch: ${sig} received; killing the process tree`);
+      killTree(child);
+    };
+    for (const s of signals) process.on(s, onSignal);
+    const unhook = () => signals.forEach((s) => process.off(s, onSignal));
     const timer = timeoutSec
       ? setTimeout(() => {
           timedOut = true;
@@ -96,12 +109,14 @@ export function runDispatch(plan, { timeoutSec, err = console.error } = {}) {
       : null;
     child.on('error', (e) => {
       if (timer) clearTimeout(timer);
+      unhook();
       cannot(e);
       resolve(127);
     });
     child.on('close', (code) => {
       if (timer) clearTimeout(timer);
-      resolve(timedOut ? 124 : (code ?? 1));
+      unhook();
+      resolve(signalled ? CODES[signalled] : timedOut ? 124 : (code ?? 1));
     });
     if (plan.stdin != null) {
       child.stdin.on('error', () => {});

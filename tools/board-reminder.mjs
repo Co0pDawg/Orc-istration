@@ -51,7 +51,16 @@ export function run(mode, stdinText, root, now = Date.now()) {
   });
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+// Real paths on both sides, so the hook still runs when it is started through a junction or symlink.
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+const isMain = isMainModule();
 if (isMain) {
   try {
     const mode = process.argv[2] ?? 'relay';
