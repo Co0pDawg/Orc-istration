@@ -1,12 +1,19 @@
 #!/usr/bin/env node
 // Orchestration generator and installer. Node 22+, standard library only.
-// build | check | sync | install | uninstall | status | models   (see README "Other tools")
+// build | check | sync | install | uninstall | status | models | brief | review-tier | costlog | dispatch | hooks
+// (see README "Other tools")
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse, normalizeEol, isGenerated } from './lib/frontmatter.mjs';
 import { parseRole } from './lib/roles.mjs';
 import { sha256, diskHash, loadManifest, writeManifest, safeRel } from './lib/manifest.mjs';
+import { knownTools, validateModels } from './lib/models.mjs';
+import { briefTemplate, lintBrief, parseMarchingOrders } from './lib/brief.mjs';
+import { reviewTier } from './lib/reviewtier.mjs';
+import { costlog, readBoardExport } from './lib/costlog.mjs';
+import { dispatchPlan, runDispatch, formatCommand } from './lib/dispatch.mjs';
+import { mergeHooks, formatLike } from './lib/hooks.mjs';
 
 const DEFAULT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -34,10 +41,13 @@ export function loadRoles(repo) {
 }
 
 export function loadModels(repo, { local = true } = {}) {
+  const tools = knownTools(repo);
   const models = JSON.parse(read(path.join(repo, 'models.json')));
+  validateModels(models, tools, 'models.json');
   const localFile = path.join(repo, 'models.local.json');
   if (local && fs.existsSync(localFile)) {
     const over = JSON.parse(read(localFile));
+    validateModels(over, tools, 'models.local.json');
     for (const [tool, tiers] of Object.entries(over)) {
       models[tool] ??= {};
       for (const [tier, value] of Object.entries(tiers)) {
@@ -205,12 +215,12 @@ function stamp(d = new Date()) {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile'];
+const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout'];
 
 // Value options that may repeat; each value may also be comma-separated.
 const LIST_OPTIONS = ['profile'];
 
-const FLAG_OPTIONS = ['apply', 'force', 'from-stdin'];
+const FLAG_OPTIONS = ['apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node'];
 
 // Accepts `--key value` and `--key=value`. An unknown option is an error, never a silent boolean: a mistyped
 // `--home=<dir>` once fell through to the real home directory.
@@ -294,6 +304,11 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   }
 
   if (cmd === 'check') {
+    try {
+      loadModels(repo);
+    } catch (e) {
+      return fail(`FAIL ${e.message}`);
+    }
     const results = await buildAll(repo, 'all', { local: false });
     const problems = results.flatMap((r) => r.errors);
     for (const r of results) {
@@ -530,7 +545,146 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     return 0;
   }
 
-  return fail('usage: node tools/orc.mjs build|check|sync|install|uninstall|status|models [options]');
+  // Writes `text` to --out, or prints it.
+  const emit = (text) => {
+    if (opt.out) {
+      fs.writeFileSync(path.resolve(opt.out), text);
+      io.out(`wrote ${path.resolve(opt.out)}`);
+    } else io.out(text.replace(/\n$/, ''));
+  };
+  const marchingOrders = () => parseMarchingOrders(read(path.join(repo, 'AGENTS.md')));
+  const knownRole = (name) => {
+    const roles = loadRoles(repo);
+    const role = roles.find((r) => r.name === name);
+    if (!role) throw new Error(`unknown role ${name}; known: ${roles.map((r) => r.name).join(', ')}`);
+    return role;
+  };
+
+  if (cmd === 'brief') {
+    const sub = opt._[1];
+    try {
+      if (opt.role) knownRole(opt.role);
+      if (sub === 'new' && opt._.length === 2) {
+        emit(briefTemplate(marchingOrders(), opt.role));
+        return 0;
+      }
+      if (sub === 'lint' && opt._.length === 3) {
+        const problems = lintBrief(read(path.resolve(opt._[2])), marchingOrders(), opt.role);
+        problems.forEach((p) => io.err(p));
+        if (!problems.length) io.out(`brief ok: ${opt._[2]}`);
+        return problems.length ? 1 : 0;
+      }
+    } catch (e) {
+      return fail(e.message);
+    }
+    return fail('usage: brief new [--role <name>] [--out <file>] | brief lint <file> [--role <name>]');
+  }
+
+  if (cmd === 'review-tier') {
+    const base = opt.base ?? 'origin/main';
+    try {
+      const { tier, reason } = reviewTier(path.resolve(opt['repo-dir'] ?? process.cwd()), base);
+      io.out(`${tier}: ${reason}`);
+      if (tier === 'Light-eligible') {
+        io.out("Light also needs a refuter ACCEPT after mutation checks, with the repo's test conventions as its checklist (rulebook conditions 2 and 3; not computable here).");
+      }
+      return 0;
+    } catch (e) {
+      return fail(e.message);
+    }
+  }
+
+  if (cmd === 'costlog') {
+    if (!opt.session) return fail('costlog needs --session <id>');
+    const viaCli = Boolean(opt.board || opt['board-repo']);
+    if (Boolean(opt['board-export']) === viaCli) return fail('pass --board-export <file>, or --board <http://localhost:port> --board-repo <dir>');
+    if (viaCli && (!opt.board || !opt['board-repo'])) return fail('pass --board and --board-repo together');
+    try {
+      const data = readBoardExport({
+        file: opt['board-export'] && path.resolve(opt['board-export']),
+        board: opt.board,
+        boardRepo: opt['board-repo'] && path.resolve(opt['board-repo']),
+      });
+      emit(costlog(data, opt.session));
+      return 0;
+    } catch (e) {
+      return fail(e.message);
+    }
+  }
+
+  if (cmd === 'dispatch') {
+    if (!opt.tool || !opt.role || !opt.brief) return fail('usage: dispatch --tool <id> --role <name> --brief <file> [--dry-run] [--timeout <seconds>] [--no-lint]');
+    let timeoutSec = 0;
+    if (opt.timeout !== undefined) {
+      timeoutSec = Number(opt.timeout);
+      if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) return fail('--timeout needs a number of seconds above 0');
+    }
+    let plan;
+    try {
+      const role = knownRole(opt.role);
+      const adapter = (await loadAdapters(repo)).find((a) => a.id === opt.tool);
+      if (!adapter) return fail(`unknown tool ${opt.tool}`);
+      if (typeof adapter.headless !== 'function') return fail(`no headless recipe for ${adapter.id}`);
+      const briefPath = path.resolve(opt.brief);
+      if (!fs.existsSync(briefPath)) return fail(`no brief at ${briefPath}`);
+      if (!opt['no-lint']) {
+        const problems = lintBrief(read(briefPath), marchingOrders(), role.name);
+        if (problems.length) {
+          problems.forEach((p) => io.err(p));
+          return fail(`dispatch refused: the brief fails lint (${problems.length} problem(s)); fix it or pass --no-lint`);
+        }
+      }
+      plan = dispatchPlan(adapter, role, loadModels(repo), briefPath);
+    } catch (e) {
+      return fail(e.message);
+    }
+    if (plan.error) return fail(plan.error);
+    io.out(formatCommand(plan));
+    if (opt['dry-run']) return 0;
+    if (plan.exe.missing) return fail(`cannot run ${plan.command}: not found${plan.exe.shim ? ' (only a .cmd/.bat shim)' : ''}`);
+    return runDispatch(plan, { timeoutSec, err: io.err });
+  }
+
+  if (cmd === 'hooks') {
+    if (!opt.home) return fail('hooks needs --home <dir> (no default)');
+    const home = path.resolve(opt.home);
+    const source = path.join(repo, opt.node ? 'hooks.node.example.json' : 'settings.example.json');
+    const target = path.join(home, '.claude', 'settings.json');
+    let original = null;
+    let settings = {};
+    try {
+      if (fs.existsSync(target)) {
+        original = fs.readFileSync(target, 'utf8');
+        settings = JSON.parse(original.replace(/^﻿/, ''));
+      }
+      const { merged, added } = mergeHooks(settings, JSON.parse(read(source)), home);
+      if (!added.length) {
+        io.out(`nothing to add: every hook in ${path.basename(source)} is already in ${target}`);
+        return 0;
+      }
+      for (const a of added) io.out(`${opt.apply ? 'added' : 'would add'} ${a.event}${a.matcher ? ` [${a.matcher}]` : ''}: ${a.command}`);
+      if (original !== null && formatLike(original, settings) !== original) {
+        io.err(`WARN ${target} is not in plain indented JSON layout; writing it re-indents the existing content (values and order unchanged)`);
+      }
+      if (!opt.apply) {
+        io.out(`dry run: ${original === null ? 'would create' : 'would update'} ${target}; add --apply to write`);
+        return 0;
+      }
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      if (original !== null) {
+        const backup = `${target}.orc-backup-${stamp(io.now ? io.now() : new Date())}`;
+        fs.copyFileSync(target, backup);
+        io.out(`backed up: ${backup}`);
+      }
+      fs.writeFileSync(target, formatLike(original, merged));
+      io.out(`${original === null ? 'created' : 'updated'} ${target}`);
+      return 0;
+    } catch (e) {
+      return fail(`hooks: ${e.message}`);
+    }
+  }
+
+  return fail('usage: node tools/orc.mjs build|check|sync|install|uninstall|status|models|brief|review-tier|costlog|dispatch|hooks [options]');
 }
 
 function isMain() {

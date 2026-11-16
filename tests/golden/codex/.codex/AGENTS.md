@@ -36,6 +36,8 @@ Reports are capped at 40 lines; anything longer goes to a scratch file and the r
 9. **Data precondition** (builders/refuters): the real rows or paths the feature depends on; query them, don't exercise one seeded row.
 10. **Board** (builders/refuters): `BOARD: <board address> card cards/<card id> stage <label>`, so the agent posts its milestones and moves its own stage. Give the full `cards/<id>` path.
 
+`node tools/orc.mjs brief new|lint` (setup checkout) prints this template and checks a brief.
+
 ## Orchestration Board
 The board address for this machine is in `board.local.md` beside the rulebook (untracked), or in the Board line of the tool notes below.
 - A `http://localhost:<port>` address means the local backend: write with `node <board repo>/local/board.js` (`batch` for the Start write, `append` for progress and events, `update` for fields; exit 2 is a version conflict).
@@ -77,10 +79,11 @@ Spec → builder → refuter → orchestrator reads the diff.
 - **Light**, when all three hold: (1) diff is tests/docs only (attribute-only hook edits count); (2) refuter ACCEPT after mutation checks; (3) refuter's brief used the repo's test conventions as its checklist. Run only a docs/comment review, plus your own full diff read.
 - **Full**: anything else (product code, schema/SQL, config, money or security paths, no ACCEPT). Run a full multi-agent review, staged 3+3.
 - **Escalate** to Full if Light finds anything beyond doc wording.
+- `node tools/orc.mjs review-tier` checks condition (1) against the base branch.
 - Fix nits inline only when cheap and in a file already in the diff; otherwise log `not-actioned`. Never spend a builder round on nits alone.
 
 ## Cost log
-Every orchestrated task writes `orchestration/log/<date>-<project>-<slug>.md` in the setup checkout before reporting done, using `orchestration/log/TEMPLATE.md`. Target: orchestrator share under 20% of tokens.
+Every orchestrated task writes `orchestration/log/<date>-<project>-<slug>.md` in the setup checkout before reporting done, using `orchestration/log/TEMPLATE.md`. Target: orchestrator share under 20% of tokens. `node tools/orc.mjs costlog --session <id>` drafts it from the board.
 
 ## Standing preferences (the owner's; edit to taste)
 - Concise replies; clock times in 12-hour AM/PM.
@@ -106,3 +109,4 @@ What Codex CLI cannot do (generated from the adapter's gaps):
 - No imports in AGENTS.md: the whole rulebook is one file (32 KiB default cap).
 - No hook system in the research: the board update after an agent report is a build-loop step.
 - Windows support is through WSL2 per the docs.
+- No headless recipe: `orc.mjs dispatch` cannot run this tool (no documented headless syntax in the research).

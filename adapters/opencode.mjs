@@ -12,6 +12,7 @@ export default {
     'Read-only roles deny `edit` only; `shell` stays allowed so scouts and refuters can run commands, and the role body forbids edits.',
     'No shell-command hooks (TypeScript plugins only): the board update after an agent report is a build-loop step.',
     'No imports in AGENTS.md: the whole rulebook is one file.',
+    'No headless recipe: `orc.mjs dispatch` cannot run this tool (no documented headless syntax in the research).',
   ],
   renderAgent(role, tierModel) {
     const fm = { description: role.description, mode: 'subagent', model: tierModel.model };

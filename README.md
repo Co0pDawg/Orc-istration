@@ -110,13 +110,15 @@ Save the last command's output as `models.local.json`. The rest: [Install and Qu
 | `profiles/*.md` | Optional rulebook additions (`--profile <name>`); `dotnet-azure-devops` holds the long rulebook's stack rules and general lessons |
 | `models.json` | Tier to model, per tool; `models.local.json` (untracked) overrides |
 | `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
-| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `install`, `uninstall`, `status`, `models` |
+| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks` |
 | `tests/` | `npm test`: golden files per tool, install and check tests |
 | `orchestration/README.md` | Cost-log format and review questions |
 | `docs/` | Rulebook incident notes; outlines for unattended runs and project memory |
 | `settings.example.json` | Claude Code hooks, status line and plugins, with no permissions |
-| `tools/board-reminder.ps1`, `tools/peon/` | Claude Code hooks: board reminder, sound alert while input is pending |
-| `tools/worklog/` | Claude Code time tracking and the board's Time page sync |
+| `hooks.node.example.json` | The board-reminder hooks on Node (`hooks --node`) |
+| `tools/board-reminder.ps1`, `tools/board-reminder.mjs`, `tools/peon/` | Claude Code hooks: board reminder (PowerShell or Node), sound alert while input is pending |
+| `tools/worklog/` | A Windows-only example of time tracking on the hooks (one ticket format, Azure DevOps); not part of the method |
+| `.github/workflows/` | CI: tests and `check` on Ubuntu and Windows |
 
 ## Limits
 
@@ -150,6 +152,19 @@ node tools/orc.mjs install --tool antigravity    # dry run: prints create / repl
 
 `build`, `install` and `status` take `--profile <name>` (repeatable or comma-separated) to append `profiles/<name>.md` after the tool notes; `check` and `sync` reject `--profile`, and the goldens use no profile. The rulebook core is the compact, generic `AGENTS.md`; `dotnet-azure-devops` is too large for Antigravity's 24,000-byte cap (the build fails with the size message), so use it with uncapped tools or as a project-level rules file.
 
+## Method tooling
+
+These commands check or do the manual steps the rulebook asks for. None of them writes to the board.
+
+- `brief new [--role <name>] [--out <file>]` prints the marching-orders template, parsed from the numbered list under "Marching orders" in `AGENTS.md` (items 9 and 10 only for builder, refuter and debugger). `brief lint <file> [--role <name>]` checks a brief: every item present, in order and filled in; item 4 names a command; item 6 states a cap; a `BOARD:` line has the form `BOARD: <address> card cards/<id> stage <label>` (Claude Code's `slug <uuid>` after the address is accepted). It exits 1 with one line per problem.
+- `review-tier [--base <ref>] [--repo-dir <dir>]` reads `git diff --name-only --no-renames <base>...HEAD` (default base `origin/main`) and prints `Light-eligible` when every path is a test (`tests/`, `test/`, `__tests__/`, `spec/`, `*.test.*`, `*.spec.*`, `*_test.*`) or a doc (`*.md`, `docs/`), else `Full` with the first three deciding paths. Light still needs a refuter ACCEPT after mutation checks (conditions 2 and 3 of "Pre-PR review tiers").
+- `costlog --session <id> (--board-export <file> | --board <http://localhost:port> --board-repo <dir>) [--out <file>]` drafts a cost log in the "Record format" of `orchestration/README.md`: one row per `<agent> dispatched on #<task>` event, ended by the next top-level event naming the same card (its text is the Result). Card `tokens` go in a per-card table, because the board records tokens per card, not per dispatch. Model, tools, value, project, orchestrator context, loop signal and spec misses are `TODO`. `--board` reads through `node <board-repo>/local/board.js export`.
+- `dispatch --tool <id> --role <name> --brief <file> [--dry-run] [--timeout <seconds>] [--no-lint]` runs one role headlessly at its tier: Antigravity as `agy -p <brief> --agent <role> --model <models.json headless slug> --output-format json` (agy reads stdin only in stream-json mode, so the brief is one argument), Claude Code as `claude -p --agent <role> --model <tier model>` with the brief on stdin. Other tools exit 1 with "no headless recipe". The brief is linted first, is never put through a shell, `--dry-run` prints the command and exits 0, a real run streams the tool's output and exits with its code, and `--timeout` kills the process tree (exit 124). `ORC_TOOL_BIN_<TOOL>` (e.g. `ORC_TOOL_BIN_CLAUDE_CODE`) points at the executable; a Windows `.cmd` shim is not started.
+- `hooks --home <dir> [--apply] [--node]` merges only the `hooks` block of `settings.example.json` (or, with `--node`, of `hooks.node.example.json`: the board reminder as `node <home>/.claude/tools/board-reminder.mjs`, no PowerShell) into `<home>/.claude/settings.json`, creating it when absent. `<you>` paths become the real home. A hook is added only when no hook under that event runs the identical command; existing keys and hooks are never removed, reordered or rewritten. It is a dry run without `--apply`; `--apply` backs the file up first. `--home` has no default.
+- `check` also validates `models.json` and `models.local.json`: tool ids must be adapters, tiers `low`, `mid`, `high` (plus `headless` slugs per tier), values strings, and `effort` one of `low`, `medium`, `high`, `xhigh`, `max`, `ultra`.
+
+CI (`.github/workflows/test.yml`) runs `npm test` and `check` on Ubuntu and Windows, and the worklog self-test on Windows.
+
 ## How the .gitignore works
 
 It is an allow-list: `/*` ignores everything in `~/.claude`, then `!` lines re-include named files and folders. Transcripts, credentials, caches, plugins, memory and logs never get staged.
@@ -172,7 +187,7 @@ git fetch origin
 git checkout -f main        # overwrites tracked files only; ignored files stay
 ```
 
-If git reports "dubious ownership", run `git config --global --add safe.directory C:/Users/<user>/.claude` once. Copy `settings.example.json` to `settings.json` and replace `<you>` with your user name. Clone the board repo into `orchestration/board`, and put the board address in `~/.claude/board.local.md`.
+If git reports "dubious ownership", run `git config --global --add safe.directory C:/Users/<user>/.claude` once. Do not copy `settings.example.json` over `settings.json`: run `node tools/orc.mjs hooks --home <your home>` to see the hook entries it would add, then add `--apply` (it backs up `settings.json` and adds only missing hooks, with `<you>` replaced). Use `--node` for the board reminder without PowerShell. The example's other keys (`model`, `statusLine`, `enabledPlugins`, `extraKnownMarketplaces`, `effortLevel`, `env`, `modelSettings`, `autoUpdatesChannel`, `theme`, `agentPushNotifEnabled`) are optional preferences: copy any you want by hand. Clone the board repo into `orchestration/board`, and put the board address in `~/.claude/board.local.md`.
 
 ## Not in the repo (reinstall or recreate)
 

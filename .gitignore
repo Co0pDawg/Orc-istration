@@ -15,6 +15,9 @@
 !/adapters/
 !/tests/
 !/settings.example.json
+!/hooks.node.example.json
+# CI workflow
+!/.github/
 
 # The agent roster
 !/agents/

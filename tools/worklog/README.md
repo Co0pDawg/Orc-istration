@@ -1,5 +1,7 @@
 # worklog
 
+The worklog is an example, not part of the method: a Windows-only time tracker built on the Claude Code hooks, tied to one ticket format (`APP-NNNNN`) and to Azure DevOps. Use it as a pattern for your own hooks; the orchestration rules and `tools/orc.mjs` do not depend on it.
+
 Logs which ticket each Claude Code session works on, and what it did, so the day can be pasted into a time-entry portal (15-minute grid).
 
 ## How it works
