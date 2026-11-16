@@ -45,7 +45,19 @@ test('frontmatter round-trips the real agent files', () => {
 
 test('roles parse and validate', () => {
   const roles = loadRoles(REPO);
-  assert.deepEqual(roles.map((r) => r.name), ['builder', 'debugger', 'refuter', 'researcher', 'scout']);
+  assert.deepEqual(roles.map((r) => r.name), [
+    'builder',
+    'debugger',
+    'refuter',
+    'researcher',
+    'review-checklist-explorer',
+    'review-code-explorer',
+    'review-design-explorer',
+    'review-docs-explorer',
+    'review-failure-explorer',
+    'review-verifier',
+    'scout',
+  ]);
   const base = '---\nname: x\ndescription: d\ntier: low\naccess: write\ncapabilities:\n  - read\n---\n\nbody\n';
   assert.equal(parseRole(base).tier, 'low');
   assert.throws(() => parseRole(base.replace('tier: low', 'tier: huge')), /unknown tier/);
@@ -59,6 +71,7 @@ test('golden snapshots, tool allowlists, read-only roles', async () => {
   for (const adapter of adapters) {
     const { files, errors } = buildTool(adapter, roles, models, agentsMd);
     assert.deepEqual(errors, [], adapter.id);
+    assert.equal(files.filter((f) => f.role).length, roles.length, `${adapter.id} emits every role`);
     const allowed = allowedTools(adapter);
     const edit = new Set(adapter.capabilityTools?.edit ?? []);
     for (const f of files) {
@@ -123,7 +136,7 @@ test('antigravity rejects a 30 KB rulebook', async () => {
 test('check passes on the repo and fails on a mutated agents/scout.md', async () => {
   assert.equal((await run(['check'])).code, 0);
   const copy = tempDir('check');
-  for (const p of ['AGENTS.md', 'CLAUDE.md', 'models.json', 'roles', 'adapters', 'agents', 'tools/lib']) {
+  for (const p of ['AGENTS.md', 'CLAUDE.md', 'models.json', 'roles', 'adapters', 'agents', 'commands', 'tools/lib']) {
     fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
   }
   assert.equal((await run(['check', '--repo', copy])).code, 0);
@@ -206,8 +219,25 @@ test('every generated rulebook carries the pull request signature', async () => 
   for (const l of agentsMd.split('\n')) if (l.includes('\u{1F9CC}')) assert.ok(l.includes(sig), l);
 });
 
-test('no tracked text file names the owner', () => {
-  const name = new RegExp(['c', 'o', 'o', 'p', 'e', 'r'].join(''), 'i');
+test('no tracked text file holds a denylisted name or term', () => {
+  // Every term is built from fragments so this file never holds one in plain text.
+  const deny = [
+    new RegExp(['c', 'o', 'o', 'p', 'e', 'r'].join(''), 'i'),
+    new RegExp(['pet', 'soft'].join(''), 'i'),
+    new RegExp(['cos', 'airus'].join(''), 'i'),
+    new RegExp(['kms', 'db', 'tool'].join(''), 'i'),
+    new RegExp(['ela', 'von'].join(''), 'i'),
+    new RegExp(`\\b(${['PE', 'T'].join('')}|${['KM', 'S'].join('')})-\\d+`, 'i'),
+    // Surnames as whole words, case-sensitive; "wall clock" is ordinary English.
+    new RegExp(`\\b${['Wa', 'll'].join('')}\\b(?!\\s+clock)`),
+    new RegExp(`\\b${['Kei', 'th'].join('')}\\b`),
+    new RegExp(`\\b${['End', 'res'].join('')}\\b`),
+    // Machine paths: a home folder in a tracked or golden file leaks a user name and breaks other machines.
+    // A `<user>`-style placeholder segment is allowed.
+    /\b[A-Za-z]:[\\/]Users[\\/](?!<)/,
+    /(^|[\s`'"(])\/Users\/[^/\s<]/,
+    /(^|[\s`'"(])\/home\/[^/\s<]/,
+  ];
   const files = spawnSync('git', ['ls-files', '-z'], { cwd: REPO, encoding: 'utf8' }).stdout.split('\0').filter(Boolean);
   assert.ok(files.length > 50, 'git ls-files listed the repo');
   const hits = [];
@@ -215,7 +245,7 @@ test('no tracked text file names the owner', () => {
     const buf = fs.readFileSync(path.join(REPO, f));
     if (buf.includes(0)) continue;
     buf.toString('utf8').split('\n').forEach((l, i) => {
-      if (name.test(l)) hits.push(`${f}:${i + 1}`);
+      for (const d of deny) if (d.test(l)) hits.push(`${f}:${i + 1}: ${d.source}`);
     });
   }
   assert.deepEqual(hits, []);
@@ -228,11 +258,37 @@ test('claude-code agent frontmatter matches the roster', () => {
     builder: { model: 'opus', effort: 'high' },
     refuter: { model: 'opus', effort: 'high', tools: 'Glob, Grep, Read, Bash' },
     debugger: { model: 'opus', effort: 'high' },
+    'review-code-explorer': { model: 'opus', effort: 'high', tools: 'Glob, Grep, Read, Bash' },
+    'review-failure-explorer': { model: 'opus', effort: 'high', tools: 'Glob, Grep, Read, Bash' },
+    'review-docs-explorer': { model: 'opus', effort: 'high', tools: 'Glob, Grep, Read, Bash' },
+    'review-design-explorer': { model: 'opus', effort: 'high', tools: 'Glob, Grep, Read, Bash' },
+    'review-checklist-explorer': { model: 'sonnet', effort: 'high', tools: 'Glob, Grep, Read, Bash' },
+    'review-verifier': { model: 'opus', effort: 'high', tools: 'Glob, Grep, Read, Bash' },
   };
   for (const [name, fm] of Object.entries(want)) {
     const { data } = parse(read(path.join(REPO, 'agents', `${name}.md`)));
     assert.deepEqual(data, { name, description: data.description, ...fm }, name);
   }
+});
+
+test('claude-code review commands: thin wrappers, no machine path, panel files present', async () => {
+  const { roles, models, agentsMd, adapters } = await buildRepo();
+  const cc = adapters.find((a) => a.id === 'claude-code');
+  const cmds = buildTool(cc, roles, models, agentsMd).files.filter((f) => f.path.startsWith('.claude/commands/'));
+  assert.deepEqual(cmds.map((f) => f.path).sort(), ['calibration-report', 'pre-pr-review', 'review-verdict'].map((n) => `.claude/commands/${n}.md`));
+  for (const f of cmds) {
+    const { data, body } = parse(f.content);
+    assert.deepEqual(Object.keys(data), ['description', 'argument-hint', 'allowed-tools'], f.path);
+    assert.match(body, /`ORC_HOME`.*otherwise `~\/\.claude`/, f.path);
+    assert.match(body, /`CHECKOUT\/review\/(PROCEDURE|calibration)\.md`/, f.path);
+    assert.doesNotMatch(f.content, /[A-Za-z]:[\\/]|\/Users\/|\/home\//, `${f.path} names no machine path`);
+  }
+  for (const f of ['PROCEDURE.md', 'contract.md', 'shared-rules.md', 'selection.md']) assert.ok(fs.existsSync(path.join(REPO, 'review', f)), f);
+  const lanes = ['architecture-reviewer', 'code-reviewer', 'code-simplifier', 'comment-analyzer', 'pr-test-analyzer', 'secondary-artifacts', 'silent-failure-hunter', 'ticket-coverage', 'type-design-analyzer', 'ui-test-reviewer'];
+  assert.deepEqual(fs.readdirSync(path.join(REPO, 'review', 'lanes')).sort(), lanes.map((l) => `${l}.md`));
+  // Every lane the procedure groups into an explorer has a checklist.
+  const procedure = read(path.join(REPO, 'review', 'PROCEDURE.md'));
+  for (const l of lanes) assert.ok(procedure.includes(l), `PROCEDURE.md names ${l}`);
 });
 
 test('--profile appends after the tool notes; bad profiles fail', async () => {
@@ -301,7 +357,9 @@ test('status: same, differs, missing, extra; never writes', async () => {
   assert.equal((await run(['install', '--tool', 'claude-code', '--home', ch, '--apply', ...board])).code, 0);
   const c = await run(['status', '--tool', 'claude-code', '--home', ch, ...board]);
   assert.equal(c.code, 0, c.out);
-  for (const p of ['CLAUDE.md', 'AGENTS.md', 'refuter.md']) assert.match(c.out, new RegExp(`same: .*${p.replace('.', '\\.')}`));
+  for (const p of ['CLAUDE.md', 'AGENTS.md', 'refuter.md', 'review-verifier.md', 'pre-pr-review.md', 'review-verdict.md', 'calibration-report.md']) {
+    assert.match(c.out, new RegExp(`same: .*${p.replace('.', '\\.')}`));
+  }
   assert.equal((await run(['status', '--tool', 'claude-code', '--home', ch, '--no-board'])).code, 1, 'without the board line CLAUDE.md differs');
   assert.match((await run(['status', '--home', ch])).err, /status needs --tool/);
 });

@@ -24,6 +24,16 @@
 /agents/*
 !/agents/*.md
 
+# The review panel: procedure, lanes and contract (tool-neutral)
+!/review/
+
+# Claude Code commands: only the review panel wrappers (personal commands stay untracked)
+!/commands/
+/commands/*
+!/commands/pre-pr-review.md
+!/commands/review-verdict.md
+!/commands/calibration-report.md
+
 # Orchestration rules and cost logs (the board in orchestration/board is its own repo: Co0pDawg/Orc-Dashboard)
 !/orchestration/
 /orchestration/*

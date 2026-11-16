@@ -6,3 +6,4 @@
 - **Board:** local backend only; `install --board <address> --board-repo <path>` adds this machine's Board line.
 - **Shared `~/.gemini`:** Antigravity may load both this `GEMINI.md` and its own `AGENTS.md`, so two rulebook copies; `install` warns. Remove `~/.gemini/AGENTS.md` unless you also use Antigravity.
 - **Access:** needs a paid API key or an enterprise licence.
+- **Review panel:** no slash command here: follow `review/PROCEDURE.md` in the setup checkout, dispatching the `review-*` agents by name. `metrics capture` reads Claude Code transcripts only, so it is unsupported here.
