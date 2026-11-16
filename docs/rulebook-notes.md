@@ -15,6 +15,7 @@ and the optional profile (`profiles/dotnet-azure-devops.md`).
 - Stale green: a stale green was caught this way on 2026-09-30.
 - Run-and-commit on High-tier builders: a Sonnet builder handed back mid-run and the orchestrator had to finish it.
 - After stopping a builder: on 18356 the pause report said the database was untouched; the builder had already upgraded it and left a half-applied mutation.
+- Inline accept of a small rework: on the review-panel port (2026-11-16) the tooling refuter's must-fixes were two missing tests and one path guard. The orchestrator reran the tests after the last edit and both surviving mutants (now red) instead of a second refuter, which saved about 175k tokens.
 
 ## Test runs (learned on PR 5896, 2026-09-14 — ~3 h of a 7 h loop was re-running suites)
 - Full suites once, at the end: on PR 6393 they ran during the review panel, the panel forced code changes, and they ran again.
@@ -40,6 +41,9 @@ and the optional profile (`profiles/dotnet-azure-devops.md`).
 - Cheap reviewers: on PR 6372 those three raised only suggestions and nits. This rests on that one run, and one of those suggestions was a real 500 (a 12/31/9999 end date), so drop the override if a Sonnet run misses something like it.
 
 ## Specs, bugs and shared resources
+- Allow-list `.gitignore`: on the review-panel port (2026-11-16) the design did not list `.gitignore`; its `/*` allow-list ignored the new `review/` and `commands/` folders, so they would not have been committed and the `git ls-files` scrub test could not see them. A builder noticed only because its own docs would not stage.
+- Paths in shared reports: on the same port, `metrics capture --out` outside the repo wrote `../../Users/<user>/...` into the report's `file` field, which a parent run copies; only the refuter's repro caught it.
+- Shadowed agent names: the same port's live run could not happen from the session that built it, whose project already had agents named `review-*`; those would have loaded instead of the new user-level ones.
 - Roles and reachability: on Epic 18199 the Schedule button lived only on a page rollup-only members could not open, so they could not create a schedule or stop one's emails. Two refuters and the full review panel passed it; a teammate caught it.
 - PR status before merging: on Epic 18199, PR 6367 completed mid-round and its branch was deleted while a merge sat unpushed; pushing it would have recreated the branch.
 - PR description on scope change: on 18193 PR 6397 completed while the update waited for approval, so its description never mentions time off.
