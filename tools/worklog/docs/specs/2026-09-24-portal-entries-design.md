@@ -7,7 +7,7 @@ At the end of the day, `worklog.ps1` prints lines that paste straight into the t
 ## Decisions (the owner, 2026-09-24)
 
 - Output is pasted by hand. No portal push.
-- Ticket field is the bare number (`12351`, not `APP-12351`).
+- Ticket field is the bare number (`10002`, not `APP-10002`).
 - Description is a model-written summary, generated automatically on every roll-up.
 
 ## Capture — `log-event.ps1`
@@ -46,7 +46,7 @@ Rule 1 events record their origin, so rule 2 can find them: the ticket is writte
 
 ```
 START  END    HOURS  TICKET  DESCRIPTION
-12:24  17:05   4.75  12351   Redacted card data from gateway errors; fixed pre-PR review findings.
+12:24  17:05   4.75  10002   Trimmed secrets from error logs; fixed pre-PR review findings.
 Total: 7.25 hours
 ```
 
@@ -61,7 +61,7 @@ Add one `PostToolUse` entry with matcher `Bash|PowerShell|Agent` to `~/.claude/s
 `test.ps1` (no Pester) with a fixture CSV under `WORKLOG_DIR` and `WORKLOG_NOSUMMARY=1`, which forces the fallback path. It asserts:
 
 - `notify` text never appears in a description.
-- A mutating `az` event on 17393 inside a 12351 branch session attributes the following prompts to 17393; a read-only `az ... show --id 17400` does not.
+- A mutating `az` event on 10016 inside a 10002 branch session attributes the following prompts to 10016; a read-only `az ... show --id 10017` does not.
 - Fallback descriptions end in `(raw)`.
 - The ticket column is bare digits.
 - Hours round as today.
@@ -94,7 +94,7 @@ Local prompts say *when*; ADO actions, PR links and commits say *which ticket*. 
 **Capture (`log-event.ps1`)**
 - `ado.ps1` calls (AcmeApp's ADO helper, `.claude/scripts/ado.ps1 <verb>`) are logged as event `ado`, detected in command position like `az`; text = first 120 chars from `ado.ps1` onward.
 - Mutating ado verbs: `wi-update wi-link wi-link-branch wi-attach comment-add comment-edit pr-create pr-update pr-link pr-attach` (never with `-WhatIf`). Ticket: `-Id NNNNN` -> `APP-NNNNN*`; `-WorkItems N,...` -> first id; `-Pr NNNN` -> `PR-NNNN*`.
-- `az repos pr ... --id NNNN` (mutating) and a prompt naming a PR (`pr 6025`, `PR #6025`, `pull request 6025`) also record `PR-NNNN*`.
+- `az repos pr ... --id NNNN` (mutating) and a prompt naming a PR (`pr 1001`, `PR #1001`, `pull request 1001`) also record `PR-NNNN*`.
 - Capture writes only: explicit ticket (`*`) -> branch ticket -> `UNKNOWN`. The session-inheritance rules (last explicit, last of any origin) are removed; the roll-up does that job with evidence.
 
 **Roll-up (`worklog.ps1`)**

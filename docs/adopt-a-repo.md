@@ -1,0 +1,20 @@
+# Adopt a repo
+
+The workflows (`workflows/*.md`) and the review panel (`review/PROCEDURE.md`) are written once and read every repo-specific fact from the repo they work on: its rulebook's Project settings, then git, then one question to the developer. To make a new repo work with them:
+
+1. **Rulebook.** Copy `templates/AGENTS.md` to the repo root as `AGENTS.md` (Claude Code also reads a `CLAUDE.md` holding the line `@AGENTS.md`). Fill in the **Project settings** block first; keep its key names exactly. Then fill in or delete the other sections. A blank setting is fine until a step needs it: that step stops and names the setting.
+2. **Base branch.** Leave `Base branch:` empty when the default branch is the base; the workflows read it from `git symbolic-ref --short refs/remotes/origin/HEAD`. If that prints nothing, run `git remote set-head origin --auto` once.
+3. **Review rules.** Write `REVIEW.md` at the repo root (or name another path on the `Review rules:` line): the stack-specific checks the review lanes apply (`review/shared-rules.md`, "Project review rules"), the extra-scrutiny areas, and for `/peer-review` an optional line `Sensitive paths: <extended regex>` matching file paths that raise a PR's review tier (default: none).
+4. **Tracker.** Pick the `Tracker helper:` line:
+   - **Azure DevOps:** `pwsh -NoProfile -File <checkout>/tools/tracker/ado.ps1`, and set `ORC_ADO_ORG`, `ORC_ADO_PROJECT` and `ORC_ADO_REPO` in the environment (there are no defaults). Sign in with `az login` or set `AZURE_DEVOPS_EXT_PAT`. Check it with `<helper> pr-list`; it prints JSON or one named error.
+   - **Another tracker (GitHub, GitLab, Jira, ...):** write a command that implements the verbs in `docs/tracker-contract.md` your workflows use, with the same calling convention (one verb per call, JSON on stdout, exit 1 with a named error), and name it on the line. `tools/tracker/ado.ps1` and its tests are the reference. Only the verbs a workflow calls are needed: `/start` needs the work-item, comment, `pr-list` and `pr-get` verbs; `/draft-pr` the PR verbs; `/fix-ci` the CI verbs. When the work items and the code live in different systems (Jira with GitHub, say), one helper can route each verb to its system.
+   - **No tracker:** `Tracker helper: none`. Every tracker step is skipped and the workflow says so: `/start` takes the work from the conversation or a plan file, `/draft-pr` writes the description to a markdown file for you to paste, and `/create`, `/peer-review` intake and `/fix-ci` cannot run.
+5. **Commands.** In Claude Code the `/start`, `/grill`, `/draft-pr`, `/peer-review`, `/create` and `/fix-ci` commands come from this checkout's `commands/`. They find the checkout through `ORC_HOME`, else `~/.claude`; set `ORC_HOME` when the checkout lives elsewhere. Other tools follow `workflows/<name>.md` by hand.
+6. **Lite modes (optional).** Each is one line in a rulebook, best kept in a developer's own (it is about their usage plan, not the repo), or in the repo's rulebook for everyone. Neither applies to a diff in an extra-scrutiny area.
+   - `Orc orchestration: lite`: `start` and `peer-review` run lighter: no planning subagents, Mid-tier builders, one refuter after the last task, smaller review tiers (`workflows/README.md`). `--full` overrides it for one run.
+   - `Orc review: lite`: the review panel runs every explorer and the verifier on the Mid tier (`review/PROCEDURE.md`, "Lite mode"). A `full` review argument overrides it for one run.
+7. **First run.** Try `/draft-pr` on a pushed branch, or `/grill` on any plan file: both are safe (a draft PR at most). Then `/start` on a small ticket.
+
+## What stays out of the workflows
+
+Release cutting, release notes, customer help-site updates, test-case management and screenshot capture were specific to the repo these workflows came from and were not ported. Add them to the repo's own docs or skills if it needs them.

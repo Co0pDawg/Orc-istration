@@ -1,9 +1,9 @@
    START       END  HOURS  TICKET  TYPE        DESCRIPTION
-10:00 AM  10:30 AM   0.50  17983   Task        Development: Built the header search typeahead.
-                                              ADO: Rework the top search bar
-11:00 AM  11:15 AM   0.25  17291   Support Item  asked: Fix APP-17291 (raw)
-10:30 AM  10:45 AM   0.25  17983   Task        Testing: A later row for the same ticket.
+10:00 AM  10:30 AM   0.50  10034   Task        Development: Built the order export dialog.
+                                              ADO: Rework the order export
+11:00 AM  11:15 AM   0.25  10015   Support Item  asked: Fix APP-10015 (raw)
+10:30 AM  10:45 AM   0.25  10034   Task        Testing: A later row for the same ticket.
 Total: 1.00 hours
 
 HOURS  TICKET  TYPE        TITLE
- 0.75  17983   Task        Rework the top search bar
+ 0.75  10034   Task        Rework the order export

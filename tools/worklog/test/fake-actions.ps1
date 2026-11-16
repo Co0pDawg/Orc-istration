@@ -2,8 +2,8 @@
 param([Parameter(Position = 0)][string]$Date)
 if ($env:WORKLOG_DISABLE -ne "1" -or $env:WORKLOG_FAKE_ACTIONS -eq "fail") { exit 1 }
 $list = switch ($env:WORKLOG_FAKE_ACTIONS) {
-    "1" { @(@{ time = "15:24:00"; pr = 6025; text = "Approved the pull request in Azure DevOps" }) }
-    "comment" { @(@{ time = "15:24:00"; pr = 6025; text = "Wrote a review comment on the pull request in Azure DevOps" }) }
+    "1" { @(@{ time = "15:24:00"; pr = 1001; text = "Approved the pull request in Azure DevOps" }) }
+    "comment" { @(@{ time = "15:24:00"; pr = 1001; text = "Wrote a review comment on the pull request in Azure DevOps" }) }
     default { @() }
 }
 ConvertTo-Json -InputObject @($list)

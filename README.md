@@ -119,14 +119,17 @@ Save the last command's output as `models.local.json`. The rest: [Install and Qu
 | `CLAUDE.md`, `agents/*.md` | Generated Claude Code files (`node tools/orc.mjs sync`) |
 | `roles/*.md` | The agent roles (the five above and the six `review-*` panel roles): tier, access, capabilities, body |
 | `review/` | The review panel: `PROCEDURE.md`, the explorer contract, shared rules, lane selection and `lanes/*.md` |
-| `commands/*.md` | Generated Claude Code slash commands for the review panel (`node tools/orc.mjs sync`) |
+| `commands/*.md` | Claude Code slash commands: the review panel's three are generated (`node tools/orc.mjs sync`); the six workflow wrappers are hand-written |
+| `workflows/` | Tool-neutral workflows around the build loop: `start`, `grill`, `draft-pr`, `peer-review`, `create`, `fix-ci` |
+| `templates/AGENTS.md` | Starting rulebook for a repo you work on, with its Project settings block (`docs/adopt-a-repo.md`) |
+| `tools/tracker/` | `ado.ps1`, the Azure DevOps tracker helper (`docs/tracker-contract.md`), and its offline self-check |
 | `profiles/*.md` | Optional rulebook additions (`--profile <name>`); `dotnet-azure-devops` holds the long rulebook's stack rules and general lessons |
 | `models.json` | Tier to model, per tool; `models.local.json` (untracked) overrides |
 | `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
 | `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks` |
 | `tests/` | `npm test`: golden files per tool, install and check tests |
 | `orchestration/README.md` | Cost-log format and review questions |
-| `docs/` | Rulebook incident notes; outlines for unattended runs and project memory |
+| `docs/` | Rulebook incident notes; the tracker contract and how to adopt a repo; outlines for unattended runs and project memory |
 | `settings.example.json` | Claude Code hooks, status line and plugins, with no permissions |
 | `hooks.node.example.json` | The board-reminder hooks on Node (`hooks --node`) |
 | `tools/board-reminder.ps1`, `tools/board-reminder.mjs`, `tools/peon/` | Claude Code hooks: board reminder (PowerShell or Node), sound alert while input is pending |
@@ -188,6 +191,19 @@ Stack-specific checks (tenant scoping, CSRF, migration co-change, UI test hooks,
 
 In Claude Code, `/pre-pr-review [branch] [base] [scope keywords] [lite|full]`, `/review-verdict` and `/calibration-report` are generated into `commands/`. They find this checkout through the `ORC_HOME` environment variable, else `~/.claude`. Other tools follow `review/PROCEDURE.md` by hand.
 
+## Workflows
+
+The work around the build loop, ported from the same production setup and made repo-neutral (`workflows/README.md`):
+
+- `start <ticket>` works a ticket end to end: judge it, plan, branch, grill, build loop with a commit per accepted task, full tests once, pre-PR review, durable-rules check, with a live checklist on the ticket. It never opens the PR.
+- `grill [plan]` interviews you on a plan until no decision is open.
+- `draft-pr` writes the description and opens a draft PR linked to its work items.
+- `peer-review <PR>` reviews and fixes a teammate's PR at a tier sized to its diff.
+- `create` files a work item from the conversation.
+- `fix-ci [run]` gets a failing pipeline back to green in capped cycles.
+
+A workflow reads every repo-specific fact (tracker, base branch, branch naming, build and test commands, review rules) from the target repo's rulebook **Project settings**, then git, then one question. Start a repo's rulebook from `templates/AGENTS.md` and follow `docs/adopt-a-repo.md`. Work items, PRs and CI go through one tracker helper command (`docs/tracker-contract.md`); `tools/tracker/ado.ps1` implements it for Azure DevOps, with organization, project and repository from `ORC_ADO_ORG`, `ORC_ADO_PROJECT` and `ORC_ADO_REPO` and no defaults. In Claude Code they run as `/start`, `/grill`, `/draft-pr`, `/peer-review`, `/create` and `/fix-ci`; other tools follow `workflows/<name>.md` by hand.
+
 ## How the .gitignore works
 
 It is an allow-list: `/*` ignores everything in `~/.claude`, then `!` lines re-include named files and folders. Transcripts, credentials, caches, plugins, memory and logs never get staged.
@@ -219,7 +235,7 @@ If git reports "dubious ownership", run `git config --global --add safe.director
 - Credentials: log in again (`/login`, and `gh auth login` if used).
 - Project memory (`projects/<project>/memory/`): see `docs/project-memory.md`.
 - Scheduled tasks and their scripts: see `docs/ops-automation.md`; recreate Task Scheduler entries by hand.
-- The worklog's 15-minute sync task: run `pwsh -NoProfile -File ~/.claude/tools/worklog/register-timeline-task.ps1` once, and set `ORC_ADO_SCRIPT` or `WORKLOG_ADO` (`tools/worklog/README.md`).
+- The worklog's 15-minute sync task: run `pwsh -NoProfile -File ~/.claude/tools/worklog/register-timeline-task.ps1` once, and set `ORC_ADO_SCRIPT` or `WORKLOG_ADO` to `tools/tracker/ado.ps1` (`tools/worklog/README.md`).
 
 ## Contributing
 
