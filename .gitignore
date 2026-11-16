@@ -27,12 +27,22 @@
 # The review panel: procedure, lanes and contract (tool-neutral)
 !/review/
 
-# Claude Code commands: only the review panel wrappers (personal commands stay untracked)
+# Workflows (tool-neutral procedures) and the rulebook template for a target repo
+!/workflows/
+!/templates/
+
+# Claude Code commands: the review panel and workflow wrappers (personal commands stay untracked)
 !/commands/
 /commands/*
 !/commands/pre-pr-review.md
 !/commands/review-verdict.md
 !/commands/calibration-report.md
+!/commands/start.md
+!/commands/grill.md
+!/commands/draft-pr.md
+!/commands/peer-review.md
+!/commands/create.md
+!/commands/fix-ci.md
 
 # Orchestration rules and cost logs (the board in orchestration/board is its own repo: Co0pDawg/Orc-Dashboard)
 !/orchestration/

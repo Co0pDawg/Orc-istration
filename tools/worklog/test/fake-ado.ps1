@@ -3,11 +3,11 @@
 # wiql writes its query to <WORKLOG_DIR>\wiql.txt so the test can check the filter.
 param([Parameter(Position = 0)][string]$Verb, [int]$Id, [int]$Pr, [switch]$IncludeWorkItems, [switch]$Relations, [string]$Query)
 if ($env:WORKLOG_DISABLE -ne "1") { Write-Error "WORKLOG_DISABLE not set" -ErrorAction Continue; exit 1 }
-$types = @{ 17001 = "User Story"; 17002 = "Bug"; 17003 = "Task"; 17291 = "Support Item" }
-$links = @{ 6025 = @(17001, 17002, 17003); 6026 = @(17001, 17002) }
-# Parent roll-up chain for 2026-01-06: 17010 -> 17011 -> 17012 (filed earlier), 17020 -> 17021, 17030 (filed earlier) stays.
-$today = @(17010, 17011, 17020)
-$parents = @{ 17010 = 17011; 17011 = 17012; 17020 = 17021; 17030 = 17031 }
+$types = @{ 10003 = "User Story"; 10004 = "Bug"; 10005 = "Task"; 10015 = "Support Item" }
+$links = @{ 1001 = @(10003, 10004, 10005); 1002 = @(10003, 10004) }
+# Parent roll-up chain for 2026-01-06: 10006 -> 10007 -> 10008 (filed earlier), 10009 -> 10010, 10011 (filed earlier) stays.
+$today = @(10006, 10007, 10009)
+$parents = @{ 10006 = 10007; 10007 = 10008; 10009 = 10010; 10011 = 10012 }
 switch ($Verb) {
     "wi-get" {
         $t = if ($types[$Id]) { $types[$Id] } else { "Task" }
@@ -16,6 +16,6 @@ switch ($Verb) {
         @{ id = $Id; fields = $f } | ConvertTo-Json -Depth 5
     }
     "pr-get" { if (-not $links[$Pr]) { Write-Error "pr-get failed: 404" -ErrorAction Continue; exit 1 }; @{ pullRequestId = $Pr; workItemIds = $links[$Pr] } | ConvertTo-Json }
-    "wiql" { $Query | Set-Content (Join-Path $env:WORKLOG_DIR "wiql.txt"); ConvertTo-Json -InputObject @(@{ id = 17003; type = "Task" }, @{ id = 17900; type = "Bug" }) }
+    "wiql" { $Query | Set-Content (Join-Path $env:WORKLOG_DIR "wiql.txt"); ConvertTo-Json -InputObject @(@{ id = 10005; type = "Task" }, @{ id = 10033; type = "Bug" }) }
     default { exit 1 }
 }

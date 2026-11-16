@@ -259,7 +259,7 @@ Rules:
 
 Example reply lines (format only; not part of the log):
 1|09:30|Development: Recorded the exception's own message in the log table; handled a null formatted message.
-2|10:30|Code review: Reviewed the deposit refund PR; fixed two tenant-scoping findings.
+2|10:30|Code review: Reviewed the export PR; fixed two input-validation findings.
 
 <worklog>
 $body

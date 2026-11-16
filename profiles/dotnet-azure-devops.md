@@ -69,11 +69,11 @@ Incidents behind these rules: `docs/rulebook-notes.md`.
 - A showcase-retake brief first confirms the restored backup holds the image's org, or names the seed procedure to run on the throwaway copy, and greps how many views use the image.
 - A spec for a visual check names the states to look at and has the builder seed each one, not just open pages.
 - A test that claims something did not happen gets a timing mutation from the refuter (the action delayed a few hundred ms), not only a logic one.
-- A spec whose feature acts on a group (a multi-guest reservation, linked records) walks one non-first member through the server's rule.
+- A spec whose feature acts on a group (a booking with several members, linked records) walks one non-first member through the server's rule.
 - A spec for a search, filter or lookup UI lists the three inputs staff will type most and walks each one through the planned matching rules to the result it shows. It also checks every new placeholder and label against its rendered width.
 - A spec for a script that runs unattended tests each limit it claims on real data (a path filter over `git ls-files`, a real diff through the real gate) and checks native exit codes, because PowerShell's `$ErrorActionPreference = 'Stop'` does not cover them.
 - A cheap model's yes/no check saves usage; it does not enforce anything. Put the real limit in code after the expensive step.
-  - On 18261 Haiku gave opposite size verdicts on identical tickets across two runs.
+  - On one unattended run a Low-tier model gave opposite size verdicts on identical tickets across two runs.
 - The orchestrator confirms every defect a builder reports by reading the code before filing it. The bug says how it was confirmed ("reproduced live" or "verified by code read"). The root-cause wording gets checked too.
 - Live app runs share one dev database. Run at most two apps at once, and stagger a refuter's rerun after the builder's. A test that fails in Arrange on a load timeout or a closed browser gets one rerun before it counts as a failure, and both results are reported.
 - Open PRs that edit a shared doc (a map or index) get their merge status checked whenever the base branch moves. Resolve conflicts in the base branch's current format.
