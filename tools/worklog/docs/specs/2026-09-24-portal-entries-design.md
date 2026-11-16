@@ -4,7 +4,7 @@
 
 At the end of the day, `worklog.ps1` prints lines that paste straight into the time-entry portal: start, end, hours, a bare ticket number (its own portal field), and a one-sentence description of what was actually done.
 
-## Decisions (Cooper, 2026-09-24)
+## Decisions (the owner, 2026-09-24)
 
 - Output is pasted by hand. No portal push.
 - Ticket field is the bare number (`12351`, not `APP-12351`).

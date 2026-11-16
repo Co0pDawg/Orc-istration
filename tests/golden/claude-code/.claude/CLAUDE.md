@@ -5,15 +5,17 @@
 
 The board address for this machine (see Orchestration Board): @board.local.md
 
-- **Dispatch:** always pass `subagent_type` with the roster name. A bare Agent call, or any agent definition with no model, runs on Opus 5.5 at high effort through `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_SUBAGENT_EFFORT` in `settings.json`; agents marked `model: inherit` still follow the session, and built-in Explore and Plan keep their own model. Pass `model:` only to override the roster for one dispatch (a Mid-tier override is `model: "sonnet"`). The orchestrator runs on Fable 5.2 at medium effort today.
+- **Paths:** the setup checkout is `~/.claude`. Full reference: `~/.claude/orchestration/README.md`. Agent definitions: `~/.claude/agents/*.md`. Board protocol: `~/.claude/orchestration/board/README.md`; page code in `~/.claude/orchestration/board`. Cost log: `~/.claude/orchestration/log/<date>-<project>-<slug>.md`, using `~/.claude/orchestration/log/TEMPLATE.md`.
+- **Dispatch:** always name `subagent_type`. If you don't, the agent inherits the orchestrator model, unless `settings.json` sets a subagent model: a bare Agent call, or any agent definition with no model, runs on Opus 5.5 at high effort through `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_SUBAGENT_EFFORT` in `settings.json`; agents marked `model: inherit` still follow the session, and built-in Explore and Plan keep their own model. Pass `model:` only to override the roster for one dispatch (a Mid-tier override is `model: "sonnet"`). The orchestrator runs on Fable 5.2 at medium effort today.
 - **Tiers:** Low = haiku, Mid = sonnet (high effort), High = opus (high effort), from `models.json`; `node tools/orc.mjs sync` writes them into `agents/*.md`.
 - **Resume and stop:** resume a builder with SendMessage; stop a drifting agent with TaskStop. Parallel builders get `isolation: "worktree"`.
-- **Ask:** the durable-rules question is one multiSelect `AskUserQuestion`.
+- **Ask:** a several-picks question to the user (such as the durable-rules question in the dotnet-azure-devops profile) is one multiSelect `AskUserQuestion`.
 - **Automation:** Ultracode and Workflow are the multi-agent automation features that stay off unless asked.
 - **Board, artifact backend:** only Claude Code writes it, with ArtifactData (load with ToolSearch `select:ArtifactData`; if absent, `select:mcp__claude-artifacts__db_get,mcp__claude-artifacts__db_write` with the UUID slug). Its `BOARD:` line adds `slug <uuid>` after the address. A headless `claude -p` run cannot approve board writes.
-- **Hooks:** `tools/board-reminder.ps1` leaves a marker when a builder, refuter or debugger finishes and reminds the orchestrator to update the session on its next dispatch, board write or prompt. SubagentStop output goes to the finishing agent and keeps it running, so reaching the orchestrator takes a marker relayed by PostToolUse or UserPromptSubmit. The worklog and peon hooks are Claude Code extras (`settings.example.json`).
-- **Skills:** repo-owned skills inherit the session model; never pin one.
+- **Hooks:** `tools/board-reminder.ps1` reminds the orchestrator to update the session when an agent finishes: it leaves a marker when a builder, refuter or debugger finishes and reminds the orchestrator to update the session on its next dispatch, board write or prompt. SubagentStop output goes to the finishing agent and keeps it running, so reaching the orchestrator takes a marker relayed by PostToolUse or UserPromptSubmit. The worklog and peon hooks are Claude Code extras (`settings.example.json`).
+- **Skills:** checked-in repo skills inherit the session model. Never pin a model in them.
+- **Pull request footer:** `🤖 Generated with [Claude Code](https://claude.com/claude-code) and built with [Orc-istration](https://github.com/Co0pDawg/Orc-istration) 🧌`. Commit messages keep only their Co-Authored-By line.
 - **Cost log:** the orchestrator's context size comes from the status line or `/context`.
 
 What Claude Code cannot do (generated from the adapter's gaps):
-- A role with every capability gets no `tools:` line, so it keeps MCP tools such as ArtifactData; for the read-only refuter that means read-only rests on the role body, not an allowlist.
+- A role with every capability gets no `tools:` line, so it keeps MCP tools such as ArtifactData; only those roles can write the artifact board.

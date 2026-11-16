@@ -24,6 +24,7 @@ export default {
     'Tools are coarse aliases (`search` covers listing and searching; `web` covers fetch and search).',
     'Read-only rests on leaving out the `edit` alias; `execute` can still change files, so the role body forbids edits.',
     'No hook system in the research: the board update after an agent report is a build-loop step.',
+    'No headless recipe: `orc.mjs dispatch` cannot run this tool (no documented headless syntax in the research).',
   ],
   renderAgent(role, tierModel) {
     const caps = ALL_CAPABILITIES.filter(

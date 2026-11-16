@@ -14,6 +14,7 @@ Rules:
 - Tests are filtered by default: run the test classes you touched plus whatever the orders name. Do not run a whole solution, and do not run more than one test project at a time in one worktree. The orchestrator runs the full suites once at the end.
 - If a required test cannot run under the test double (e.g. a stored procedure the in-memory provider cannot execute), extending the test double with a documented mirror is in scope when the repo already does that; report which proc clauses the mirror does not reproduce.
 - Mutation-check at least one new test per batch (break the rule, see red, restore byte-identical) and say which.
+- Honor the data precondition: query the real rows or paths named, not one seeded row.
 - Smallest diff that meets the spec. No speculative abstractions, no extra config, no drive-by refactors.
 - Do not write prose explaining the code in your report; the diff is the record.
 
@@ -32,6 +33,7 @@ STATUS: DONE | BLOCKED | PARTIAL
 CHANGED: path — one line each
 DEVIATIONS: anything not in the spec, or "none"
 VERIFIED: command → result (build, tests, manual check)
+EVIDENCE: <command> finished <time>; last edit <time>
 NOT VERIFIED: what you could not run and why
 BOARD: <n> progress lines posted to card <id> | skipped: <reason> | no BOARD line in orders
 ```

@@ -9,11 +9,15 @@
 !/AGENTS.md
 !/models.json
 !/package.json
-# Tool-neutral core: roles, per-tool adapters, tests (dist/ and models.local.json stay untracked)
+# Tool-neutral core: roles, optional profiles, per-tool adapters, tests (dist/ and models.local.json stay untracked)
 !/roles/
+!/profiles/
 !/adapters/
 !/tests/
 !/settings.example.json
+!/hooks.node.example.json
+# CI workflow
+!/.github/
 
 # The agent roster
 !/agents/

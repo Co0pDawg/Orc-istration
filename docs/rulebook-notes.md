@@ -1,14 +1,15 @@
 # Rulebook notes: the incidents behind the rules
 
 Reference material moved out of the rulebook (`AGENTS.md`) to keep it under Antigravity's 24,000-byte rules cap. Each
-entry is the original wording, under the rule it explains. The rules themselves stay in `AGENTS.md`.
+entry is the original wording, under the rule it explains. The rules themselves live in the core rulebook (`AGENTS.md`)
+and the optional profile (`profiles/dotnet-azure-devops.md`).
 
 ## Marching orders
 - Board line, full `cards/<id>` path: on 10729 a builder looked the card up wrong, reported it missing and skipped every board write.
 
 ## Orchestration Board
-- Late builder rounds get a card: on 18216 the review-fix round ran cardless until Cooper asked.
-- Durable-rules check, never wait to be asked: on 18055 the flyout, drag and write-path rules were written only after he asked.
+- Late builder rounds get a card: on 18216 the review-fix round ran cardless until the owner asked.
+- Durable-rules check, never wait to be asked: on 18055 the flyout, drag and write-path rules were written only after the owner asked.
 
 ## Build loop
 - Stale green: a stale green was caught this way on 2026-09-30.
@@ -32,7 +33,7 @@ entry is the original wording, under the rule it explains. The rules themselves 
 - Keep the machine awake: stopping it at midnight on 2026-10-28 let Modern Standby hang a builder's Playwright run for 2 h 48 m.
 - Contention reruns: 4 of 4 passed alone on 2026-10-29.
 - Free RAM: on 2026-10-29, 1 GB of 32 GB was free and every screenshot and query hung.
-- `publish_files` paths: the scratchpad's short form was `COOPER~1.DAV`. On 18242 it refused two tries; the second refusal named the path to use.
+- `publish_files` paths: the scratchpad's 8.3 short form of the user folder. On 18242 it refused two tries; the second refusal named the path to use.
 
 ## Pre-PR review tier (learned 2026-09-30 to 10-01 — review was 34% of agent tokens, ~90k per reviewer run)
 - The refuter already reran the work, checked conventions and proved each test can fail, so the full review panel on top of it is mostly duplicated effort. On seven refuter-accepted, test-only PRs the full panel produced one warning (doc wording) and otherwise only suggestions and nits; on PRs with product code it found real issues across several agents.
@@ -52,7 +53,7 @@ entry is the original wording, under the rule it explains. The rules themselves 
 - UI mockups first: on 18055 the mockup round settled the layout, overlaps, locked states and flyout before any code, and the later design feedback (from teammates) was CSS-only.
 - SQL command batch: on 18201 every test was green while deleting an Enterprise would have returned a 500; only the refuter's command-batch probe caught it.
 - Shared logins: on PR 6393 default-deny protected sessions inside the demo org, and three refuter ACCEPTs and a live check missed that a visitor could attach the login to their own org; the full review panel caught it.
-- Sentinel values: on PR 6393 "a bill day that never matches" looked simple, then needed 6 date clamps and a second question to Cooper.
+- Sentinel values: on PR 6393 "a bill day that never matches" looked simple, then needed 6 date clamps and a second question to the owner.
 - Backtest column meaning: on 18208 the AC priced bookings from a column that was NULL on 99.98% of rows; the backtest caught it before any code, and the build then found the real source (Pending invoices).
 - Fresh DB copies: on 18208 the 9/30 copy had no October revenue, so growth and earned-to-date read 0 until a 10/27 backup was restored.
 - Marketing screenshots: the 18220 projection shot was taken twice more as the KPI layout and comparisons changed under it.
@@ -61,7 +62,7 @@ entry is the original wording, under the rule it explains. The rules themselves 
 - Seeded visual states: the PR 6323 theme pass captured 45 screenshots of empty calendars, so the locked stripes, drag states and flyout went unchecked under the themes.
 - Timing mutations: on 10729 three "Cancel posts nothing" tests stayed green against a delayed submit, because their next navigation ended the page first.
 - Non-first group members: the 18055 spec said "lift the guests together" but not which arrival the stale check compares, so a second guest's drag was always refused; only the full review panel caught it.
-- Search inputs: every review gate passed PR 6243, then Cooper's first live test found that a partial reservation number listed only invoices, that email needed an "@", and that the placeholder was cut off. The day-1 data already showed invoice numbers embed the reservation number.
+- Search inputs: every review gate passed PR 6243, then the owner's first live test found that a partial reservation number listed only invoices, that email needed an "@", and that the placeholder was cut off. The day-1 data already showed invoice numbers embed the reservation number.
 - Unattended scripts: on 18261 I reported limits as "enforced by the script" before this; review found about 446 sensitive files passing the path filter and the session able to push.
 - Changed doc shape: the UITests map was condensed mid-week.
 - Confirming defects: one bug was filed with the builder's wrong cause and needed a correction comment.

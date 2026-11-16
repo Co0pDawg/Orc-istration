@@ -12,6 +12,7 @@ export default {
     'Exact model ids are unverified: every tier is `inherit` until you set ids in `models.local.json`.',
     'No per-agent tool allowlist: read-only roles get `readonly: true` and the role body.',
     'No hook system in the research: the board update after an agent report is a build-loop step.',
+    'No headless recipe: `orc.mjs dispatch` cannot run this tool (no documented headless syntax in the research).',
   ],
   installNote:
     'cursor has no global rulebook file: copy dist/cursor/project/AGENTS.md (node tools/orc.mjs build --tool cursor) into a project as AGENTS.md, or paste it into User Rules.',

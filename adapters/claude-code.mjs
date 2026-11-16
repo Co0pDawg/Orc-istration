@@ -19,7 +19,7 @@ export default {
   capabilityTools,
   limits: {},
   gaps: [
-    'A role with every capability gets no `tools:` line, so it keeps MCP tools such as ArtifactData; for the read-only refuter that means read-only rests on the role body, not an allowlist.',
+    'A role with every capability gets no `tools:` line, so it keeps MCP tools such as ArtifactData; only those roles can write the artifact board.',
   ],
   renderAgent(role, tierModel) {
     const fm = { name: role.name, description: role.description, model: tierModel.model };
@@ -33,6 +33,10 @@ export default {
       fm.tools = caps.flatMap((c) => capabilityTools[c]).join(', ');
     }
     return { path: `.claude/agents/${role.name}.md`, content: serialize(fm, role.body) };
+  },
+  // Headless run: `claude -p --agent <name> --model <model>` with the brief on stdin (no effort flag is documented).
+  headless(role, tierModel, briefText) {
+    return { command: 'claude', args: ['-p', '--agent', role.name, '--model', tierModel.model], stdin: briefText };
   },
   renderRulebook(agentsMd, notesMd) {
     return [
