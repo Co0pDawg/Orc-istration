@@ -26,4 +26,6 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      # The worklog tests assert local clock times across a US Eastern daylight-saving change; runners default to UTC.
+      - run: tzutil /s "Eastern Standard Time"
       - run: powershell -NoProfile -File tools/worklog/test.ps1
