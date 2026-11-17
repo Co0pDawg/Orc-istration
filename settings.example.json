@@ -18,6 +18,17 @@
         "hooks": [
           {
             "type": "command",
+            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\<you>\\.claude\\tools\\peon\\peon-hook.ps1\"",
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
             "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\<you>\\.claude\\tools\\peon\\peon-nag.ps1\" -Mode stop",
             "timeout": 10,
             "async": true

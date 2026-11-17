@@ -50,6 +50,7 @@ Every orchestrated task (any task that dispatches a builder, refuter or debugger
 - The protocol (fields, which write at which moment, the recipe for each backend) is the "Writing protocol" section of `orchestration/board/README.md` in the setup checkout. Read it at the start of each orchestrated task.
 - The session doc and `tokens` are orchestrator work. Agents write only their own card. Where the tool's hooks allow it, a hook reminds the orchestrator to update the session when an agent finishes; otherwise that update is a step after every agent report. A failed board write is reported once and never blocks the task.
 - Page code lives in `orchestration/board` in the setup checkout (repo `Co0pDawg/Orc-Dashboard`). Data changes never need a republish.
+- When the repo's tickets are GitHub issues, the session doc carries `github: "owner/repo"` so ticket and task links open the issue instead of a work item.
 
 ## Build loop
 Spec → builder → refuter → orchestrator reads the diff.
@@ -81,6 +82,7 @@ Spec → builder → refuter → orchestrator reads the diff.
 - A spec that adds a top-level path in a repo whose `.gitignore` is an allow-list names the ignore entry, and tests that read `git ls-files` run on intent-added (`git add -N`) files.
 - A tool that writes file paths into a report others may read keeps them repo-relative, or redacts them, when its output goes outside the repo.
 - Live-test new or changed agent definitions from a fresh session whose project has no agents of the same names: a project's own agents shadow user-level ones.
+- A spec that writes through a shared save function reads what that function rewrites (whole-file normalising, assigned IDs, backups) before dispatch, and says what must stay untouched. A one-cell refresh would have added columns and overwritten the file's only backup; the refuter caught it, not the spec.
 
 ## Pre-PR review tiers
 - **Light**, when all three hold: (1) diff is tests/docs only (attribute-only hook edits count); (2) refuter ACCEPT after mutation checks; (3) refuter's brief used the repo's test conventions as its checklist. Run only a docs/comment review, plus your own full diff read.
