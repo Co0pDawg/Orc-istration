@@ -132,7 +132,7 @@ Save the last command's output as `models.local.json`. The rest: [Install and Qu
 | `docs/` | Rulebook incident notes; the tracker contract and how to adopt a repo; outlines for unattended runs and project memory |
 | `settings.example.json` | Claude Code hooks, status line and plugins, with no permissions |
 | `hooks.node.example.json` | The board-reminder hooks on Node (`hooks --node`) |
-| `tools/board-reminder.ps1`, `tools/board-reminder.mjs`, `tools/peon/` | Claude Code hooks: board reminder (PowerShell or Node), sound alert while input is pending |
+| `tools/board-reminder.ps1`, `tools/board-reminder.mjs`, `tools/peon/` | Claude Code hooks: board reminder (PowerShell or Node), sound alert while input is pending and when a turn finishes |
 | `tools/worklog/` | A Windows-only example of time tracking on the hooks (one ticket format, Azure DevOps); not part of the method |
 | `.github/workflows/` | CI: tests and `check` on Ubuntu and Windows |
 
@@ -231,7 +231,7 @@ If git reports "dubious ownership", run `git config --global --add safe.director
 ## Not in the repo (reinstall or recreate)
 
 - Plugins and marketplaces named in `settings.example.json` (`enabledPlugins`, `extraKnownMarketplaces`): install them with `/plugin`. The status line points into the ponytail plugin's cache, so it works only after that plugin is installed.
-- peon-ping (sound alerts): install it into `hooks/peon-ping/` and keep only the `tools/peon/peon-hook.ps1` entries on PermissionRequest and Notification; delete the entries its installer adds. Turn every category off except `input.required`. Without peon-ping the wrapper does nothing.
+- peon-ping (sound alerts): install it into `hooks/peon-ping/` and keep only the `tools/peon/peon-hook.ps1` entries on PermissionRequest, Notification and Stop; delete the entries its installer adds. Turn every category off except `input.required` (a question or approval is waiting) and `task.complete` (the turn finished). Without peon-ping the wrapper does nothing.
 - Credentials: log in again (`/login`, and `gh auth login` if used).
 - Project memory (`projects/<project>/memory/`): see `docs/project-memory.md`.
 - Scheduled tasks and their scripts: see `docs/ops-automation.md`; recreate Task Scheduler entries by hand.
