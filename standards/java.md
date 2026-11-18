@@ -31,7 +31,7 @@ Rules for Java source built with Maven or Gradle. google-java-format enforces la
 
 ## Tooling and formatting
 - Format with google-java-format, wired into the build (through a Maven or Gradle formatting plugin) or run with `--dry-run` in CI; do not hand-format. [2]
-- Enable Error Prone as a compiler plugin in the build (for Maven, `-Xplugin:ErrorProne` in the compiler arguments); it needs JDK 21 or newer to run. [10]
+- Enable Error Prone as a compiler plugin in the build (for Maven, follow the page's setup: `-XDcompilePolicy=simple`, `--should-stop=ifError=FLOW` and `-Xplugin:ErrorProne` in the compiler arguments); it needs JDK 21 or newer to run. [10]
 - Run SpotBugs, which scans compiled bytecode for bug patterns, and triage new findings before merging. [11]
 - Use UTF-8 source files and spaces, never tabs. [1]
 - Indent by two spaces and wrap lines at 100 characters unless the repo's formatter config says otherwise. [1]
@@ -74,7 +74,7 @@ Rules for Java source built with Maven or Gradle. google-java-format enforces la
 - Give a class or method a readable `@DisplayName` when its method name is not enough. [8]
 - Use `@ParameterizedTest` for the same check across several inputs instead of copy-pasted tests. [8]
 - Assert a failure with `assertThrows` and inspect the returned exception. [9]
-- Use `assertAll` to report several related assertions together, and pass the expected value first in `assertEquals`. [9]
+- Use `assertAll` to report several related assertions together, and follow the docs' `assertEquals` examples, which pass the expected value first. [9]
 
 ## Security
 - Build SQL with `PreparedStatement` and `?` placeholders bound through setters; never concatenate input into a query string. [12]

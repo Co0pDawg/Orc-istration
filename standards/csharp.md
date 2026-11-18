@@ -37,7 +37,7 @@ Conventions for C# on current .NET. The compiler, the built-in Roslyn analyzers 
 - Layout default, unless the repo's `.editorconfig` says otherwise: 4-space indent (no tabs), Allman braces, one statement and one declaration per line. [1]
 - Set `<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>` and give each `IDExxxx` rule a severity in `.editorconfig`; otherwise style rules do not run on command-line builds. [6][13]
 - Raise analysis with `<AnalysisMode>Recommended</AnalysisMode>`, and pin `AnalysisLevel` to a version when a new SDK must not enable new rules by surprise. [6][13]
-- Build in CI with `-warnaserror` so analyzer warnings fail the build, and do not set `CodeAnalysisTreatWarningsAsErrors` to `false`. [6]
+- Build in CI with `-warnaserror` so analyzer warnings fail the build. [6]
 - Change a rule's severity in `.editorconfig` (`dotnet_diagnostic.<ID>.severity`) rather than switching analyzers off wholesale. [6]
 - Put `using` directives outside the namespace and use file-scoped namespaces (`namespace X;`). [1]
 - Centralize NuGet versions in `Directory.Packages.props` with `ManagePackageVersionsCentrally`, so projects omit `Version`. [13]

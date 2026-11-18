@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { main } from '../tools/orc.mjs';
 import { classify } from '../tools/lib/reviewtier.mjs';
 import { validateArchive, demoteHeadings, stripFrontmatter, detect, withRequires } from '../tools/lib/standards.mjs';
@@ -78,8 +79,10 @@ test('standards detect: matches case-insensitively, skips folders by name, pulls
   assert.doesNotMatch(r.out, /^  (powershell|python) /m);
   fs.writeFileSync(path.join(dir, 'STANDARDS.md'), 'x\n');
   const j = JSON.parse((await run(['standards', 'detect', '--repo', dir, '--json'])).out);
-  assert.deepEqual(Object.keys(j).sort(), ['archive', 'detected', 'repo', 'standardsFile', 'truncated']);
+  assert.deepEqual(Object.keys(j).sort(), ['archive', 'current', 'detected', 'repo', 'standardsFile', 'truncated', 'unreadable']);
   assert.equal(j.standardsFile, true);
+  assert.equal(j.current, null, 'no marker');
+  assert.equal(j.unreadable, 0);
   assert.ok(j.archive.includes('go'));
   const ts = j.detected.find((d) => d.id === 'typescript');
   assert.deepEqual(ts, { id: 'typescript', title: ts.title, kind: 'language', matches: 0, examples: [], requiredBy: 'react' });
@@ -140,7 +143,7 @@ test('standards apply: dry run writes nothing; create; identical re-run is uncha
   assert.match(text, /^Reviewed \d{4}-\d{2}-\d{2}\.$/m);
   const again = await run(['standards', 'apply', '--repo', dir, '--stack', 'csharp,aspnet-core', '--apply']);
   assert.match(again.out, /\(unchanged\)/);
-  const r = await run(['standards', 'apply', '--repo', dir, '--stack', 'go', '--stack', 'csharp', '--apply']);
+  const r = await run(['standards', 'apply', '--repo', dir, '--stack', 'go', '--stack', 'aspnet-core', '--apply']);
   assert.equal(r.code, 0);
   assert.match(r.out, /\(replace\)/);
   assert.equal(fs.readdirSync(dir).length, 1, 'a clean replace leaves no backup');
@@ -298,10 +301,208 @@ test('standards apply: --out below an existing file, or inside .git, fails clean
 
 test('install ends with the standards-setup pointer, dry run and --apply', async () => {
   const home = tempDir('next');
-  const line = "set up each project's coding standards: see orchestration/standards.md in the setup checkout (Claude Code: the repo-standards skill).";
+  const line = `set up each project's coding standards: see ${fs.realpathSync.native(REPO).replace(/\\/g, '/')}/orchestration/standards.md (Claude Code: the repo-standards skill).`;
   const dry = await run(['install', '--tool', 'antigravity', '--home', home]);
   assert.equal(dry.out.split('\n').at(-1), `After --apply, next: ${line}`);
   const done = await run(['install', '--tool', 'antigravity', '--home', home, '--apply']);
   assert.equal(done.code, 0);
   assert.equal(done.out.split('\n').at(-1), `Next: ${line}`);
+});
+
+// ---------- pre-PR review fixes ----------
+
+const ORC = path.join(REPO, 'tools', 'orc.mjs');
+const caseInsensitive = (() => {
+  const d = tempDir('caseprobe');
+  fs.writeFileSync(path.join(d, 'a'), '');
+  return fs.existsSync(path.join(d, 'A'));
+})();
+
+test('standards apply: an --out through a case-different repo name does not hang (A1)', () => {
+  const proj = path.join(tempDir('a1'), 'proj');
+  fs.mkdirSync(proj);
+  const r = spawnSync(process.execPath, [ORC, 'standards', 'apply', '--repo', '.', '--stack', 'python', '--out', '../PROJ/x.md'], { cwd: proj, encoding: 'utf8', timeout: 10000 });
+  assert.equal(r.signal, null, 'killed by the timeout: the walk hung');
+  if (caseInsensitive) {
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /target: .*[\\/]proj[\\/]x\.md \(create\)/);
+  } else assert.equal(r.status, 1);
+  assert.deepEqual(fs.readdirSync(proj), []);
+});
+
+test('golden renames a golden that differs only by case instead of deleting it (A2)', { skip: caseInsensitive ? false : 'case-sensitive file system' }, async () => {
+  const copy = tempDir('goldcase');
+  for (const p of ['AGENTS.md', 'models.json', 'roles', 'adapters', 'tools/lib', 'tests/golden/codex']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
+  const dir = path.join(copy, 'tests', 'golden', 'codex', '.codex');
+  fs.renameSync(path.join(dir, 'AGENTS.md'), path.join(dir, 'Agents.md'));
+  const r = await run(['golden', '--tool', 'codex', '--repo', copy]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /renamed tests\/golden\/codex\/\.codex\/Agents\.md -> tests\/golden\/codex\/\.codex\/AGENTS\.md/);
+  assert.doesNotMatch(r.out, /deleted/);
+  assert.ok(fs.readdirSync(dir).includes('AGENTS.md'));
+  assert.equal(read(path.join(dir, 'AGENTS.md')), read(path.join(REPO, 'tests', 'golden', 'codex', '.codex', 'AGENTS.md')));
+});
+
+test('standards apply --from: a folder holding the target leaves it out; the target itself is refused (A3)', async () => {
+  const dir = tree({ 'team.md': '# Team\n' });
+  assert.equal((await run(['standards', 'apply', '--repo', dir, '--from', dir, '--apply'])).code, 0);
+  const first = read(path.join(dir, 'STANDARDS.md'));
+  assert.match(first.split('\n')[0], /imports=team\.md;/);
+  const again = await run(['standards', 'apply', '--repo', dir, '--from', dir, '--apply']);
+  assert.match(again.out, /\(unchanged\)/);
+  const self = await run(['standards', 'apply', '--repo', dir, '--from', path.join(dir, 'STANDARDS.md'), '--apply']);
+  assert.equal(self.code, 1);
+  assert.match(self.err, /is the apply target; refusing/);
+  assert.equal(read(path.join(dir, 'STANDARDS.md')), first);
+});
+
+test('standards detect: unreadable folders are counted and warned; an unreadable repo exits 1 (A4)', async () => {
+  const dir = tree({ 'a/go.mod': '', 'b/x.py': '', 'c/y.py': '' });
+  const readdir = (p, o) => {
+    if (/[\\/][bc]$/.test(p)) throw new Error('EACCES');
+    return fs.readdirSync(p, o);
+  };
+  const r = await run(['standards', 'detect', '--repo', dir, '--json'], { standardsReaddir: readdir });
+  assert.equal(r.code, 0);
+  assert.match(r.err, /^WARN could not read 2 folder\(s\); results are partial$/m);
+  const j = JSON.parse(r.out);
+  assert.equal(j.unreadable, 2);
+  assert.deepEqual(j.detected.map((d) => d.id), ['go']);
+  const deny = () => {
+    throw new Error('EACCES');
+  };
+  const root = await run(['standards', 'detect', '--repo', dir], { standardsReaddir: deny });
+  assert.equal(root.code, 1);
+  assert.match(root.err, /cannot read .*EACCES/);
+});
+
+test('help toString and help __proto__ are unknown commands, not crashes (A5)', async () => {
+  for (const c of ['toString', '__proto__', 'constructor']) {
+    const r = await run(['help', c]);
+    assert.equal(r.code, 1, c);
+    assert.match(r.err, new RegExp(`^unknown command ${c}`));
+  }
+});
+
+test('standards subcommands refuse options that do not apply (A6)', async () => {
+  const dir = tempDir('opts');
+  const cases = [
+    [['list', '--json'], /standards list does not take --json/],
+    [['show', 'go', '--stack', 'go'], /standards show does not take --stack/],
+    [['detect', '--repo', dir, '--force'], /standards detect does not take --force/],
+    [['detect', '--repo', dir, '--out', 'x.md', '--apply'], /standards detect does not take --out, --apply/],
+    [['apply', '--repo', dir, '--stack', 'go', '--json'], /standards apply does not take --json/],
+  ];
+  for (const [argv, re] of cases) {
+    const r = await run(['standards', ...argv]);
+    assert.equal(r.code, 1, argv.join(' '));
+    assert.match(r.err, re);
+  }
+  assert.equal((await run(['standards', 'list', '--repo', dir])).code, 0);
+  assert.deepEqual(fs.readdirSync(dir), []);
+});
+
+test('standards apply: leaving out a recorded stack or import is REPLACE DROPS; detect reports current (A8)', async () => {
+  const src = tree({ 'team.md': '# Team\n' });
+  const dir = tempDir('drops');
+  await run(['standards', 'apply', '--repo', dir, '--stack', 'go,python', '--from', path.join(src, 'team.md'), '--apply']);
+  const file = path.join(dir, 'STANDARDS.md');
+  const before = read(file);
+  const j = JSON.parse((await run(['standards', 'detect', '--repo', dir, '--json'])).out);
+  assert.deepEqual(j.current, { stacks: ['go', 'python'], imports: ['team.md'] });
+  const dry = await run(['standards', 'apply', '--repo', dir, '--stack', 'go']);
+  assert.equal(dry.code, 0);
+  assert.match(dry.out, /\(REPLACE DROPS\)/);
+  assert.match(dry.out, /--apply would refuse: the file is recorded with python, team\.md, which this composition drops/);
+  const refused = await run(['standards', 'apply', '--repo', dir, '--stack', 'go', '--apply']);
+  assert.equal(refused.code, 1);
+  assert.equal(read(file), before);
+  const added = await run(['standards', 'apply', '--repo', dir, '--stack', 'go,python,rust', '--from', path.join(src, 'team.md'), '--apply']);
+  assert.match(added.out, /\(replace\)/, 'a superset is a plain replace');
+  const forced = await run(['standards', 'apply', '--repo', dir, '--stack', 'go', '--apply', '--force']);
+  assert.equal(forced.code, 0);
+  assert.equal(fs.readdirSync(dir).filter((n) => n.includes('.orc-backup-')).length, 1);
+  assert.deepEqual(fs.readdirSync(dir).filter((n) => n.includes('.tmp-')), [], 'the temp file was renamed over the target (A7)');
+});
+
+const ENTRY = (over = '') => `---
+id: kotlin
+title: Kotlin
+kind: language
+detect:
+  - "*.kt"
+reviewed: 2026-01-02
+sources:
+  - https://kotlinlang.org/docs/coding-conventions.html
+${over}---
+
+# Kotlin
+
+## Naming
+
+- Use camelCase [1].
+
+## Review checklist
+
+- [ ] Names follow the conventions [1].
+`;
+
+test('standards apply --from: an archive-format entry is validated and rendered like a stack (A9, A10)', async () => {
+  const src = tree({ 'kotlin.md': ENTRY(), 'team.md': '# Team\n' });
+  const dir = tempDir('a9');
+  const r = await run(['standards', 'apply', '--repo', dir, '--stack', 'go', '--from', path.join(src, 'team.md'), '--from', path.join(src, 'kotlin.md'), '--apply']);
+  assert.equal(r.code, 0, r.err);
+  const text = read(path.join(dir, 'STANDARDS.md'));
+  assert.match(text.split('\n')[0], /stacks=go; imports=team\.md,kotlin\.md;/);
+  assert.match(text, /^- Kotlin \(imported: kotlin\.md\)$/m);
+  assert.match(text, /## Kotlin\n\n### Naming\n\n- Use camelCase \[1\]\.\n\n### Review checklist\n\n- \[ \] Names follow the conventions \[1\]\.\n\n### Sources\n\n1\. https:\/\/kotlinlang\.org\/docs\/coding-conventions\.html\n\nReviewed 2026-01-02\./);
+  assert.ok(text.indexOf('## Go') < text.indexOf('## Kotlin') && text.indexOf('## Kotlin') < text.indexOf('## Imported: team.md'), 'stacks, archive-format imports, other imports');
+  assert.match(text, /a re-apply \(`tools\/orc\.mjs standards apply` in the setup checkout\) then needs `--force`/);
+  assert.doesNotMatch(text, /`orc standards/);
+  fs.writeFileSync(path.join(src, 'kotlin.md'), ENTRY().replace('camelCase [1]', 'camelCase [2]'));
+  const bad = await run(['standards', 'apply', '--repo', tempDir('a9bad'), '--from', path.join(src, 'kotlin.md'), '--apply']);
+  assert.equal(bad.code, 1);
+  assert.match(bad.err, /kotlin\.md is an archive-format entry with problems: citation\(s\) \[2\] out of range \(1 source\(s\)\)/);
+  fs.writeFileSync(path.join(src, 'kotlin.md'), ENTRY('requires:\n  - java-unknown\n'));
+  assert.equal((await run(['standards', 'apply', '--repo', tempDir('a9req'), '--from', path.join(src, 'kotlin.md')])).code, 0, 'requires is not checked for an import');
+});
+
+test('install writes the Setup checkout line, status matches it, build and golden never carry it (B)', async () => {
+  const home = tempDir('setup');
+  const setup = fs.realpathSync.native(REPO).replace(/\\/g, '/');
+  const line = `- Setup checkout (this machine): ${setup}. Standards setup: node ${setup}/tools/orc.mjs standards ...; procedure: ${setup}/orchestration/standards.md.`;
+  assert.equal((await run(['install', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
+  assert.ok(read(path.join(home, '.gemini', 'AGENTS.md')).split('\n').includes(line));
+  const st = await run(['status', '--tool', 'antigravity', '--home', home]);
+  assert.equal(st.code, 0, st.out);
+  assert.match(st.out, /status antigravity: all same/);
+  const out = tempDir('setupbuild');
+  assert.equal((await run(['build', '--tool', 'antigravity', '--out', out])).code, 0);
+  assert.doesNotMatch(read(path.join(out, 'antigravity', '.gemini', 'AGENTS.md')), /Setup checkout \(this machine\)/);
+  assert.doesNotMatch(read(path.join(REPO, 'tests', 'golden', 'antigravity', '.gemini', 'AGENTS.md')), /Setup checkout \(this machine\)/);
+});
+
+test('golden refuses a golden folder that differs only by case, writing nothing (A2)', { skip: caseInsensitive ? false : 'case-sensitive file system' }, async () => {
+  const copy = tempDir('golddir');
+  for (const p of ['AGENTS.md', 'models.json', 'roles', 'adapters', 'tools/lib', 'tests/golden/codex']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
+  const gold = path.join(copy, 'tests', 'golden', 'codex');
+  fs.renameSync(path.join(gold, '.codex'), path.join(gold, '.Codex'));
+  fs.writeFileSync(path.join(gold, '.Codex', 'AGENTS.md'), 'stale\n');
+  const r = await run(['golden', '--tool', 'codex', '--repo', copy]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /refused: folder tests\/golden\/codex\/\.Codex differs only by case from tests\/golden\/codex\/\.codex/);
+  assert.match(r.err, /nothing written/);
+  assert.equal(r.out, '');
+  assert.equal(read(path.join(gold, '.Codex', 'AGENTS.md')), 'stale\n');
+  assert.deepEqual(fs.readdirSync(gold), ['.Codex']);
+});
+
+test('install and status through a checkout path in another case agree: all same (B)', { skip: caseInsensitive ? false : 'case-sensitive file system' }, () => {
+  const home = tempDir('setupcase');
+  const other = path.join(REPO.toUpperCase(), 'tools', 'orc.mjs');
+  const i = spawnSync(process.execPath, [other, 'install', '--tool', 'antigravity', '--home', home, '--apply'], { encoding: 'utf8' });
+  assert.equal(i.status, 0, i.stderr);
+  const st = spawnSync(process.execPath, [ORC, 'status', '--tool', 'antigravity', '--home', home], { encoding: 'utf8' });
+  assert.equal(st.status, 0, st.stdout);
+  assert.match(st.stdout, /status antigravity: all same/);
 });

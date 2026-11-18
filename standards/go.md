@@ -78,7 +78,7 @@ Style follows Effective Go and the Go code review comments. `gofmt` (or `goimpor
 ## Testing
 - Write table-driven tests and run each case with `t.Run` using the case name. [9]
 - Make failure messages show the input, actual value and expected value. [2][9]
-- Use `t.Errorf` to keep going after a failure and `t.Fatalf` only when continuing is meaningless. [9]
+- Prefer `t.Errorf` when later checks in the test still matter: it reports the failure and the test keeps running. [9]
 - Before Go 1.22 re-declare the loop variable (`tc := tc`) when subtests call `t.Parallel()`. [9]
 - Run `go test -race ./...` in CI; it only reports races on code paths that actually run, and costs several times the memory and time. [5]
 - Add runnable examples when creating a new package. [2]

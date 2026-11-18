@@ -65,23 +65,28 @@ export function validateArchive(dir) {
     }
   }
   const ids = new Set(entries.map((e) => e.data.id));
-  for (const { f, data, body } of entries) {
-    const bad = (why) => problems.push(`standards/${f}: ${why}`);
-    if (data.id !== f.slice(0, -3)) bad(`id ${JSON.stringify(data.id)} does not match the file name`);
-    if (!data.title) bad('no title');
-    if (!KINDS.includes(data.kind)) bad(`kind ${JSON.stringify(data.kind)} is not one of ${KINDS.join(', ')}`);
-    if (!Array.isArray(data.detect) || !data.detect.length) bad('detect must be a non-empty list');
-    if (data.requires !== undefined && !Array.isArray(data.requires)) bad('requires must be a list');
-    for (const r of Array.isArray(data.requires) ? data.requires : []) if (!ids.has(r)) bad(`requires unknown id ${r}`);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(data.reviewed ?? ''))) bad('reviewed must be YYYY-MM-DD');
-    const n = Array.isArray(data.sources) ? data.sources.length : 0;
-    if (!n) bad('sources must be a non-empty list');
-    const out = [...new Set(citations(body).filter((c) => c < 1 || c > n))];
-    if (out.length) bad(`citation(s) ${out.map((c) => `[${c}]`).join(' ')} out of range (${n} source(s))`);
-    const checklist = /^## Review checklist[ \t]*\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(body);
-    if (!checklist) bad('no "## Review checklist" section');
-    else if (!/^- \[ \] \S/m.test(checklist[1])) bad('the Review checklist has no "- [ ]" item');
-  }
+  for (const { f, data, body } of entries) problems.push(...validateEntry(f, data, body, ids).map((why) => `standards/${f}: ${why}`));
+  return problems;
+}
+
+// One entry's problems (reasons only). ids: the known archive ids for the requires check; omitted, it is skipped.
+export function validateEntry(f, data, body, ids = null) {
+  const problems = [];
+  const bad = (why) => problems.push(why);
+  if (data.id !== f.slice(0, -3)) bad(`id ${JSON.stringify(data.id)} does not match the file name`);
+  if (!data.title) bad('no title');
+  if (!KINDS.includes(data.kind)) bad(`kind ${JSON.stringify(data.kind)} is not one of ${KINDS.join(', ')}`);
+  if (!Array.isArray(data.detect) || !data.detect.length) bad('detect must be a non-empty list');
+  if (data.requires !== undefined && !Array.isArray(data.requires)) bad('requires must be a list');
+  for (const r of ids && Array.isArray(data.requires) ? data.requires : []) if (!ids.has(r)) bad(`requires unknown id ${r}`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(data.reviewed ?? ''))) bad('reviewed must be YYYY-MM-DD');
+  const n = Array.isArray(data.sources) ? data.sources.length : 0;
+  if (!n) bad('sources must be a non-empty list');
+  const out = [...new Set(citations(body).filter((c) => c < 1 || c > n))];
+  if (out.length) bad(`citation(s) ${out.map((c) => `[${c}]`).join(' ')} out of range (${n} source(s))`);
+  const checklist = /^## Review checklist[ \t]*\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(body);
+  if (!checklist) bad('no "## Review checklist" section');
+  else if (!/^- \[ \] \S/m.test(checklist[1])) bad('the Review checklist has no "- [ ]" item');
   return problems;
 }
 
@@ -91,17 +96,21 @@ export function globRe(glob) {
 }
 
 // Walks repoDir (no symlinks or junctions, SKIP_DIRS by name, at most `cap` entries) and matches base names.
-export function detect(repoDir, archive, { cap = ENTRY_CAP } = {}) {
+// A folder it cannot read is counted in `unreadable`; an unreadable repoDir throws.
+export function detect(repoDir, archive, { cap = ENTRY_CAP, readdir = fs.readdirSync } = {}) {
   const res = archive.map((e) => ({ e, res: e.detect.map(globRe), matches: 0, examples: [] }));
   let seen = 0;
   let truncated = false;
+  let unreadable = 0;
   const stack = [''];
   while (stack.length && !truncated) {
     const rel = stack.pop();
     let dirents;
     try {
-      dirents = fs.readdirSync(path.join(repoDir, rel), { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1));
-    } catch {
+      dirents = readdir(path.join(repoDir, rel), { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1));
+    } catch (e) {
+      if (!rel) throw new Error(`cannot read ${repoDir}: ${e.message}`);
+      unreadable++;
       continue;
     }
     const subdirs = [];
@@ -146,7 +155,7 @@ export function detect(repoDir, archive, { cap = ENTRY_CAP } = {}) {
     examples: x.examples,
     requiredBy: picked.get(x.e.id),
   }));
-  return { detected, truncated, scanned: Math.min(seen, cap) };
+  return { detected, truncated, unreadable, scanned: Math.min(seen, cap) };
 }
 
 // The ids plus their requires, transitively; returns {ids, added: [{id, by}]} or throws on an unknown id.
@@ -171,40 +180,71 @@ export function withRequires(ids, archive) {
   return { entries: ordered, added };
 }
 
-// The composed STANDARDS.md: marker line, header, one section per stack, one per import ({name, text}).
+// The composed STANDARDS.md: marker line, header, one section per stack, then archive-format imports rendered like
+// stacks, then one section per other import ({name, text, entry?}).
 export function compose(entries, imports) {
-  const contents = [...entries.map((e) => `- ${e.title} (\`${e.id}\`)`), ...imports.map((i) => `- Imported: ${i.name}`)];
+  const cited = imports.filter((i) => i.entry);
+  const plain = imports.filter((i) => !i.entry);
+  const contents = [...entries.map((e) => `- ${e.title} (\`${e.id}\`)`), ...cited.map((i) => `- ${i.entry.title} (imported: ${i.name})`), ...plain.map((i) => `- Imported: ${i.name}`)];
   const parts = [
     '# Coding standards',
     '',
-    'Builders follow the sections for the stacks they touch. Refuters check each diff against the Review checklist of every section whose stack the diff touches. The team may edit this file, but a re-apply then needs `orc standards apply --force`, which keeps a backup.',
+    'Builders follow the sections for the stacks they touch. Refuters check each diff against the Review checklist of every section whose stack the diff touches. The team may edit this file, but a re-apply (`tools/orc.mjs standards apply` in the setup checkout) then needs `--force`, which keeps a backup.',
     '',
     'Contents:',
     '',
     ...contents,
   ];
-  for (const e of entries) {
+  for (const e of [...entries, ...cited.map((i) => i.entry)]) {
     const body = demoteHeadings(e.body.replace(/\s+$/, ''));
     parts.push('', body, '', '### Sources', '', ...e.sources.map((s, i) => `${i + 1}. ${s}`), '', `Reviewed ${e.reviewed}.`);
   }
-  for (const i of imports) parts.push('', `## Imported: ${i.name}`, '', demoteHeadings(stripFrontmatter(i.text).replace(/\s+$/, '')));
+  for (const i of plain) parts.push('', `## Imported: ${i.name}`, '', demoteHeadings(stripFrontmatter(i.text).replace(/\s+$/, '')));
   const rest = `${parts.join('\n')}\n`;
   const marker = `<!-- orc standards: stacks=${entries.map((e) => e.id).join(',')}; imports=${imports.map((i) => i.name).join(',')}; sha256=${sha256(rest)} -->`;
   return `${marker}\n${rest}`;
 }
 
-// create | unchanged | replace | REPLACE EDITED | REPLACE HAND-WRITTEN, for existing text (LF) or null.
+// The first-line marker as {stacks, imports, sha256}, or null when the text has no valid marker.
+export function parseMarker(text) {
+  const nl = text.indexOf('\n');
+  const m = MARKER.exec(nl < 0 ? text : text.slice(0, nl));
+  const list = (v) => v.split(',').filter(Boolean);
+  return m ? { stacks: list(m[1]), imports: list(m[2]), sha256: m[3] } : null;
+}
+
+// The stack ids and import names the current marker records that the composed file leaves out.
+export function dropped(current, composed) {
+  const was = parseMarker(current);
+  const now = parseMarker(composed);
+  if (!was || !now) return [];
+  return [...was.stacks.filter((s) => !now.stacks.includes(s)), ...was.imports.filter((i) => !now.imports.includes(i))];
+}
+
+// create | unchanged | replace | REPLACE DROPS | REPLACE EDITED | REPLACE HAND-WRITTEN, for existing text (LF) or null.
 export function targetState(current, composed) {
   if (current === null) return 'create';
   if (current === composed) return 'unchanged';
-  const nl = current.indexOf('\n');
-  const m = MARKER.exec(nl < 0 ? current : current.slice(0, nl));
+  const m = parseMarker(current);
   if (!m) return 'REPLACE HAND-WRITTEN';
-  return sha256(nl < 0 ? '' : current.slice(nl + 1)) === m[3] ? 'replace' : 'REPLACE EDITED';
+  const nl = current.indexOf('\n');
+  if (sha256(nl < 0 ? '' : current.slice(nl + 1)) !== m.sha256) return 'REPLACE EDITED';
+  return dropped(current, composed).length ? 'REPLACE DROPS' : 'replace';
 }
 
-// --from paths: a .md file, or a folder whose .md files are taken non-recursively, sorted by name.
-export function readImports(paths) {
+const realOf = (p) => {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return path.resolve(p);
+  }
+};
+
+// --from paths: a .md file, or a folder whose .md files are taken non-recursively, sorted by name. A folder leaves
+// out `target` (the apply target); an explicit file that is the target is refused. A file whose frontmatter has an
+// id and a non-empty sources list is an archive-format entry: validated like the archive and returned with `entry`.
+export function readImports(paths, target = null) {
+  const self = target && realOf(target);
   const out = [];
   for (const p of paths) {
     const abs = path.resolve(p);
@@ -214,12 +254,26 @@ export function readImports(paths) {
           .readdirSync(abs, { withFileTypes: true })
           .filter((d) => d.isFile() && d.name.toLowerCase().endsWith('.md'))
           .map((d) => path.join(abs, d.name))
+          .filter((f) => !self || realOf(f) !== self)
           .sort()
       : [abs];
+    if (self && files[0] === abs && realOf(abs) === self) throw new Error(`--from ${p} is the apply target; refusing to import it into itself`);
     if (!files.length) throw new Error(`--from ${p}: no .md files in that folder`);
     for (const f of files) {
       if (!f.toLowerCase().endsWith('.md')) throw new Error(`--from ${p}: not a .md file`);
-      out.push({ name: path.basename(f), text: readText(f) });
+      const name = path.basename(f);
+      const text = readText(f);
+      let fm = null;
+      try {
+        fm = parse(text);
+      } catch {
+        // no frontmatter, or one the parser cannot read: a plain import
+      }
+      if (fm?.data.id && Array.isArray(fm.data.sources) && fm.data.sources.length) {
+        const problems = validateEntry(name, fm.data, fm.body);
+        if (problems.length) throw new Error(`--from ${p}: ${name} is an archive-format entry with problems: ${problems.join('; ')}`);
+        out.push({ name, text, entry: { ...fm.data, sources: fm.data.sources.map(String), body: fm.body } });
+      } else out.push({ name, text });
     }
   }
   return out;
@@ -232,12 +286,18 @@ function backupPath(target, when) {
 }
 
 // `standards list|show|detect|apply`. opt: parsed args; archiveDir: the checkout's standards/; when: backup stamp.
-export function runStandards(opt, io, { archiveDir, when, cap }) {
+// Options each subcommand refuses; list and show take only --repo (the dispatcher reads it too).
+const REFUSED = { detect: ['stack', 'from', 'out', 'force', 'apply'], apply: ['json'] };
+
+export function runStandards(opt, io, { archiveDir, when, cap, readdir }) {
   const fail = (msg) => {
     io.err(msg);
     return 1;
   };
   const [, sub, ...rest] = opt._;
+  const given = Object.keys(opt).filter((k) => k !== '_' && opt[k] !== undefined);
+  const extra = ['list', 'show'].includes(sub) ? given.filter((k) => k !== 'repo') : given.filter((k) => REFUSED[sub]?.includes(k));
+  if (extra.length) return fail(`standards ${sub} does not take ${extra.map((k) => `--${k}`).join(', ')}`);
   let archive;
   try {
     archive = loadArchive(archiveDir);
@@ -257,11 +317,21 @@ export function runStandards(opt, io, { archiveDir, when, cap }) {
   if (sub === 'detect' && !rest.length) {
     const repo = path.resolve(opt.repo ?? process.cwd());
     if (!fs.existsSync(repo) || !fs.statSync(repo).isDirectory()) return fail(`no folder at ${repo}`);
-    const { detected, truncated } = detect(repo, archive, { cap });
-    const standardsFile = fs.existsSync(path.join(repo, 'STANDARDS.md'));
+    let found;
+    try {
+      found = detect(repo, archive, { cap, readdir });
+    } catch (e) {
+      return fail(e.message);
+    }
+    const { detected, truncated, unreadable } = found;
+    const standardsPath = path.join(repo, 'STANDARDS.md');
+    const standardsFile = fs.existsSync(standardsPath);
+    const marker = standardsFile && fs.statSync(standardsPath).isFile() ? parseMarker(readText(standardsPath)) : null;
+    const current = marker && { stacks: marker.stacks, imports: marker.imports };
     if (truncated) io.err(`WARN stopped after ${cap ?? ENTRY_CAP} entries; the results are partial`);
+    if (unreadable) io.err(`WARN could not read ${unreadable} folder(s); results are partial`);
     if (opt.json) {
-      io.out(JSON.stringify({ repo, standardsFile, detected, archive: archive.map((e) => e.id), truncated }, null, 2));
+      io.out(JSON.stringify({ repo, standardsFile, current, detected, archive: archive.map((e) => e.id), truncated, unreadable }, null, 2));
       return 0;
     }
     io.out(`repo: ${repo}`);
@@ -284,11 +354,15 @@ export function runStandards(opt, io, { archiveDir, when, cap }) {
     const repoDir = path.resolve(opt.repo);
     if (!fs.existsSync(repoDir) || !fs.statSync(repoDir).isDirectory()) return fail(`no folder at ${repoDir}`);
     const repo = fs.realpathSync(repoDir);
-    const target = path.resolve(repo, out);
-    const rel = path.relative(repo, target);
+    const rel = path.relative(repo, path.resolve(repo, out));
     if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return fail(`--out ${out} is outside the repo ${repo}`);
     if (rel.split(path.sep).some((s) => s.toLowerCase() === '.git')) return fail(`--out ${out} is inside .git; refusing`);
-    for (let d = path.dirname(target); d !== repo; d = path.dirname(d)) {
+    // Walk the folders of rel down from the repo (a dirname walk up from a case-different target never met the repo).
+    const target = path.join(repo, rel);
+    for (let i = 0, d = repo, segs = rel.split(path.sep).slice(0, -1); i < segs.length; i++) {
+      const next = path.join(d, segs[i]);
+      if (path.dirname(next) === next) break;
+      d = next;
       if (fs.existsSync(d) && !fs.statSync(d).isDirectory()) return fail(`refused: ${d} is a file, not a folder; nothing written`);
     }
     const unsafe = escapes(repo, '.', target);
@@ -300,19 +374,25 @@ export function runStandards(opt, io, { archiveDir, when, cap }) {
       const r = withRequires([...new Set(stacks)], archive);
       entries = r.entries;
       for (const a of r.added) io.out(`added ${a.id} (required by ${a.by})`);
-      imports = readImports(froms);
+      imports = readImports(froms, target);
     } catch (e) {
       return fail(e.message);
     }
     const composed = compose(entries, imports);
     const exists = fs.existsSync(target);
-    const state = targetState(exists ? readText(target) : null, composed);
+    const currentText = exists ? readText(target) : null;
+    const state = targetState(currentText, composed);
     io.out(`target: ${target} (${state})`);
     io.out('sections:');
     for (const e of entries) io.out(`  ${e.id}  ${e.title}`);
-    for (const i of imports) io.out(`  Imported: ${i.name}`);
+    for (const i of imports) io.out(`  Imported: ${i.name}${i.entry ? ` (archive format: ${i.entry.id})` : ''}`);
     const refused = state.startsWith('REPLACE') && !opt.force;
-    const why = state === 'REPLACE EDITED' ? 'edited since it was applied' : 'hand-written (no orc standards marker)';
+    const whys = {
+      'REPLACE EDITED': 'edited since it was applied',
+      'REPLACE HAND-WRITTEN': 'hand-written (no orc standards marker)',
+      'REPLACE DROPS': `recorded with ${state === 'REPLACE DROPS' ? dropped(currentText, composed).join(', ') : ''}, which this composition drops`,
+    };
+    const why = whys[state];
     if (!opt.apply) {
       io.out('dry run; add --apply to write');
       if (refused) io.out(`--apply would refuse: the file is ${why} (pass --force to replace it, with a backup)`);
@@ -329,7 +409,9 @@ export function runStandards(opt, io, { archiveDir, when, cap }) {
       fs.copyFileSync(target, backup);
       io.out(`backed up: ${backup}`);
     }
-    fs.writeFileSync(target, Buffer.from(composed, 'utf8'));
+    const tmp = `${target}.tmp-${process.pid}`;
+    fs.writeFileSync(tmp, Buffer.from(composed, 'utf8'));
+    fs.renameSync(tmp, target);
     io.out(`applied ${state}: ${target}`);
     return 0;
   }

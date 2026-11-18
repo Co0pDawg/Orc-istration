@@ -65,7 +65,7 @@ flowchart LR
 
 ![The board in its Sleek skin: a session with its activity log on the left and task cards showing stages and progress lines, using demo data](https://raw.githubusercontent.com/Co0pDawg/Orc-Dashboard/main/docs/screenshots/board-sleek.png)
 
-**Repo standards.** `orc standards` sets up a project's coding standards: `STANDARDS.md` at its root, which builders follow and refuters check diffs against, section by section. It detects the project's stacks and composes the file from a cited archive (`standards/`: ASP.NET Core, C#, Go, Java, Playwright, PowerShell, Python, React, Rust, SQL, TypeScript), from the team's own files (`--from`), or both. Before the first build in a repo without one, the orchestrator runs the setup in [`orchestration/standards.md`](orchestration/standards.md): it detects the stacks, then asks you in one several-picks question which to adopt and whether you have your own standards to import, then applies. A re-apply never overwrites a file the team has edited unless forced, and then keeps a backup. Claude Code gets the procedure as the `repo-standards` skill.
+**Repo standards.** `node tools/orc.mjs standards` (run from the setup checkout) sets up a project's coding standards: `STANDARDS.md` at its root, which builders follow and refuters check diffs against, section by section. It detects the project's stacks and composes the file from a cited archive (`standards/`: ASP.NET Core, C#, Go, Java, Playwright, PowerShell, Python, React, Rust, SQL, TypeScript), from the team's own files (`--from`), or both. Before the first build in a repo without one, the orchestrator runs the setup in [`orchestration/standards.md`](orchestration/standards.md): it detects the stacks, then asks you in one several-picks question which to adopt and whether you have your own standards to import, then applies. A re-apply never overwrites a file the team has edited, or drops a stack or import it was applied with, unless forced, and then keeps a backup. `install` writes the setup checkout's path into the installed rulebook ("Setup checkout (this machine)"), so any tool can find the procedure and the command. Claude Code also gets the procedure as the `repo-standards` skill, but only where `~/.claude` is the setup checkout, since skills load from `~/.claude/skills`.
 
 **The cost log.** Every orchestrated task writes one record: a row per dispatch with agent, model, tokens, minutes, result and a value label (`earned`, `marginal` or `waste`). The format and the review questions are in [`orchestration/README.md`](orchestration/README.md).
 
@@ -100,7 +100,7 @@ node tools/orc.mjs sync      # regenerates CLAUDE.md and agents/*.md
 npm test                     # golden files, install tests, and check
 ```
 
-Then, in each project, set up its coding standards: the `repo-standards` skill ([`orchestration/standards.md`](orchestration/standards.md)).
+Then, in each project, set up its coding standards with the `repo-standards` skill ([`orchestration/standards.md`](orchestration/standards.md)). The skill is there because `~/.claude` is this checkout; from a separate clone, follow the procedure with that clone as `<setup>`.
 
 **Antigravity CLI.** From a clone of this repo:
 
@@ -111,7 +111,7 @@ node tools/orc.mjs install --tool antigravity --apply --board http://localhost:8
 agy models | node tools/orc.mjs models --tool antigravity --from-stdin
 ```
 
-Save the last command's output as `models.local.json`. Then, in each project, run the standards setup in [`orchestration/standards.md`](orchestration/standards.md); `install` prints this pointer too. The rest: [Install and Quick Start](https://github.com/Co0pDawg/Orc-istration/wiki/Install-And-Quick-Start).
+Save the last command's output as `models.local.json`. Then, in each project, run the standards setup in [`orchestration/standards.md`](orchestration/standards.md); `install` prints this pointer too, and writes this clone's path into the rulebook as the setup checkout. The rest: [Install and Quick Start](https://github.com/Co0pDawg/Orc-istration/wiki/Install-And-Quick-Start).
 
 ## Repository layout
 

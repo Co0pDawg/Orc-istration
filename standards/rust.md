@@ -31,7 +31,7 @@ Formatting follows the Rust style guide and is enforced by rustfmt (`cargo fmt`)
 - Leave no trailing whitespace and at most one blank line between items. [1]
 - Run `cargo clippy` with its default `clippy::all` lints and fail the build on warnings in CI. [2]
 - Deny warnings with `CARGO_BUILD_WARNINGS=deny` (or `[build] warnings = "deny"`) on Cargo 1.97+, otherwise `cargo clippy -- -D warnings`. [2]
-- Scope an `#[allow(clippy::...)]` to the smallest item that needs it, since Clippy expects allows where a lint does not fit. [2]
+- Put an `#[allow(clippy::...)]` where a lint does not fit the code; Clippy expects some. [2]
 - Enable `clippy::restriction` lints one at a time, never as a group, and treat `clippy::pedantic` as opt-in. [2]
 - Run `cargo audit` in CI to check `Cargo.lock` against the RustSec advisory database. [12]
 - Do not run `cargo audit` on an untrusted project without `--file` pointing at its lockfile, since generating one can run project code. [12]

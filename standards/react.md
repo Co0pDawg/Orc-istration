@@ -31,7 +31,7 @@ sources:
 Rules for React function components with hooks. `eslint-plugin-react-hooks` and `eslint-plugin-jsx-a11y` enforce the mechanical parts; the TypeScript file covers the language.
 
 ## Tooling and formatting
-- Enable `eslint-plugin-react-hooks` with `rules-of-hooks` as `error` and `exhaustive-deps` at least `warn`; use its `recommended` preset where the installed version offers it. [8]
+- Enable both `eslint-plugin-react-hooks` rules, `rules-of-hooks` and `exhaustive-deps`, for example through the plugin's `recommended` preset. [8]
 - Enable `eslint-plugin-jsx-a11y` through `flatConfigs.recommended` (or `strict`) in `eslint.config.mjs`. [9]
 - Treat jsx-a11y as a static check only; keep interactive flows covered by tests that use roles. [9]
 - Do not add `eslint-disable` for `react-hooks/exhaustive-deps`; restructure the effect so the dependency list is truthful. [12]

@@ -43,14 +43,14 @@ node tools/orc.mjs check     # watch the antigravity headroom line
 ## Traps
 
 - **The allow-list `.gitignore`.** `/*` ignores everything, then `!/` lines re-include named paths. A new top-level file is silently untracked until it gets a `!/` line. Check with `git check-ignore <path>`: no output means it can be tracked. (`git check-ignore -v` also prints the `!/` rule that re-includes a file, so output there does not mean ignored.)
-- **Review tier.** Editing `AGENTS.md`, `roles/`, `adapters/*.notes.md`, `profiles/`, `standards/` or `orchestration/standards.md` (or the generated `CLAUDE.md` and `agents/`) makes `node tools/orc.mjs review-tier` say `Full`: prompts count as product, not docs.
+- **Review tier.** Editing `AGENTS.md`, `roles/`, `adapters/*.notes.md`, `profiles/`, any `SKILL.md` (such as `skills/repo-standards/SKILL.md`), `standards/` or `orchestration/standards.md` (or the generated `CLAUDE.md` and `agents/`) makes `node tools/orc.mjs review-tier` say `Full`: prompts count as product, not docs.
 - **The board is another repo.** The board page code in `orchestration/board` is its own repo (Co0pDawg/Orc-Dashboard), not part of this one.
 - **`tools/worklog`** is a Windows-only example with its own `tools/worklog/test.ps1`. Its tests assert US Eastern local times, so CI sets the runner to Eastern time first.
 - **`models.local.json`** is untracked. `check` validates it, but builds and compares from `models.json` only; `sync` and `golden` read `models.json` only. `build`, `install`, `status` and `dispatch` use it.
 
 ## Adding or refreshing a standards entry
 
-The archive in `standards/` feeds `orc standards apply`, which composes a project's `STANDARDS.md`.
+The archive in `standards/` feeds `node tools/orc.mjs standards apply`, which composes a project's `STANDARDS.md`.
 
 - Follow the format in `standards/README.md`: the frontmatter fields, the section order, and a `## Review checklist` with `- [ ]` items.
 - Cite primary sources only (language or vendor docs, official style guides, the linter's own docs). End every rule with `[n]`, the n-th URL in `sources`.
