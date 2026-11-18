@@ -582,7 +582,7 @@ test('standards apply --from: comment-first and blank-first YAML is stripped; id
 
 test('standards apply --from: a comment-first archive-format entry is validated and rendered like a stack', async () => {
   const src = tempDir('cfentry');
-  fs.writeFileSync(path.join(src, 'kotlin.md'), ENTRY().replace('---\n', '---\n# schema: x.json\n'));
+  fs.writeFileSync(path.join(src, 'kotlin.md'), ENTRY().replace('---\n', '---\n# schema: x.json\n').replace('sources:\n', 'sources:\n  # an indented comment\n'));
   const dir = tempDir('cfapply');
   const r = await run(['standards', 'apply', '--repo', dir, '--from', path.join(src, 'kotlin.md'), '--apply']);
   assert.equal(r.code, 0, r.err);
