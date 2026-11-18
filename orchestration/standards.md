@@ -18,7 +18,7 @@ This procedure sets up a project's coding standards: `STANDARDS.md` at the proje
 ## Step 1: detect
 
 ```
-node <setup>/tools/orc.mjs standards detect --repo <repo> --json
+node "<setup>/tools/orc.mjs" standards detect --repo <repo> --json
 ```
 
 The result lists each detected archive id with its match count and example paths. An id pulled in only through another entry's `requires` carries `requiredBy`. `standardsFile` says whether `STANDARDS.md` exists, and `current` holds the `stacks` and `imports` its orc marker records (`null` with no valid marker). `archive` lists every id available. `truncated` or a non-zero `unreadable` means the scan is partial; it also warns on stderr.
@@ -50,7 +50,7 @@ If `STANDARDS.md` already exists (`standardsFile` is true), the same single ask 
 ## Step 3: stacks not in the archive
 
 1. Dispatch a researcher (Mid tier) for each such stack to write the entry in the archive format (`standards/README.md`) to its scratch path, named `<id>.md` so the id matches the file name. The researcher writes its scratch file through a shell redirect.
-2. Validate it: make a temp copy of the setup checkout, put the entry in the copy's `standards/`, and run `node <setup>/tools/orc.mjs check --repo <temp copy>`. Fix any problem it reports for the entry.
+2. Validate it: make a temp copy of the setup checkout, put the entry in the copy's `standards/`, and run `node "<setup>/tools/orc.mjs" check --repo <temp copy>`. Fix any problem it reports for the entry.
 3. Import it with `--from <scratch>/<id>.md`: an archive-format file (frontmatter with `id` and a non-empty `sources` list) is validated again and rendered like a stack, with its Sources and Reviewed lines. Or, if the user agrees, add it to the setup checkout's archive (as a pull request). The archive is public: never add company-specific or imported content to it.
 
 ## Step 4: imports
@@ -63,7 +63,7 @@ If `STANDARDS.md` already exists (`standardsFile` is true), the same single ask 
 ## Step 5: apply
 
 ```
-node <setup>/tools/orc.mjs standards apply --repo <repo> --stack <id>,<id> [--from <path>]...
+node "<setup>/tools/orc.mjs" standards apply --repo <repo> --stack <id>,<id> [--from <path>]...
 ```
 
 - That first run is a dry run. It prints the target, its state (`create`, `replace`, `unchanged`, `REPLACE DROPS`, `REPLACE EDITED` or `REPLACE HAND-WRITTEN`) and the section list. `--stack` entries add their `requires`, and say so.

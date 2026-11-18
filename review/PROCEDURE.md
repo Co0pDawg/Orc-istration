@@ -10,7 +10,7 @@ to dispatch an agent by roster name, override its tier for one dispatch, resume 
 Claude Code, `/pre-pr-review` runs this file.
 
 `CHECKOUT` below is the setup checkout (the Orc-istration clone: the tool notes say where; the Claude Code commands
-use `$ORC_HOME` when set, else `~/.claude`). Every `review/...` path is relative to it. The review itself runs in the
+use `$ORC_HOME` when set, else the rulebook's "Setup checkout (this machine)" line, else `~/.claude`). Every `review/...` path is relative to it. The review itself runs in the
 reviewed repo's working directory.
 
 **Arguments (all optional):**

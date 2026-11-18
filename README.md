@@ -191,7 +191,7 @@ The Full pre-PR review tier runs the review panel, ported from a production setu
 
 Stack-specific checks (tenant scoping, CSRF, migration co-change, UI test hooks, generated files, a documentation map) come from the reviewed repo's own `REVIEW.md`, or the file its rulebook names; without one the lanes skip those checks. A ticket brief comes from ticket text or a brief file you give. Run logs and metrics land in the reviewed repo's `.orc/` folder (`review/calibration.md`, `review/metrics.md`).
 
-In Claude Code, `/pre-pr-review [branch] [base] [scope keywords] [lite|full]`, `/review-verdict` and `/calibration-report` are generated into `commands/`. They find this checkout through the `ORC_HOME` environment variable, else `~/.claude`. Other tools follow `review/PROCEDURE.md` by hand.
+In Claude Code, `/pre-pr-review [branch] [base] [scope keywords] [lite|full]`, `/review-verdict` and `/calibration-report` are generated into `commands/`. They find this checkout through the `ORC_HOME` environment variable, else the rulebook's "Setup checkout (this machine)" line, else `~/.claude`. Other tools follow `review/PROCEDURE.md` by hand.
 
 ## Workflows
 
