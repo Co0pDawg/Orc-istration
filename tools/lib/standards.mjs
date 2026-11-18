@@ -40,13 +40,29 @@ function outsideFences(text, fn) {
 
 export const demoteHeadings = (text) => outsideFences(text, (l) => (/^#{1,5}(\s|$)/.test(l) ? `#${l}` : l));
 
-// The leading frontmatter as {block, length}, or null. A leading `---` whose first non-blank line is not a `key:` is
-// a Markdown horizontal rule, not frontmatter.
+// The leading frontmatter as {block, length}, or null. A leading `---` ... `---` pair is frontmatter when it has a
+// top-level `key:` line and every other non-blank line is a `#` comment, an indented line, or a top-level `- ` item
+// right under a key or another item (blank and comment lines between are ignored). Anything else, such as a heading
+// over a list, is a Markdown horizontal-rule pair and is kept. Trade-off: a rule pair around a lone `Note: x` line
+// is valid YAML, so it is taken as frontmatter and stripped.
 function leadingFrontmatter(text) {
   const m = /^---\n([\s\S]*?)\n---(\n|$)/.exec(text);
-  const first = m?.[1].split('\n').find((l) => l.trim() !== '');
-  return first !== undefined && /^[A-Za-z_][\w-]*:/.test(first) ? { block: m[1], length: m[0].length } : null;
+  if (!m) return null;
+  let keys = 0;
+  let listOk = false;
+  for (const line of m[1].split('\n')) {
+    if (line.trim() === '' || line.startsWith('#')) continue;
+    if (/^\s/.test(line)) listOk = false;
+    else if (/^[A-Za-z_][\w-]*:/.test(line)) {
+      keys++;
+      listOk = true;
+    } else if (!(listOk && /^-( |$)/.test(line))) return null;
+  }
+  return keys ? { block: m[1], length: m[0].length } : null;
 }
+
+// parse() reads no YAML comments: the text with the frontmatter's `#` comment lines dropped.
+const withoutComments = (text, fm) => `---\n${fm.block.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n')}\n---\n${text.slice(fm.length)}`;
 
 export function stripFrontmatter(text) {
   const fm = leadingFrontmatter(text);
@@ -249,10 +265,10 @@ const realOf = (p) => {
 };
 
 // --from paths: a .md file, or a folder whose .md files are taken non-recursively, sorted by name. A folder leaves
-// out `target` (the apply target); an explicit file that is the target is refused. A file whose frontmatter has an
-// id and a non-empty sources list is an archive-format entry: validated like the archive and returned with `entry`;
-// one whose frontmatter has a top-level id: or sources: line but does not parse, or has no sources list, is refused.
-// Base names must be unique and free of the marker's separators (`,`, `;`, `-->`).
+// out `target` (the apply target); an explicit file that is the target is refused. A file whose frontmatter has a
+// top-level sources: key is an archive-format entry: it must parse, have a non-empty sources list and an id, and is
+// validated like the archive and returned with `entry`. Each file once; base names unique (ignoring case) and free
+// of the marker's separators (`,`, `;`, `-->`).
 export function readImports(paths, target = null) {
   const self = target && realOf(target);
   const out = [];
@@ -274,27 +290,34 @@ export function readImports(paths, target = null) {
       const name = path.basename(f);
       if (/,|;|-->/.test(name)) throw new Error(`--from ${p}: ${name}: a file name with ",", ";" or "-->" cannot be recorded in the marker; rename it`);
       const text = readText(f);
-      const block = leadingFrontmatter(text)?.block;
-      let fm = null;
-      if (block && /^(id|sources):/m.test(block)) {
+      const lead = leadingFrontmatter(text);
+      // A top-level sources: key marks an archive-format entry; id:/title: alone (Docusaurus and the like) is plain.
+      if (lead && /^sources:/m.test(lead.block)) {
+        let fm;
         try {
-          fm = parse(text);
+          fm = parse(withoutComments(text, lead));
         } catch (e) {
           throw new Error(`--from ${p}: ${name}: ${e.message}`);
         }
         if (!Array.isArray(fm.data.sources) || !fm.data.sources.length) throw new Error(`--from ${p}: ${name}: sources must be a non-empty list`);
-      }
-      if (fm?.data.id) {
+        if (!fm.data.id) throw new Error(`--from ${p}: ${name}: an archive-format entry needs an id`);
         const problems = validateEntry(name, fm.data, fm.body);
         if (problems.length) throw new Error(`--from ${p}: ${name} is an archive-format entry with problems: ${problems.join('; ')}`);
         out.push({ name, file: f, text, entry: { ...fm.data, sources: fm.data.sources.map(String), body: fm.body } });
       } else out.push({ name, file: f, text });
     }
   }
-  const seen = new Map();
+  // One file reached twice (repeated, a folder plus its own file, or another case on Windows) is named as such;
+  // distinct files may still not share a base name, in any case.
+  const real = new Set();
+  const byName = new Map();
   for (const i of out) {
-    if (seen.has(i.name)) throw new Error(`--from: two imports named ${i.name} (${seen.get(i.name)} and ${i.file}); the marker records imports by file name`);
-    seen.set(i.name, i.file);
+    const r = realOf(i.file);
+    if (real.has(r)) throw new Error(`--from: passed twice: ${r}`);
+    real.add(r);
+    const key = i.name.toLowerCase();
+    if (byName.has(key)) throw new Error(`--from: two imports named ${i.name} (${byName.get(key)} and ${i.file}); the marker records imports by file name`);
+    byName.set(key, i.file);
   }
   return out;
 }

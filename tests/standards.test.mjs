@@ -519,10 +519,11 @@ test('standards apply --from: a leading horizontal rule is not frontmatter; the 
   assert.equal(stripFrontmatter('---\n\n# T\n\n---\n\nx\n'), '---\n\n# T\n\n---\n\nx\n');
 });
 
-test('standards apply --from: frontmatter with id: or sources: that does not parse, or has no sources list, exits 1', async () => {
+test('standards apply --from: sources: frontmatter that does not parse, has no sources list or no id exits 1', async () => {
   const cases = [
-    ['comment.md', '---\nid: comment\n# a comment\nsources:\n  - https://x\n---\n\n# C\n', /--from \S+: comment\.md: frontmatter: cannot parse line: # a comment/],
+    ['toplist.md', '---\nid: toplist\nsources:\n- https://x\n---\n\n# T\n', /--from \S+: toplist\.md: frontmatter: cannot parse line: - https:\/\/x/],
     ['scalar.md', '---\nid: scalar\nsources: https://x\n---\n\n# S\n', /--from \S+: scalar\.md: sources must be a non-empty list/],
+    ['noid.md', '---\nsources:\n  - https://x\n---\n\n# N\n', /--from \S+: noid\.md: an archive-format entry needs an id/],
   ];
   for (const [name, text, re] of cases) {
     const src = tree({ [name]: text });
@@ -545,12 +546,59 @@ test('standards apply --from: two imports with one file name, or a name with a m
   const fileAndFolder = await run(['standards', 'apply', '--repo', dir, '--from', path.join(src, 'x', 'style.md'), '--from', path.join(src, 'y'), '--apply']);
   assert.equal(fileAndFolder.code, 1);
   assert.match(fileAndFolder.err, /two imports named style\.md/);
+  fs.renameSync(path.join(src, 'y', 'style.md'), path.join(src, 'y', 'Style.md'));
+  const caseOnly = await run(['standards', 'apply', '--repo', dir, '--from', path.join(src, 'x'), '--from', path.join(src, 'y'), '--apply']);
+  assert.equal(caseOnly.code, 1);
+  assert.match(caseOnly.err, /two imports named Style\.md/);
+  const twice = await run(['standards', 'apply', '--repo', dir, '--from', path.join(src, 'x', 'style.md'), '--from', path.join(src, 'x'), '--apply']);
+  assert.equal(twice.code, 1);
+  assert.match(twice.err, /--from: passed twice: \S*x[\\/]style\.md/);
   for (const name of odd) {
     const r = await run(['standards', 'apply', '--repo', dir, '--from', path.join(src, name), '--apply']);
     assert.equal(r.code, 1, name);
     assert.ok(r.err.includes(`${name}: a file name with ",", ";" or "-->" cannot be recorded in the marker`), r.err);
   }
   assert.deepEqual(fs.readdirSync(dir), []);
+});
+
+test('standards apply --from: comment-first and blank-first YAML is stripped; id-only frontmatter is a plain import', async () => {
+  const src = tree({
+    'yaml.md': '---\n# yaml-language-server: $schema=x.json\ntitle: Rules\n---\n\n# Rules\n\n- One.\n',
+    'blank.md': '---\n\ntitle: Blank\n---\n\n# B\n',
+    'intro.md': '---\nid: intro\ntitle: Intro\n---\n\n# Intro\n',
+  });
+  const dir = tempDir('fmshapes');
+  const r = await run(['standards', 'apply', '--repo', dir, '--from', src, '--apply']);
+  assert.equal(r.code, 0, r.err);
+  assert.doesNotMatch(r.out, /archive format/);
+  const text = read(path.join(dir, 'STANDARDS.md'));
+  assert.match(text, /## Imported: yaml\.md\n\n## Rules\n\n- One\./);
+  assert.match(text, /## Imported: blank\.md\n\n## B\n/);
+  assert.match(text, /## Imported: intro\.md\n\n## Intro\n/);
+  assert.doesNotMatch(text, /yaml-language-server|title: |id: intro/);
+  // A heading over a list, even with a key line after it, is a horizontal-rule pair; so is a heading alone.
+  for (const t of ['---\n# Rules\n- Use tabs.\nScope: all files\n---\nbody', '---\n# Title\n---\nbody', '---\nnested:\n  a: 1\n- x\n---\nbody']) assert.equal(stripFrontmatter(t), t, t);
+});
+
+test('standards apply --from: a comment-first archive-format entry is validated and rendered like a stack', async () => {
+  const src = tempDir('cfentry');
+  fs.writeFileSync(path.join(src, 'kotlin.md'), ENTRY().replace('---\n', '---\n# schema: x.json\n'));
+  const dir = tempDir('cfapply');
+  const r = await run(['standards', 'apply', '--repo', dir, '--from', path.join(src, 'kotlin.md'), '--apply']);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Imported: kotlin\.md \(archive format: kotlin\)/);
+  assert.match(read(path.join(dir, 'STANDARDS.md')), /^- Kotlin \(imported: kotlin\.md\)$/m);
+  fs.writeFileSync(path.join(src, 'kotlin.md'), ENTRY().replace('---\n', '---\n# schema: x.json\n').replace('camelCase [1]', 'camelCase [2]'));
+  const bad = await run(['standards', 'apply', '--repo', tempDir('cfbad'), '--from', path.join(src, 'kotlin.md'), '--apply']);
+  assert.equal(bad.code, 1);
+  assert.match(bad.err, /kotlin\.md is an archive-format entry with problems: citation\(s\) \[2\] out of range/);
+});
+
+test('standards apply --from: one file named in two cases is passed twice', { skip: caseInsensitive ? false : 'case-sensitive file system' }, async () => {
+  const src = tree({ 'Style.md': '# S\n' });
+  const r = await run(['standards', 'apply', '--repo', tempDir('casetwice'), '--from', path.join(src, 'Style.md'), '--from', path.join(src, 'style.md'), '--apply']);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /--from: passed twice: \S*[\\/]Style\.md/);
 });
 
 test('help: --repo is listed only for commands that read the checkout', async () => {

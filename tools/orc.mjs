@@ -886,7 +886,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     } catch (e) {
       return fail(e.message.startsWith('metrics:') ? e.message : `metrics: ${e.message}`);
     }
-    return fail('usage: metrics capture --workflow <name> [--session <id> | --transcript <path>] [--log <run log>] [--mode lite|full] [--version <v>] [--out <dir>] [--print] | metrics report [--dir <dir>] [--prices <file>] [--out <file>]');
+    return fail('usage: metrics capture --workflow <name> [--session <id> | --transcript <path>] [--log <run log>] [--mode lite|full] [--version <v>] [--out <dir>] [--print] | metrics report [--dir <dir>] [--prices <file>] [--out <file>] [--force]');
   }
 
   if (cmd === 'dispatch') {
