@@ -83,6 +83,7 @@ Spec → builder → refuter → orchestrator reads the diff.
 - A tool that writes file paths into a report others may read keeps them repo-relative, or redacts them, when its output goes outside the repo.
 - Live-test new or changed agent definitions from a fresh session whose project has no agents of the same names: a project's own agents shadow user-level ones.
 - A spec that writes through a shared save function reads what that function rewrites (whole-file normalising, assigned IDs, backups) before dispatch, and says what must stay untouched. A one-cell refresh would have added columns and overwritten the file's only backup; the refuter caught it, not the spec.
+- **Repo standards:** a repo's coding standards are `STANDARDS.md` at its root. Before the first build in a repo without one, run the standards setup (`orchestration/standards.md` in the setup checkout): detect the stacks, ask the user which to adopt in one several-picks question, then apply. Builder briefs name it under Known; refuters use its Review checklists.
 
 ## Pre-PR review tiers
 - **Light**, when all three hold: (1) diff is tests/docs only (attribute-only hook edits count); (2) refuter ACCEPT after mutation checks; (3) refuter's brief used the repo's test conventions as its checklist. Run only a docs/comment review, plus your own full diff read.

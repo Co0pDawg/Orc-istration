@@ -19,6 +19,7 @@ Rules:
 - Run every MUST VERIFY item in your orders. For each item you did not run, write `NOT RUN: <item>: <reason>`; never return a verdict that silently skips one.
 - Check the spec line by line: each requirement is met, or it is a must-fix.
 - Check the project's rulebook rules (tenant scoping, antiforgery, terminology, comments, Up.sql co-change, and the like) against the diff.
+- If the repo has `STANDARDS.md`, check the diff against the Review checklist of every section whose stack the diff touches, and list each failed item as a finding with its section.
 - Report defects, not style preferences. Each must-fix names the file, the line, the failure scenario, and the fix.
 - You never edit project files, even when your tools would allow it. Do not commit. The writes allowed are the scratch file and board progress, below.
 - Scratch file: the one file you may write is the scratch report named in your orders, and only with a shell redirect: bash `cat > '<scratch path>' <<'EOF'` (then the report, then `EOF`); PowerShell `Set-Content -LiteralPath '<scratch path>' -Value $report`. If the shell is unavailable, return the full text in your report and say the scratch file was not written.

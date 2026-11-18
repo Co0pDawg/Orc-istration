@@ -17,6 +17,7 @@ Edit the sources. Never hand-edit a generated file; regenerate it.
 | `adapters/<tool>.mjs` + `adapters/<tool>.notes.md` | One adapter per tool, and its tool notes |
 | `models.json` | Tier to model, per tool |
 | `profiles/*.md` | Optional rulebook additions |
+| `standards/*.md` | The coding-standards archive, one file per stack (format in `standards/README.md`) |
 
 | Generated (do not edit) | Written by |
 |---|---|
@@ -42,10 +43,21 @@ node tools/orc.mjs check     # watch the antigravity headroom line
 ## Traps
 
 - **The allow-list `.gitignore`.** `/*` ignores everything, then `!/` lines re-include named paths. A new top-level file is silently untracked until it gets a `!/` line. Check with `git check-ignore <path>`: no output means it can be tracked. (`git check-ignore -v` also prints the `!/` rule that re-includes a file, so output there does not mean ignored.)
-- **Review tier.** Editing `AGENTS.md`, `roles/`, `adapters/*.notes.md` or `profiles/` (or the generated `CLAUDE.md` and `agents/`) makes `node tools/orc.mjs review-tier` say `Full`: prompts count as product, not docs.
+- **Review tier.** Editing `AGENTS.md`, `roles/`, `adapters/*.notes.md`, `profiles/`, `standards/` or `orchestration/standards.md` (or the generated `CLAUDE.md` and `agents/`) makes `node tools/orc.mjs review-tier` say `Full`: prompts count as product, not docs.
 - **The board is another repo.** The board page code in `orchestration/board` is its own repo (Co0pDawg/Orc-Dashboard), not part of this one.
 - **`tools/worklog`** is a Windows-only example with its own `tools/worklog/test.ps1`. Its tests assert US Eastern local times, so CI sets the runner to Eastern time first.
 - **`models.local.json`** is untracked. `check` validates it, but builds and compares from `models.json` only; `sync` and `golden` read `models.json` only. `build`, `install`, `status` and `dispatch` use it.
+
+## Adding or refreshing a standards entry
+
+The archive in `standards/` feeds `orc standards apply`, which composes a project's `STANDARDS.md`.
+
+- Follow the format in `standards/README.md`: the frontmatter fields, the section order, and a `## Review checklist` with `- [ ]` items.
+- Cite primary sources only (language or vendor docs, official style guides, the linter's own docs). End every rule with `[n]`, the n-th URL in `sources`.
+- Paraphrase: write every rule in your own words and never copy sentences from a source.
+- No company, project or ticket names: the archive is public. A team's own rules go into its project through `apply --from`.
+- When refreshing an entry, recheck its sources and update `reviewed`.
+- Run `node tools/orc.mjs check`: it validates every entry (id matches the file name, kind, detect, requires, the reviewed date, citation range and the checklist). Then try `node tools/orc.mjs standards apply --repo <temp dir> --stack <id>`.
 
 ## Development clone vs the live setup
 
@@ -59,11 +71,12 @@ The repo is designed to be checked out as `~/.claude`, but you can develop in a 
 ## Where things are
 
 - `tools/orc.mjs`: the CLI. Loads roles, models and adapters, builds each tool (`buildTool`), and dispatches the commands.
-- `tools/lib/`: `frontmatter.mjs` (frontmatter, generated marker), `roles.mjs` (role parsing), `models.mjs` (models validation), `toml.mjs` (Codex TOML), `manifest.mjs` (install manifest, path safety), `text.mjs` (the one text reader), `help.mjs` (the help table), `brief.mjs`, `reviewtier.mjs`, `costlog.mjs`, `dispatch.mjs`, `hooks.mjs` (the method-tooling commands).
+- `tools/lib/`: `frontmatter.mjs` (frontmatter, generated marker), `roles.mjs` (role parsing), `models.mjs` (models validation), `toml.mjs` (Codex TOML), `manifest.mjs` (install manifest, path safety), `text.mjs` (the one text reader), `help.mjs` (the help table), `brief.mjs`, `reviewtier.mjs`, `costlog.mjs`, `dispatch.mjs`, `hooks.mjs` (the method-tooling commands), `standards.mjs` (the standards archive, detect and apply).
 - `tests/orc.test.mjs`: goldens, roles, frontmatter, caps, `check`, `install`, rulebook hygiene.
 - `tests/hardening.test.mjs`: option parsing, refusals, stale agents, YAML quoting, running through a junction, BOM and UTF-16 input, first differing line.
 - `tests/manifest.test.mjs`: install manifest, re-install, `uninstall`, `status`, symlink and junction refusals.
 - `tests/tooling.test.mjs`: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks`, the board reminder, models validation, `golden`, `help`, the generated marker.
+- `tests/standards.test.mjs`: `standards list`, `show`, `detect` and `apply`, and the archive validation in `check`.
 
 ## Pull requests
 
