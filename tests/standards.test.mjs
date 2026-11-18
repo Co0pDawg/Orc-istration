@@ -252,7 +252,7 @@ test('check validates the archive: a bad citation index and a missing checklist 
 // ---------- review-tier and help ----------
 
 test('review-tier: the archive and the setup procedure are prompts (Full)', () => {
-  for (const p of ['standards/go.md', 'standards/README.md', 'orchestration/standards.md', 'skills/repo-standards/SKILL.md']) assert.equal(classify([p]).tier, 'Full', p);
+  for (const p of ['standards/go.md', 'standards/README.md', 'orchestration/standards.md', 'orchestration/sprint.md', 'skills/repo-standards/SKILL.md']) assert.equal(classify([p]).tier, 'Full', p);
   assert.equal(classify(['docs/standards.md']).tier, 'Light-eligible');
 });
 
@@ -301,7 +301,7 @@ test('standards apply: --out below an existing file, or inside .git, fails clean
 
 test('install ends with the standards-setup pointer, dry run and --apply', async () => {
   const home = tempDir('next');
-  const line = `set up each project's coding standards: see ${fs.realpathSync.native(REPO).replace(/\\/g, '/')}/orchestration/standards.md (Claude Code: the repo-standards skill).`;
+  const line = `set up each project's coding standards: see ${fs.realpathSync.native(REPO).replace(/\\/g, '/')}/orchestration/standards.md (Claude Code: the repo-standards skill, where ~/.claude/skills has it).`;
   const dry = await run(['install', '--tool', 'antigravity', '--home', home]);
   assert.equal(dry.out.split('\n').at(-1), `After --apply, next: ${line}`);
   const done = await run(['install', '--tool', 'antigravity', '--home', home, '--apply']);
@@ -470,7 +470,7 @@ test('standards apply --from: an archive-format entry is validated and rendered 
 test('install writes the Setup checkout line, status matches it, build and golden never carry it (B)', async () => {
   const home = tempDir('setup');
   const setup = fs.realpathSync.native(REPO).replace(/\\/g, '/');
-  const line = `- Setup checkout (this machine): ${setup}. Standards setup: node ${setup}/tools/orc.mjs standards ...; procedure: ${setup}/orchestration/standards.md.`;
+  const line = `- Setup checkout (this machine): ${setup}. Standards setup: node "${setup}/tools/orc.mjs" standards ...; procedure: ${setup}/orchestration/standards.md.`;
   assert.equal((await run(['install', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
   assert.ok(read(path.join(home, '.gemini', 'AGENTS.md')).split('\n').includes(line));
   const st = await run(['status', '--tool', 'antigravity', '--home', home]);
@@ -505,4 +505,61 @@ test('install and status through a checkout path in another case agree: all same
   const st = spawnSync(process.execPath, [ORC, 'status', '--tool', 'antigravity', '--home', home], { encoding: 'utf8' });
   assert.equal(st.status, 0, st.stdout);
   assert.match(st.stdout, /status antigravity: all same/);
+});
+
+// ---------- PR #11 review fixes ----------
+
+test('standards apply --from: a leading horizontal rule is not frontmatter; the rules after it survive', async () => {
+  const src = tree({ 'rules.md': '---\n\n# Team rules\n\n- Use tabs.\n\n---\n\n## Testing\n\n- Write tests.\n' });
+  const dir = tempDir('hr');
+  const r = await run(['standards', 'apply', '--repo', dir, '--from', path.join(src, 'rules.md'), '--apply']);
+  assert.equal(r.code, 0, r.err);
+  const text = read(path.join(dir, 'STANDARDS.md'));
+  assert.match(text, /## Imported: rules\.md\n\n---\n\n## Team rules\n\n- Use tabs\.\n\n---\n\n### Testing\n\n- Write tests\.\n$/);
+  assert.equal(stripFrontmatter('---\n\n# T\n\n---\n\nx\n'), '---\n\n# T\n\n---\n\nx\n');
+});
+
+test('standards apply --from: frontmatter with id: or sources: that does not parse, or has no sources list, exits 1', async () => {
+  const cases = [
+    ['comment.md', '---\nid: comment\n# a comment\nsources:\n  - https://x\n---\n\n# C\n', /--from \S+: comment\.md: frontmatter: cannot parse line: # a comment/],
+    ['scalar.md', '---\nid: scalar\nsources: https://x\n---\n\n# S\n', /--from \S+: scalar\.md: sources must be a non-empty list/],
+  ];
+  for (const [name, text, re] of cases) {
+    const src = tree({ [name]: text });
+    const dir = tempDir('badfm');
+    const r = await run(['standards', 'apply', '--repo', dir, '--from', path.join(src, name), '--apply']);
+    assert.equal(r.code, 1, name);
+    assert.match(r.err, re, name);
+    assert.deepEqual(fs.readdirSync(dir), [], name);
+  }
+});
+
+test('standards apply --from: two imports with one file name, or a name with a marker separator, exit 1 naming the files', async () => {
+  // Windows file names cannot hold ">", so "-->" is checked only off Windows.
+  const odd = ['a,b.md', 'c;d.md', ...(process.platform === 'win32' ? [] : ['e-->f.md'])];
+  const src = tree({ 'x/style.md': '# X\n', 'y/style.md': '# Y\n', ...Object.fromEntries(odd.map((n) => [n, '# Odd\n'])) });
+  const dir = tempDir('dupe');
+  const twoFolders = await run(['standards', 'apply', '--repo', dir, '--from', path.join(src, 'x'), '--from', path.join(src, 'y'), '--apply']);
+  assert.equal(twoFolders.code, 1);
+  assert.match(twoFolders.err, /two imports named style\.md \([^()]*x[\\/]style\.md and [^()]*y[\\/]style\.md\)/);
+  const fileAndFolder = await run(['standards', 'apply', '--repo', dir, '--from', path.join(src, 'x', 'style.md'), '--from', path.join(src, 'y'), '--apply']);
+  assert.equal(fileAndFolder.code, 1);
+  assert.match(fileAndFolder.err, /two imports named style\.md/);
+  for (const name of odd) {
+    const r = await run(['standards', 'apply', '--repo', dir, '--from', path.join(src, name), '--apply']);
+    assert.equal(r.code, 1, name);
+    assert.ok(r.err.includes(`${name}: a file name with ",", ";" or "-->" cannot be recorded in the marker`), r.err);
+  }
+  assert.deepEqual(fs.readdirSync(dir), []);
+});
+
+test('help: --repo is listed only for commands that read the checkout', async () => {
+  const reads = ['build', 'check', 'sync', 'golden', 'install', 'uninstall', 'status', 'brief', 'dispatch', 'hooks'];
+  const ignores = ['models', 'review-tier', 'costlog', 'calibration', 'metrics', 'help'];
+  for (const c of reads) assert.match((await run(['help', c])).out, /--repo <dir> +the Orc-istration checkout to read/, c);
+  for (const c of ignores) assert.doesNotMatch((await run(['help', c])).out, /--repo </, c);
+  const global = (await run(['help'])).out;
+  assert.doesNotMatch(global, /Every command takes --repo/);
+  assert.match(global, /Commands that read this checkout take --repo <dir>/);
+  for (const c of ['calibration', 'metrics']) assert.match((await run(['help', c])).out, /--force +(report: )?overwrite an existing --out file/, c);
 });

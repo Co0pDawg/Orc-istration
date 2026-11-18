@@ -228,6 +228,7 @@ test('no tracked text file holds a denylisted name or term', () => {
     new RegExp(['cos', 'airus'].join(''), 'i'),
     new RegExp(['kms', 'db', 'tool'].join(''), 'i'),
     new RegExp(['ela', 'von'].join(''), 'i'),
+    new RegExp(['head', 'hunter'].join(''), 'i'),
     new RegExp(`\\b(${['PE', 'T'].join('')}|${['KM', 'S'].join('')})-\\d+`, 'i'),
     // Surnames as whole words, case-sensitive; "wall clock" is ordinary English.
     new RegExp(`\\b${['Wa', 'll'].join('')}\\b(?!\\s+clock)`),
@@ -280,9 +281,13 @@ test('claude-code review commands: thin wrappers, no machine path, panel files p
   for (const f of cmds) {
     const { data, body } = parse(f.content);
     assert.deepEqual(Object.keys(data), ['description', 'argument-hint', 'allowed-tools'], f.path);
-    assert.match(body, /`ORC_HOME`.*otherwise `~\/\.claude`/, f.path);
+    assert.match(body, /`ORC_HOME`.*, else the "Setup checkout \(this machine\)" line in the rulebook's tool notes, else `~\/\.claude`/, f.path);
     assert.match(body, /`CHECKOUT\/review\/(PROCEDURE|calibration)\.md`/, f.path);
     assert.doesNotMatch(f.content, /[A-Za-z]:[\\/]|\/Users\/|\/home\//, `${f.path} names no machine path`);
+  }
+  // The hand-written commands find the checkout in the same order.
+  for (const n of ['create', 'draft-pr', 'fix-ci', 'grill', 'peer-review', 'start']) {
+    assert.match(read(path.join(REPO, 'commands', `${n}.md`)), /`ORC_HOME`.*, else the "Setup checkout \(this machine\)" line in the rulebook's tool notes, else `~\/\.claude`/, n);
   }
   for (const f of ['PROCEDURE.md', 'contract.md', 'shared-rules.md', 'selection.md']) assert.ok(fs.existsSync(path.join(REPO, 'review', f)), f);
   const lanes = ['architecture-reviewer', 'code-reviewer', 'code-simplifier', 'comment-analyzer', 'pr-test-analyzer', 'secondary-artifacts', 'silent-failure-hunter', 'ticket-coverage', 'type-design-analyzer', 'ui-test-reviewer'];

@@ -1,8 +1,6 @@
 #!/usr/bin/env node
 // Orchestration generator and installer. Node 22+, standard library only.
-// build | check | sync | golden | install | uninstall | status | models | brief | review-tier | costlog | calibration
-// | metrics | dispatch | hooks | standards | help (see docs/cli.md, or node tools/orc.mjs help; calibration and
-// metrics: review/calibration.md, review/metrics.md)
+// Commands: the HELP table in tools/lib/help.mjs (node tools/orc.mjs help); reference: docs/cli.md.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -26,10 +24,10 @@ const DEFAULT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 // The checkout running orc.mjs, with forward slashes. The last line of every install points at the standards setup.
 // The real (on-disk) case, so every shell that starts node writes and compares the same line.
 const SETUP = fs.realpathSync.native(DEFAULT_REPO).replace(/\\/g, '/');
-const STANDARDS_NEXT = `set up each project's coding standards: see ${SETUP}/orchestration/standards.md (Claude Code: the repo-standards skill).`;
+const STANDARDS_NEXT = `set up each project's coding standards: see ${SETUP}/orchestration/standards.md (Claude Code: the repo-standards skill, where ~/.claude/skills has it).`;
 
 // The Setup checkout line install adds (status adds it too): the checkout running orc.mjs, never recorded in the manifest.
-const setupNotes = () => [`- Setup checkout (this machine): ${SETUP}. Standards setup: node ${SETUP}/tools/orc.mjs standards ...; procedure: ${SETUP}/orchestration/standards.md.`];
+const setupNotes = () => [`- Setup checkout (this machine): ${SETUP}. Standards setup: node "${SETUP}/tools/orc.mjs" standards ...; procedure: ${SETUP}/orchestration/standards.md.`];
 
 // Text from a file or stdin goes through the one shared reader (tools/lib/text.mjs).
 export { decodeText };
@@ -220,6 +218,7 @@ function walkFiles(dir) {
 // What to edit for a checked-in generated file.
 function sourceOf(rel) {
   if (rel === 'CLAUDE.md') return { src: 'AGENTS.md / adapters/claude-code.notes.md / adapters/claude-code.mjs', those: true };
+  if (/^commands\/.+\.md$/.test(rel)) return { src: 'adapters/claude-code.mjs', those: false };
   const m = /^agents\/(.+)\.md$/.exec(rel);
   return m ? { src: `roles/${m[1]}.md`, those: false } : null;
 }

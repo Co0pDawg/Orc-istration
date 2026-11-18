@@ -1,7 +1,9 @@
 // The one help table for tools/orc.mjs: every command, its synopsis and its options, one line each.
 // tests/tooling.test.mjs checks that this table and the command dispatch name the same commands.
+// `repo: true` marks a command that reads this checkout through --repo; its help shows that option.
 export const HELP = {
   build: {
+    repo: true,
     summary: 'Write every tool\'s generated files to dist/<tool>/ (untracked) and print sizes and gaps',
     synopsis: 'build [--tool <id>|all] [--out <dir>] [--profile <name>]',
     options: {
@@ -11,21 +13,25 @@ export const HELP = {
     },
   },
   check: {
-    summary: 'Build every tool, check the caps and models.json, and compare CLAUDE.md and agents/*.md with the build',
+    repo: true,
+    summary: 'Build every tool, check the caps and models.json, and compare CLAUDE.md, agents/*.md and the generated commands/*.md with the build',
     synopsis: 'check',
     options: {},
   },
   sync: {
-    summary: 'Regenerate the checked-in CLAUDE.md and agents/*.md; delete generated agents with no role',
+    repo: true,
+    summary: 'Regenerate the checked-in CLAUDE.md, agents/*.md and the generated commands/*.md; delete generated agents with no role',
     synopsis: 'sync',
     options: {},
   },
   golden: {
+    repo: true,
     summary: 'Regenerate tests/golden/<tool>/ from the build the golden test compares against',
     synopsis: 'golden [--tool <id>|all]',
     options: { '--tool <id>|all': 'one adapter, or all (default all)' },
   },
   install: {
+    repo: true,
     summary: 'Install one tool\'s generated files into a home folder (dry run without --apply); the rulebook names this checkout as the setup checkout',
     synopsis: 'install --tool <id> [--home <dir>] [--apply] [--force] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board]',
     options: {
@@ -41,6 +47,7 @@ export const HELP = {
     },
   },
   uninstall: {
+    repo: true,
     summary: 'Delete the files an install recorded in its manifest (dry run without --apply)',
     synopsis: 'uninstall --tool <id> [--home <dir>] [--apply] [--force]',
     options: {
@@ -51,6 +58,7 @@ export const HELP = {
     },
   },
   status: {
+    repo: true,
     summary: 'Compare an installed copy with what would be generated now, without writing',
     synopsis: 'status --tool <id> [--home <dir>] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board]',
     options: {
@@ -72,6 +80,7 @@ export const HELP = {
     },
   },
   brief: {
+    repo: true,
     summary: 'Print the marching-orders template, or lint a brief against it',
     synopsis: 'brief new [--role <name>] [--out <file>] [--force] | brief lint <file> [--role <name>]',
     options: {
@@ -102,16 +111,17 @@ export const HELP = {
   },
   calibration: {
     summary: 'Per-lane precision of the review panel from its run logs (review/calibration.md)',
-    synopsis: 'calibration [--logs <dir>] [--min-precision <0..1>] [--out <file>]',
+    synopsis: 'calibration [--logs <dir>] [--min-precision <0..1>] [--out <file>] [--force]',
     options: {
       '--logs <dir>': 'the run logs (default <repo top>/.orc/reviews)',
       '--min-precision <0..1>': 'flag lanes below this precision',
       '--out <file>': 'write the report to a file instead of printing it',
+      '--force': 'overwrite an existing --out file',
     },
   },
   metrics: {
     summary: 'Capture or report per-run review metrics from Claude Code transcripts (review/metrics.md)',
-    synopsis: 'metrics capture --workflow <name> [--session <id> | --transcript <path>] [--log <run log>] [--mode lite|full] [--version <v>] [--out <dir>] [--print] | metrics report [--dir <dir>] [--prices <file>] [--out <file>]',
+    synopsis: 'metrics capture --workflow <name> [--session <id> | --transcript <path>] [--log <run log>] [--mode lite|full] [--version <v>] [--out <dir>] [--print] | metrics report [--dir <dir>] [--prices <file>] [--out <file>] [--force]',
     options: {
       '--workflow <name>': 'capture: the workflow that ran (required)',
       '--session <id>': 'capture: the session (default CLAUDE_CODE_SESSION_ID)',
@@ -123,9 +133,11 @@ export const HELP = {
       '--print': 'capture: print the JSON instead of writing it',
       '--dir <dir>': 'report: the metrics folder (default <repo top>/.orc/metrics)',
       '--prices <file>': 'report: a prices JSON file',
+      '--force': 'report: overwrite an existing --out file',
     },
   },
   dispatch: {
+    repo: true,
     summary: 'Run one role headlessly at its tier (Antigravity and Claude Code)',
     synopsis: 'dispatch --tool <id> --role <name> --brief <file> [--dry-run] [--timeout <seconds>] [--no-lint]',
     options: {
@@ -138,6 +150,7 @@ export const HELP = {
     },
   },
   hooks: {
+    repo: true,
     summary: 'Merge the example hooks into <home>/.claude/settings.json (dry run without --apply)',
     synopsis: 'hooks --home <dir> [--apply] [--node]',
     options: {
@@ -171,7 +184,7 @@ export const USAGE = `usage: node tools/orc.mjs ${Object.keys(HELP).join('|')} [
 export function globalHelp() {
   const width = Math.max(...Object.keys(HELP).map((c) => c.length));
   const lines = Object.entries(HELP).map(([c, h]) => `  ${c.padEnd(width)}  ${h.summary}`);
-  return [USAGE, '', 'Commands:', ...lines, '', 'Every command takes --repo <dir> (default: this checkout); for standards it names the project instead.', 'node tools/orc.mjs help <command> lists its options. Reference: docs/cli.md'].join('\n');
+  return [USAGE, '', 'Commands:', ...lines, '', 'Commands that read this checkout take --repo <dir> (default: this one; help <command> says which); for standards it names the project instead.', 'node tools/orc.mjs help <command> lists its options. Reference: docs/cli.md'].join('\n');
 }
 
 export function commandHelp(cmd) {
@@ -181,6 +194,6 @@ export function commandHelp(cmd) {
   const width = Math.max(0, ...opts.map(([o]) => o.length));
   const lines = [`usage: node tools/orc.mjs ${h.synopsis}`, '', h.summary];
   if (opts.length) lines.push('', 'Options:', ...opts.map(([o, d]) => `  ${o.padEnd(width)}  ${d}`));
-  if (!h.options['--repo <dir>']) lines.push('', '  --repo <dir>  the Orc-istration checkout to read (default: this one)');
+  if (h.repo) lines.push('', '  --repo <dir>  the Orc-istration checkout to read (default: this one)');
   return lines.join('\n');
 }

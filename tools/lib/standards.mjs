@@ -40,9 +40,17 @@ function outsideFences(text, fn) {
 
 export const demoteHeadings = (text) => outsideFences(text, (l) => (/^#{1,5}(\s|$)/.test(l) ? `#${l}` : l));
 
+// The leading frontmatter as {block, length}, or null. A leading `---` whose first non-blank line is not a `key:` is
+// a Markdown horizontal rule, not frontmatter.
+function leadingFrontmatter(text) {
+  const m = /^---\n([\s\S]*?)\n---(\n|$)/.exec(text);
+  const first = m?.[1].split('\n').find((l) => l.trim() !== '');
+  return first !== undefined && /^[A-Za-z_][\w-]*:/.test(first) ? { block: m[1], length: m[0].length } : null;
+}
+
 export function stripFrontmatter(text) {
-  const m = /^---\n[\s\S]*?\n---(\n|$)/.exec(text);
-  return m ? text.slice(m[0].length).replace(/^\n+/, '') : text;
+  const fm = leadingFrontmatter(text);
+  return fm ? text.slice(fm.length).replace(/^\n+/, '') : text;
 }
 
 // [n] citations in prose: fenced code and inline code spans are skipped.
@@ -242,7 +250,9 @@ const realOf = (p) => {
 
 // --from paths: a .md file, or a folder whose .md files are taken non-recursively, sorted by name. A folder leaves
 // out `target` (the apply target); an explicit file that is the target is refused. A file whose frontmatter has an
-// id and a non-empty sources list is an archive-format entry: validated like the archive and returned with `entry`.
+// id and a non-empty sources list is an archive-format entry: validated like the archive and returned with `entry`;
+// one whose frontmatter has a top-level id: or sources: line but does not parse, or has no sources list, is refused.
+// Base names must be unique and free of the marker's separators (`,`, `;`, `-->`).
 export function readImports(paths, target = null) {
   const self = target && realOf(target);
   const out = [];
@@ -262,19 +272,29 @@ export function readImports(paths, target = null) {
     for (const f of files) {
       if (!f.toLowerCase().endsWith('.md')) throw new Error(`--from ${p}: not a .md file`);
       const name = path.basename(f);
+      if (/,|;|-->/.test(name)) throw new Error(`--from ${p}: ${name}: a file name with ",", ";" or "-->" cannot be recorded in the marker; rename it`);
       const text = readText(f);
+      const block = leadingFrontmatter(text)?.block;
       let fm = null;
-      try {
-        fm = parse(text);
-      } catch {
-        // no frontmatter, or one the parser cannot read: a plain import
+      if (block && /^(id|sources):/m.test(block)) {
+        try {
+          fm = parse(text);
+        } catch (e) {
+          throw new Error(`--from ${p}: ${name}: ${e.message}`);
+        }
+        if (!Array.isArray(fm.data.sources) || !fm.data.sources.length) throw new Error(`--from ${p}: ${name}: sources must be a non-empty list`);
       }
-      if (fm?.data.id && Array.isArray(fm.data.sources) && fm.data.sources.length) {
+      if (fm?.data.id) {
         const problems = validateEntry(name, fm.data, fm.body);
         if (problems.length) throw new Error(`--from ${p}: ${name} is an archive-format entry with problems: ${problems.join('; ')}`);
-        out.push({ name, text, entry: { ...fm.data, sources: fm.data.sources.map(String), body: fm.body } });
-      } else out.push({ name, text });
+        out.push({ name, file: f, text, entry: { ...fm.data, sources: fm.data.sources.map(String), body: fm.body } });
+      } else out.push({ name, file: f, text });
     }
+  }
+  const seen = new Map();
+  for (const i of out) {
+    if (seen.has(i.name)) throw new Error(`--from: two imports named ${i.name} (${seen.get(i.name)} and ${i.file}); the marker records imports by file name`);
+    seen.set(i.name, i.file);
   }
   return out;
 }

@@ -964,6 +964,8 @@ test('check names the source to edit for CLAUDE.md and a missing agent', async (
   assert.equal(r.code, 1);
   assert.match(r.err, /CLAUDE\.md: differs from generated at line \d+ \(generated from AGENTS\.md \/ adapters\/claude-code\.notes\.md \/ adapters\/claude-code\.mjs; edit those, then run node tools\/orc\.mjs sync\)/);
   assert.match(r.err, /agents\/refuter\.md: missing \(generated from roles\/refuter\.md; run node tools\/orc\.mjs sync\)/);
+  // goldenRepo copies no commands/, so every generated command is missing and names its source.
+  assert.match(r.err, /commands\/pre-pr-review\.md: missing \(generated from adapters\/claude-code\.mjs; run node tools\/orc\.mjs sync\)/);
 });
 
 const canLink = (() => {
