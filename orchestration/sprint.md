@@ -44,7 +44,7 @@ Each of these is a standing rule that sprint mode turns off for this task only:
 - the live board (Start/During/Finish writes): skip it, or write one card at the end if the user wants a record; ignore board-reminder hook markers during the sprint;
 - the standards setup before the first build: use the language's common conventions and say so;
 - scouts and researchers: the orchestrator greps and reads docs inline;
-- the Light/Full pre-PR multi-agent review: replaced by the per-slice refuter and the orchestrator's diff read;
+- the Light/Full pre-PR review (the review panel, `review/PROCEDURE.md`): replaced by the per-slice refuter and the orchestrator's diff read; run `/pre-pr-review` after the clock if the work will ship;
 - the 2-round REWORK limit: it is 1;
 - the cost log before reporting done: write a short one afterwards, outside the clock, if wanted;
 - the durable-rules question and the handoff doc.
