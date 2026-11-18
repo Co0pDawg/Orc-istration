@@ -65,6 +65,8 @@ flowchart LR
 
 ![The board in its Sleek skin: a session with its activity log on the left and task cards showing stages and progress lines, using demo data](https://raw.githubusercontent.com/Co0pDawg/Orc-Dashboard/main/docs/screenshots/board-sleek.png)
 
+**Repo standards.** `orc standards` sets up a project's coding standards: `STANDARDS.md` at its root, which builders follow and refuters check diffs against, section by section. It detects the project's stacks and composes the file from a cited archive (`standards/`: ASP.NET Core, C#, Go, Java, Playwright, PowerShell, Python, React, Rust, SQL, TypeScript), from the team's own files (`--from`), or both. Before the first build in a repo without one, the orchestrator runs the setup in [`orchestration/standards.md`](orchestration/standards.md): it detects the stacks, then asks you in one several-picks question which to adopt and whether you have your own standards to import, then applies. A re-apply never overwrites a file the team has edited unless forced, and then keeps a backup. Claude Code gets the procedure as the `repo-standards` skill.
+
 **The cost log.** Every orchestrated task writes one record: a row per dispatch with agent, model, tokens, minutes, result and a value label (`earned`, `marginal` or `waste`). The format and the review questions are in [`orchestration/README.md`](orchestration/README.md).
 
 ## Evidence
@@ -98,6 +100,8 @@ node tools/orc.mjs sync      # regenerates CLAUDE.md and agents/*.md
 npm test                     # golden files, install tests, and check
 ```
 
+Then, in each project, set up its coding standards: the `repo-standards` skill ([`orchestration/standards.md`](orchestration/standards.md)).
+
 **Antigravity CLI.** From a clone of this repo:
 
 ```
@@ -107,7 +111,7 @@ node tools/orc.mjs install --tool antigravity --apply --board http://localhost:8
 agy models | node tools/orc.mjs models --tool antigravity --from-stdin
 ```
 
-Save the last command's output as `models.local.json`. The rest: [Install and Quick Start](https://github.com/Co0pDawg/Orc-istration/wiki/Install-And-Quick-Start).
+Save the last command's output as `models.local.json`. Then, in each project, run the standards setup in [`orchestration/standards.md`](orchestration/standards.md); `install` prints this pointer too. The rest: [Install and Quick Start](https://github.com/Co0pDawg/Orc-istration/wiki/Install-And-Quick-Start).
 
 ## Repository layout
 
@@ -119,11 +123,12 @@ Save the last command's output as `models.local.json`. The rest: [Install and Qu
 | `profiles/*.md` | Optional rulebook additions (`--profile <name>`); `dotnet-azure-devops` holds the long rulebook's stack rules and general lessons |
 | `models.json` | Tier to model, per tool; `models.local.json` (untracked) overrides |
 | `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
-| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks`; `help` |
+| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks`, `standards`; `help` |
 | `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them), install and check tests |
 | `CONTRIBUTING.md` | How to change this repo: sources vs generated files, the edit loop, traps |
 | `docs/cli.md` | The full command reference |
 | `orchestration/README.md` | Cost-log format and review questions |
+| `standards/`, `orchestration/standards.md`, `skills/repo-standards/` | The coding-standards archive (format in `standards/README.md`), the tool-neutral setup procedure, and its Claude Code skill |
 | `docs/` | Rulebook incident notes; outlines for unattended runs and project memory |
 | `settings.example.json` | Claude Code hooks, status line and plugins, with no permissions |
 | `hooks.node.example.json` | The board-reminder hooks on Node (`hooks --node`) |
@@ -163,6 +168,7 @@ Every command is `node tools/orc.mjs <command>`. Options: `node tools/orc.mjs he
 | `costlog` | Draft a cost log from the board |
 | `dispatch` | Run one role headlessly at its tier |
 | `hooks` | Merge the example hooks into `settings.json` (dry run without `--apply`) |
+| `standards` | List, show or detect archive coding standards, or compose a project's `STANDARDS.md` (dry run without `--apply`) |
 | `help` | List the commands, or one command's options |
 
 CI (`.github/workflows/test.yml`) runs `npm test` and `check` on Ubuntu and Windows, and the worklog self-test on Windows.

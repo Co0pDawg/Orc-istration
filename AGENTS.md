@@ -73,6 +73,7 @@ Spec → builder → refuter → orchestrator reads the diff.
 - Test-coverage specs put hook-only view edits (`data-testid`/`id`) in scope ("no product code" made a builder skip required hooks).
 - After fetching the base branch, check whether the referenced docs changed format.
 - Confirm every defect a builder reports by reading the code, and say how it was confirmed (reproduced live or by code read).
+- **Repo standards:** a repo's coding standards are `STANDARDS.md` at its root. Before the first build in a repo without one, run the standards setup (`orchestration/standards.md` in the setup checkout): detect the stacks, ask the user which to adopt in one several-picks question, then apply. Builder briefs name it under Known; refuters use its Review checklists.
 
 ## Pre-PR review tiers
 - **Light**, when all three hold: (1) diff is tests/docs only (attribute-only hook edits count); (2) refuter ACCEPT after mutation checks; (3) refuter's brief used the repo's test conventions as its checklist. Run only a docs/comment review, plus your own full diff read.

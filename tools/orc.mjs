@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Orchestration generator and installer. Node 22+, standard library only.
-// build | check | sync | golden | install | uninstall | status | models | brief | review-tier | costlog | dispatch | hooks | help
+// build | check | sync | golden | install | uninstall | status | models | brief | review-tier | costlog | dispatch | hooks | standards | help
 // (see docs/cli.md, or node tools/orc.mjs help)
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,8 +16,12 @@ import { dispatchPlan, runDispatch, formatCommand, argvProblem, binEnv } from '.
 import { mergeHooks, formatLike } from './lib/hooks.mjs';
 import { decodeText, readText } from './lib/text.mjs';
 import { USAGE, globalHelp, commandHelp } from './lib/help.mjs';
+import { validateArchive, runStandards } from './lib/standards.mjs';
 
 const DEFAULT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// The last line of every install: the per-project coding-standards setup comes next.
+const STANDARDS_NEXT = "set up each project's coding standards: see orchestration/standards.md in the setup checkout (Claude Code: the repo-standards skill).";
 
 // Text from a file or stdin goes through the one shared reader (tools/lib/text.mjs).
 export { decodeText };
@@ -248,12 +252,15 @@ function stamp(d = new Date()) {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout'];
+const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'stack', 'from'];
 
 // Value options that may repeat; each value may also be comma-separated.
-const LIST_OPTIONS = ['profile'];
+const LIST_OPTIONS = ['profile', 'stack'];
 
-const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board'];
+// Value options that may repeat but are never comma-split (paths).
+const REPEAT_OPTIONS = ['from'];
+
+const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'json'];
 
 // Accepts `--key value` and `--key=value`. An unknown option is an error, never a silent boolean: a mistyped
 // `--home=<dir>` once fell through to the real home directory.
@@ -274,7 +281,8 @@ export function args(argv) {
         const items = value.split(',').map((s) => s.trim());
         if (items.some((s) => s === '')) throw new Error(`--${key} needs a value`);
         out[key] = [...(out[key] ?? []), ...items];
-      } else out[key] = value;
+      } else if (REPEAT_OPTIONS.includes(key)) out[key] = [...(out[key] ?? []), value];
+      else out[key] = value;
     } else if (FLAG_OPTIONS.includes(key) && eq < 0) out[key] = true;
     else throw new Error(`unknown option ${a}`);
   }
@@ -319,6 +327,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   const profiles = opt.profile ?? [];
   if (profiles.length && !['build', 'install', 'status'].includes(cmd)) return fail('--profile applies to build, install and status only');
   if ((opt['no-profile'] || opt['no-board']) && !['install', 'status'].includes(cmd)) return fail('--no-profile and --no-board apply to install and status only');
+  if ((opt.stack || opt.from || opt.json) && cmd !== 'standards') return fail('--stack, --from and --json apply to standards only');
   if (opt['no-profile'] && opt.profile) return fail('pass --profile or --no-profile, not both');
   if (opt['no-board'] && (opt.board || opt['board-repo'])) return fail('pass --board or --no-board, not both');
   try {
@@ -375,6 +384,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       }
       for (const s of staleAgents(repo, loadRoles(repo))) problems.push(`${s.rel}: no matching role in roles/ (stale)`);
     }
+    problems.push(...validateArchive(path.join(repo, 'standards')));
     if (problems.length) {
       problems.forEach((p) => io.err(`FAIL ${p}`));
       return 1;
@@ -573,6 +583,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       io.out(`dry run for ${adapter.id}; add --apply to write`);
       if (blocked.length) io.out(`--apply would refuse: ${blocked.length} ${kind} file(s) in the way (use --force to replace them, with backups)`);
     }
+    io.out(`${opt.apply ? 'Next' : 'After --apply, next'}: ${STANDARDS_NEXT}`);
     return 0;
   }
 
@@ -881,6 +892,10 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     } catch (e) {
       return fail(`hooks: ${e.message}`);
     }
+  }
+
+  if (cmd === 'standards') {
+    return runStandards(opt, io, { archiveDir: path.join(DEFAULT_REPO, 'standards'), when: stamp(io.now ? io.now() : new Date()), cap: io.standardsCap });
   }
 
   return fail(USAGE);

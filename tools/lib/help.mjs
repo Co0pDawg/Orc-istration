@@ -121,6 +121,19 @@ export const HELP = {
       '--node': 'use hooks.node.example.json (board reminder on Node, no PowerShell)',
     },
   },
+  standards: {
+    summary: 'List, show or detect archive coding standards, or compose a project\'s STANDARDS.md (dry run without --apply)',
+    synopsis: 'standards list | show <id> | detect [--repo <dir>] [--json] | apply --repo <dir> (--stack <ids> | --from <path>)... [--out <rel>] [--apply] [--force]',
+    options: {
+      '--repo <dir>': 'the project (not this checkout); detect defaults to the current folder, apply needs it',
+      '--json': 'detect: print JSON',
+      '--stack <ids>': 'apply: archive ids (repeatable or comma-separated); their requires are added',
+      '--from <path>': 'apply: import a .md file, or every .md file in a folder (repeatable)',
+      '--out <rel>': 'apply: target path relative to the project (default STANDARDS.md)',
+      '--apply': 'apply: write the file (the dry run exits 0, also when --apply would refuse)',
+      '--force': 'apply: replace an edited or hand-written file (otherwise --apply exits 1), with a backup',
+    },
+  },
   help: {
     summary: 'Print this list, or one command\'s options',
     synopsis: 'help [<command>]   (also --help, -h, <command> --help)',
@@ -133,7 +146,7 @@ export const USAGE = `usage: node tools/orc.mjs ${Object.keys(HELP).join('|')} [
 export function globalHelp() {
   const width = Math.max(...Object.keys(HELP).map((c) => c.length));
   const lines = Object.entries(HELP).map(([c, h]) => `  ${c.padEnd(width)}  ${h.summary}`);
-  return [USAGE, '', 'Commands:', ...lines, '', 'Every command takes --repo <dir> (default: this checkout).', 'node tools/orc.mjs help <command> lists its options. Reference: docs/cli.md'].join('\n');
+  return [USAGE, '', 'Commands:', ...lines, '', 'Every command takes --repo <dir> (default: this checkout); for standards it names the project instead.', 'node tools/orc.mjs help <command> lists its options. Reference: docs/cli.md'].join('\n');
 }
 
 export function commandHelp(cmd) {
@@ -143,6 +156,6 @@ export function commandHelp(cmd) {
   const width = Math.max(0, ...opts.map(([o]) => o.length));
   const lines = [`usage: node tools/orc.mjs ${h.synopsis}`, '', h.summary];
   if (opts.length) lines.push('', 'Options:', ...opts.map(([o, d]) => `  ${o.padEnd(width)}  ${d}`));
-  lines.push('', '  --repo <dir>  the Orc-istration checkout to read (default: this one)');
+  if (!h.options['--repo <dir>']) lines.push('', '  --repo <dir>  the Orc-istration checkout to read (default: this one)');
   return lines.join('\n');
 }
