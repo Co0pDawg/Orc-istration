@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Orchestration generator and installer. Node 22+, standard library only.
-// build | check | sync | install | uninstall | status | models | brief | review-tier | costlog | calibration | metrics
-// | dispatch | hooks (see README "Other tools"; calibration and metrics: review/calibration.md, review/metrics.md)
+// build | check | sync | golden | install | uninstall | status | models | brief | review-tier | costlog | calibration
+// | metrics | dispatch | hooks | help (see docs/cli.md, or node tools/orc.mjs help; calibration and metrics:
+// review/calibration.md, review/metrics.md)
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -17,6 +18,7 @@ import { capture, loadRuns, metricsReport, repoTop, DEFAULT_PRICES } from './lib
 import { dispatchPlan, runDispatch, formatCommand, argvProblem, binEnv } from './lib/dispatch.mjs';
 import { mergeHooks, formatLike } from './lib/hooks.mjs';
 import { decodeText, readText } from './lib/text.mjs';
+import { USAGE, globalHelp, commandHelp } from './lib/help.mjs';
 
 const DEFAULT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -188,6 +190,24 @@ async function buildAll(repo, toolId, { local = true, extraNotes = [], profiles 
   return picked.map((adapter) => ({ adapter, ...buildTool(adapter, roles, models, agentsMd, { extraNotes, profiles: loaded }) }));
 }
 
+// The build the golden test compares against and the golden command writes: models.json only, no profiles, no extra notes.
+export function buildGolden(repo, toolId = 'all') {
+  return buildAll(repo, toolId, { local: false });
+}
+
+// Every file below dir, absolute paths.
+function walkFiles(dir) {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walkFiles(path.join(dir, e.name)) : [path.join(dir, e.name)]));
+}
+
+// What to edit for a checked-in generated file.
+function sourceOf(rel) {
+  if (rel === 'CLAUDE.md') return { src: 'AGENTS.md / adapters/claude-code.notes.md / adapters/claude-code.mjs', those: true };
+  const m = /^agents\/(.+)\.md$/.exec(rel);
+  return m ? { src: `roles/${m[1]}.md`, those: false } : null;
+}
+
 function checkedInTargets(results) {
   const claude = results.find((r) => r.adapter.id === 'claude-code');
   const prefix = `${claude.adapter.home.root}/`;
@@ -236,7 +256,7 @@ const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'pr
 // Value options that may repeat; each value may also be comma-separated.
 const LIST_OPTIONS = ['profile'];
 
-const FLAG_OPTIONS = ['apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print'];
+const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print'];
 
 // Accepts `--key value` and `--key=value`. An unknown option is an error, never a silent boolean: a mistyped
 // `--home=<dir>` once fell through to the real home directory.
@@ -287,6 +307,17 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     return fail(e.message);
   }
   const cmd = opt._[0];
+  if (opt.help || opt._.includes('-h') || cmd === 'help') {
+    const topic = cmd === 'help' || cmd === '-h' ? opt._.find((a, i) => i > 0 && a !== '-h') : cmd;
+    if (!topic) {
+      io.out(globalHelp());
+      return 0;
+    }
+    const text = commandHelp(topic);
+    if (!text) return fail(`unknown command ${topic}\n${USAGE}`);
+    io.out(text);
+    return 0;
+  }
   const repo = path.resolve(opt.repo ?? DEFAULT_REPO);
   const profiles = opt.profile ?? [];
   if (profiles.length && !['build', 'install', 'status'].includes(cmd)) return fail('--profile applies to build, install and status only');
@@ -337,9 +368,12 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     if (results.some((r) => r.adapter.id === 'claude-code' && !r.errors.length)) {
       for (const { rel, content } of checkedInTargets(results)) {
         const file = path.join(repo, ...rel.split('/'));
-        if (!fs.existsSync(file)) problems.push(`${rel}: missing (run node tools/orc.mjs sync)`);
+        const from = sourceOf(rel);
+        const gen = from ? `generated from ${from.src}; ` : '';
+        if (!fs.existsSync(file)) problems.push(`${rel}: missing (${gen}run node tools/orc.mjs sync)`);
         else if (read(file) !== content) {
-          problems.push(`${rel}: differs from generated at line ${firstDiffLine(read(file), content)} (run node tools/orc.mjs sync)`);
+          const edit = from ? `edit ${from.those ? 'those' : 'that'}, then ` : '';
+          problems.push(`${rel}: differs from generated at line ${firstDiffLine(read(file), content)} (${gen}${edit}run node tools/orc.mjs sync)`);
         }
       }
       for (const s of staleAgents(repo, loadRoles(repo))) problems.push(`${s.rel}: no matching role in roles/ (stale)`);
@@ -370,6 +404,48 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       }
     }
     return code;
+  }
+
+  if (cmd === 'golden') {
+    let results;
+    try {
+      results = await buildGolden(repo, opt.tool ?? 'all');
+    } catch (e) {
+      return fail(e.message);
+    }
+    const errors = results.flatMap((r) => r.errors);
+    if (errors.length) return fail(errors.join('\n'));
+    const root = path.join(repo, 'tests', 'golden');
+    // The install containment check: tests, tests/golden and every folder below must be real folders inside the repo.
+    const outside = results.flatMap(({ adapter, files }) =>
+      [path.join(root, adapter.id), ...files.map((f) => path.join(root, adapter.id, ...f.path.split('/')))].map((t) => escapes(repo, 'tests/golden', t)).filter(Boolean),
+    );
+    if (outside.length) {
+      [...new Set(outside)].forEach((u) => io.err(`refused: ${u}`));
+      return fail('nothing written: unsafe tests/golden path(s)');
+    }
+    for (const { adapter, files } of results) {
+      const dir = path.join(root, adapter.id);
+      const wanted = new Set();
+      for (const f of files) {
+        const target = path.join(dir, ...f.path.split('/'));
+        wanted.add(target);
+        const rel = `tests/golden/${adapter.id}/${f.path}`;
+        if (fs.existsSync(target) && read(target) === f.content) {
+          io.out(`unchanged ${rel}`);
+          continue;
+        }
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, f.content);
+        io.out(`wrote ${rel}`);
+      }
+      for (const file of walkFiles(dir)) {
+        if (wanted.has(file)) continue;
+        fs.rmSync(file);
+        io.out(`deleted tests/golden/${adapter.id}/${path.relative(dir, file).replace(/\\/g, '/')}`);
+      }
+    }
+    return 0;
   }
 
   if (cmd === 'install') {
@@ -860,7 +936,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     }
   }
 
-  return fail('usage: node tools/orc.mjs build|check|sync|install|uninstall|status|models|brief|review-tier|costlog|calibration|metrics|dispatch|hooks [options]');
+  return fail(USAGE);
 }
 
 function isMain() {
