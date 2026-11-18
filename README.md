@@ -136,6 +136,7 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `docs/cli.md` | The full command reference |
 | `orchestration/README.md` | Cost-log format and review questions |
 | `standards/`, `orchestration/standards.md`, `skills/repo-standards/` | The coding-standards archive (format in `standards/README.md`), the tool-neutral setup procedure, and its Claude Code skill |
+| `orchestration/sprint.md`, `skills/sprint/` | Sprint mode: a timeboxed build (default 45 minutes) that waives the board, standards setup, pre-PR review and cost log for one task, and its Claude Code skill |
 | `docs/` | Rulebook incident notes; the tracker contract and how to adopt a repo; outlines for unattended runs and project memory |
 | `settings.example.json` | Claude Code hooks, status line and plugins, with no permissions |
 | `hooks.node.example.json` | The board-reminder hooks on Node (`hooks --node`) |
