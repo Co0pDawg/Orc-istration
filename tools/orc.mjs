@@ -99,9 +99,16 @@ export function loadProfiles(repo, names = []) {
   });
 }
 
+// An artifact board is written only with ArtifactData from Claude Code, so it needs no --board-repo.
+const isArtifactBoard = (board) => /^(?:https:\/\/)?claude\.ai\/(?:code\/)?artifact\//.test(board ?? '');
+const boardPairError = (opt, toolId) => (opt['board-repo'] ? !opt.board : Boolean(opt.board) && !(toolId === 'claude-code' && isArtifactBoard(opt.board)));
+const ARTIFACT_ONLY_CLAUDE = 'the artifact board can be written only from Claude Code; use a local board address';
+const artifactRefused = (board, toolId) => toolId !== 'claude-code' && isArtifactBoard(board);
+
 // The Board line that install adds, so status compares against the same text.
-function boardNotes({ board, boardRepo }) {
+function boardNotes({ board, boardRepo }, toolId) {
   if (!board) return [];
+  if (toolId === 'claude-code' && isArtifactBoard(board)) return [`- **Board:** this machine's board address is \`${board}\` (artifact backend: write it with ArtifactData, as the tool notes say).`];
   const cli = `${boardRepo.replace(/\\/g, '/')}/local/board.js`;
   const port = /^https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)/.exec(board)?.[1];
   const portNote = port ? ` (set \`ORC_BOARD_PORT=${port}\`)` : '';
@@ -122,7 +129,7 @@ function installOptions(opt, manifest, io) {
   let board = opt.board ?? null;
   let boardRepo = opt['board-repo'] ?? null;
   if (opt['no-board']) board = boardRepo = null;
-  else if (!opt.board && typeof rec.board === 'string' && typeof rec.boardRepo === 'string') {
+  else if (!opt.board && typeof rec.board === 'string' && (typeof rec.boardRepo === 'string' || isArtifactBoard(rec.board))) {
     board = rec.board;
     boardRepo = rec.boardRepo;
     reused.push(`board ${board}`);
@@ -496,14 +503,16 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     if (toolId === 'claude-code' && !opt.home) {
       return fail('refusing --tool claude-code without --home: the live ~/.claude is synced by hand');
     }
-    if (!opt.board !== !opt['board-repo']) return fail('pass --board and --board-repo together, or neither');
+    if (artifactRefused(opt.board, toolId)) return fail(ARTIFACT_ONLY_CLAUDE);
+    if (boardPairError(opt, toolId)) return fail('pass --board and --board-repo together, or neither (an artifact --board needs no --board-repo)');
     const home = path.resolve(opt.home ?? (await import('node:os')).homedir());
     const known = (await loadAdapters(repo)).find((a) => a.id === toolId);
     const early = known ? loadManifest(home, known) : {};
     if (early.error) return fail(`${early.error}; remove or fix the manifest by hand`);
     const chosen = installOptions(opt, early.manifest, io);
-    const extraNotes = [...boardNotes(chosen), ...setupNotes()];
-    if (!chosen.board) io.err('WARN the board address is not set: pass --board <address> --board-repo <path> so the rulebook names it');
+    if (artifactRefused(chosen.board, toolId)) return fail(ARTIFACT_ONLY_CLAUDE);
+    const extraNotes = [...boardNotes(chosen, toolId), ...setupNotes()];
+    if (!chosen.board) io.err('WARN the board address is not set: pass --board <address> (with --board-repo <path> for a local board) so the rulebook names it');
     let built;
     try {
       [built] = await buildAll(repo, toolId, { extraNotes, profiles: chosen.profiles });
@@ -700,15 +709,17 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   if (cmd === 'status') {
     const toolId = opt.tool;
     if (!toolId || toolId === 'all') return fail('status needs --tool <id>');
-    if (!opt.board !== !opt['board-repo']) return fail('pass --board and --board-repo together, or neither');
+    if (artifactRefused(opt.board, toolId)) return fail(ARTIFACT_ONLY_CLAUDE);
+    if (boardPairError(opt, toolId)) return fail('pass --board and --board-repo together, or neither (an artifact --board needs no --board-repo)');
     const home = path.resolve(opt.home ?? (await import('node:os')).homedir());
     const known = (await loadAdapters(repo)).find((a) => a.id === toolId);
     const loaded = known ? loadManifest(home, known) : {};
     if (loaded.error) io.err(`WARN ${loaded.error}; ignoring it`);
     const chosen = installOptions(opt, loaded.manifest, io);
+    if (artifactRefused(chosen.board, toolId)) return fail(ARTIFACT_ONLY_CLAUDE);
     let built;
     try {
-      [built] = await buildAll(repo, toolId, { extraNotes: [...boardNotes(chosen), ...setupNotes()], profiles: chosen.profiles });
+      [built] = await buildAll(repo, toolId, { extraNotes: [...boardNotes(chosen, toolId), ...setupNotes()], profiles: chosen.profiles });
     } catch (e) {
       return fail(e.message);
     }

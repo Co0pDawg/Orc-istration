@@ -385,6 +385,28 @@ test('install --board adds the Board line; without it a warning', async () => {
     assert.equal(r.code, 1);
     assert.match(r.err, /pass --board and --board-repo together, or neither/);
   }
+  // An artifact address needs no --board-repo, ignores one given, and its line names ArtifactData, not board.js.
+  for (const [url, extra] of [['https://claude.ai/artifact/abc', []], ['claude.ai/code/artifact/def', ['--board-repo', 'C:/x']]]) {
+    const ch = tempDir('board-artifact');
+    const inst = await run(['install', '--tool', 'claude-code', '--home', ch, '--apply', '--board', url, ...extra]);
+    assert.equal(inst.code, 0, inst.err);
+    const rulebook = read(path.join(ch, '.claude', 'CLAUDE.md'));
+    assert.ok(rulebook.includes(`- **Board:** this machine's board address is \`${url}\` (artifact backend: write it with ArtifactData, as the tool notes say).`), rulebook);
+    assert.doesNotMatch(rulebook, /board\.js/);
+    const st = await run(['status', '--tool', 'claude-code', '--home', ch]);
+    assert.equal(st.code, 0, st.out);
+    assert.match(st.out, /same: .*CLAUDE\.md/);
+  }
+  // Only Claude Code can write an artifact board: other tools refuse it, with or without --board-repo, in install and status.
+  const cx = tempDir('board-artifact-codex');
+  for (const cmd of [['install', '--apply'], ['status']]) {
+    for (const extra of [[], ['--board-repo', 'C:/x']]) {
+      const r = await run([cmd[0], '--tool', 'codex', '--home', cx, ...cmd.slice(1), '--board', 'https://claude.ai/artifact/abc', ...extra]);
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.err, /the artifact board can be written only from Claude Code; use a local board address/);
+    }
+  }
+  assert.equal(fs.existsSync(path.join(cx, '.codex', 'AGENTS.md')), false, 'nothing installed');
 });
 
 test('install warns about two rulebooks in a shared ~/.gemini', async () => {
