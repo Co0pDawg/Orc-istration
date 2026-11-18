@@ -13,15 +13,20 @@ Edit the sources. Never hand-edit a generated file; regenerate it.
 | Sources (edit these) | What they are |
 |---|---|
 | `AGENTS.md` | The tool-neutral rulebook |
-| `roles/*.md` | The five agent roles |
+| `roles/*.md` | The agent roles: the five core roles and the six review-panel roles (`review-*`) |
 | `adapters/<tool>.mjs` + `adapters/<tool>.notes.md` | One adapter per tool, and its tool notes |
 | `models.json` | Tier to model, per tool |
 | `profiles/*.md` | Optional rulebook additions |
 | `standards/*.md` | The coding-standards archive, one file per stack (format in `standards/README.md`) |
+| `review/` | The review panel: procedure, explorer contract, lane checklists, calibration and metrics formats |
+| `workflows/*.md`, `templates/` | The portable workflows (`/start`, `/draft-pr` and others) and the target-repo rulebook template |
+| `orchestration/standards.md`, `orchestration/sprint.md` | The standards setup procedure and sprint mode |
+| `skills/*/SKILL.md` | Claude Code skills (copied into `~/.claude/skills` by hand) |
+| `commands/*.md` (hand-written ones) | Claude Code commands for the workflows; the review-panel commands are generated (below) |
 
 | Generated (do not edit) | Written by |
 |---|---|
-| `CLAUDE.md`, `agents/*.md` | `node tools/orc.mjs sync` |
+| `CLAUDE.md`, `agents/*.md`, `commands/pre-pr-review.md`, `commands/review-verdict.md`, `commands/calibration-report.md` | `node tools/orc.mjs sync` |
 | `tests/golden/**` | `node tools/orc.mjs golden` |
 | `dist/` (untracked) | `node tools/orc.mjs build` |
 
@@ -43,7 +48,7 @@ node tools/orc.mjs check     # watch the antigravity headroom line
 ## Traps
 
 - **The allow-list `.gitignore`.** `/*` ignores everything, then `!/` lines re-include named paths. A new top-level file is silently untracked until it gets a `!/` line. Check with `git check-ignore <path>`: no output means it can be tracked. (`git check-ignore -v` also prints the `!/` rule that re-includes a file, so output there does not mean ignored.)
-- **Review tier.** Editing `AGENTS.md`, `roles/`, `adapters/*.notes.md`, `profiles/`, any `SKILL.md` (such as `skills/repo-standards/SKILL.md`), `standards/` or `orchestration/standards.md` (or the generated `CLAUDE.md` and `agents/`) makes `node tools/orc.mjs review-tier` say `Full`: prompts count as product, not docs.
+- **Review tier.** Editing `AGENTS.md`, `roles/`, `adapters/*.notes.md`, `profiles/`, any `SKILL.md` (such as `skills/repo-standards/SKILL.md`), `standards/`, `orchestration/standards.md` or `orchestration/sprint.md` (or the generated `CLAUDE.md` and `agents/`) makes `node tools/orc.mjs review-tier` say `Full`: prompts count as product, not docs.
 - **The board is another repo.** The board page code in `orchestration/board` is its own repo (Co0pDawg/Orc-Dashboard), not part of this one.
 - **`tools/worklog`** is a Windows-only example with its own `tools/worklog/test.ps1`. Its tests assert US Eastern local times, so CI sets the runner to Eastern time first.
 - **`models.local.json`** is untracked. `check` validates it, but builds and compares from `models.json` only; `sync` and `golden` read `models.json` only. `build`, `install`, `status` and `dispatch` use it.
@@ -71,12 +76,13 @@ The repo is designed to be checked out as `~/.claude`, but you can develop in a 
 ## Where things are
 
 - `tools/orc.mjs`: the CLI. Loads roles, models and adapters, builds each tool (`buildTool`), and dispatches the commands.
-- `tools/lib/`: `frontmatter.mjs` (frontmatter, generated marker), `roles.mjs` (role parsing), `models.mjs` (models validation), `toml.mjs` (Codex TOML), `manifest.mjs` (install manifest, path safety), `text.mjs` (the one text reader), `help.mjs` (the help table), `brief.mjs`, `reviewtier.mjs`, `costlog.mjs`, `dispatch.mjs`, `hooks.mjs` (the method-tooling commands), `standards.mjs` (the standards archive, detect and apply).
+- `tools/lib/`: `frontmatter.mjs` (frontmatter, generated marker), `roles.mjs` (role parsing), `models.mjs` (models validation), `toml.mjs` (Codex TOML), `manifest.mjs` (install manifest, path safety), `text.mjs` (the one text reader), `help.mjs` (the help table), `brief.mjs`, `reviewtier.mjs`, `costlog.mjs`, `dispatch.mjs`, `hooks.mjs` (the method-tooling commands), `standards.mjs` (the standards archive, detect and apply), `calibration.mjs` and `metrics.mjs` (the review panel's calibration and metrics).
 - `tests/orc.test.mjs`: goldens, roles, frontmatter, caps, `check`, `install`, rulebook hygiene.
 - `tests/hardening.test.mjs`: option parsing, refusals, stale agents, YAML quoting, running through a junction, BOM and UTF-16 input, first differing line.
 - `tests/manifest.test.mjs`: install manifest, re-install, `uninstall`, `status`, symlink and junction refusals.
 - `tests/tooling.test.mjs`: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks`, the board reminder, models validation, `golden`, `help`, the generated marker.
 - `tests/standards.test.mjs`: `standards list`, `show`, `detect` and `apply`, and the archive validation in `check`.
+- `tests/review-tools.test.mjs`: `calibration` and `metrics`.
 
 ## Pull requests
 

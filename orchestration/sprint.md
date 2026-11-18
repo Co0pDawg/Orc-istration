@@ -2,11 +2,13 @@
 
 A timeboxed build: something working and reviewed inside a fixed clock (default 45 minutes), such as a live AI-assisted interview exercise or a spike. Sprint mode keeps the build loop's core — a spec, a builder, an adversarial read, the orchestrator's own diff read — and drops the ceremony that dominates wall clock on normal tasks.
 
-Why: in the cost logs, agent runs take 2 to 7 minutes each, but tasks take hours. headhunter #37 ran 3h 40m: slice REWORK chains, a three-reviewer pre-PR stage, a 21-item fix round and a 19-minute refuter of that round. Sprint mode cuts those, not the agents.
+Why: in the cost logs, agent runs take 2 to 7 minutes each, but tasks take hours. One multi-slice task ran 3h 40m, most of it slice REWORK chains, a three-reviewer pre-PR stage, a 21-item fix round and a 19-minute refuter of that round. Sprint mode cuts those, not the agents.
 
 ## When it applies
 
-Only when the user asks for it: "sprint", "sprint 45", "sprint mode", or the `/sprint` skill in Claude Code. The number is the clock in minutes (default 45). It lasts for that one task. Nothing switches it on by itself.
+Only when the user explicitly asks for a timeboxed build: "sprint mode", "sprint 45 min", "a 45-minute sprint", or the `/sprint` skill in Claude Code (where `~/.claude/skills` has it). The number is the clock in minutes (default 45). A mention of a sprint as an iteration or backlog period ("put this in sprint 45", "this sprint's tickets") is not a request. When unsure, confirm in one line before starting. It lasts for that one task; nothing switches it on by itself.
+
+Sprint mode overrides the lite modes (`Orc orchestration: lite`, `Orc review: lite`) for that task. On a `/start` run, it skips Step 12 (the review panel) like any other review; the rest of `/start` runs as written.
 
 ## Start (minute 0 to 5)
 
@@ -28,12 +30,12 @@ If a slice is not done at its mark, cut its scope rather than move the mark. At 
 ## The loop, shrunk
 
 - **Inline first.** The orchestrator does a slice itself when it is under ~10 tool calls. Most scaffolding (create the app, install, hello-world) is inline.
-- **Builder.** One builder for the sprint, resumed with SendMessage for each slice so it keeps context. Brief: Goal, Scope, May change, Must verify, Do not. Skip Known/Data/Board unless they matter. Builders run the smoke test for their slice only.
+- **Builder.** One builder for the sprint, resumed for each slice so it keeps context (the tool notes say how to resume). Brief: Goal, Scope, May change, Must verify, Do not. Skip Known/Data/Board unless they matter. Builders run the smoke test for their slice only.
 - **One writer at a time.** The orchestrator edits only while no builder is running.
-- **Pipelining.** While the builder works on slice N+1, a refuter reviews slice N statically from its commit (`git show <slice-N sha>`), never from the working tree the builder is editing. Its targeted test runs after the builder stops, or in a `git worktree add` checkout at that sha.
-- **Refuter.** Mid tier (`model: "sonnet"` in Claude Code), static read plus the slice's targeted test, report capped at 15 lines, must-fixes only (anything that breaks the demo, loses data, or is a security hole). Should-fixes and nits are logged, not actioned.
+- **Pipelining.** While the builder works on slice N+1, a refuter reviews slice N statically from its commit (`git show <slice-N sha>`), never from the working tree the builder is editing. Its targeted test runs after the builder stops, or in a checkout the orchestrator makes with `git worktree add <path> <sha>` and passes to the refuter.
+- **Refuter.** Mid tier (in Claude Code, `model: "sonnet"`), static read plus the slice's targeted test, report capped at 15 lines, must-fixes only (anything that breaks the demo, loses data, or is a security hole). Should-fixes and nits are logged, not actioned.
 - **Rework.** At most one REWORK round per slice. A REWORK for slice N is queued and sent to the builder when it finishes N+1. Anything left after that round the orchestrator fixes inline (with no builder running) or cuts.
-- **Parallel builders.** Only with clean file ownership and a worktree made by `git worktree add` (pass the path; `isolation: "worktree"` has failed on Windows checkouts). Usually not worth the setup inside 45 minutes.
+- **Parallel builders.** Only with clean file ownership and their own worktrees (the tool notes cover worktree isolation). Usually not worth the setup inside 45 minutes.
 - **Tests.** Smoke and happy-path tests that prove the demo. No full-suite runs until the end, and then only if the suite takes under 2 minutes.
 - **Commit per slice.** Each green slice is a commit, so there is always a demoable state to fall back to.
 
@@ -44,8 +46,12 @@ Each of these is a standing rule that sprint mode turns off for this task only:
 - the live board (Start/During/Finish writes): skip it, or write one card at the end if the user wants a record; ignore board-reminder hook markers during the sprint;
 - the standards setup before the first build: use the language's common conventions and say so;
 - scouts and researchers: the orchestrator greps and reads docs inline;
+- the inline threshold: ~10 tool calls instead of ~5;
+- marching-orders items 6 to 10 in a brief (a headless `orc dispatch` then needs `--no-lint`);
 - the Light/Full pre-PR review (the review panel, `review/PROCEDURE.md`): replaced by the per-slice refuter and the orchestrator's diff read; run `/pre-pr-review` after the clock if the work will ship;
 - the 2-round REWORK limit: it is 1;
+- the end-of-task full suite when it takes 2 minutes or more;
+- live-app verification by its own builder, worktree and DB copy: the orchestrator runs the app once itself, on a local or throwaway database;
 - the cost log before reporting done: write a short one afterwards, outside the clock, if wanted;
 - the durable-rules question and the handoff doc.
 
@@ -64,4 +70,4 @@ Report in under 10 lines: what works (the demo steps), what was cut, known defec
 
 ## Before the clock starts (optional prep)
 
-Permission prompts cost minutes under a clock. Before a timed session, pre-approve the read-only and build commands the stack will need (Claude Code: `/fewer-permission-prompts` or `permissions.allow` in settings), and have the toolchain installed. In Claude Code, `/fast` speeds up the orchestrator's own output.
+Permission prompts cost minutes under a clock. Before a timed session, have the toolchain installed and pre-approve the stack's read-only and build commands (Claude Code: `permissions.allow` in the user-level `~/.claude/settings.json`; `/fewer-permission-prompts` helps only in an existing project with past sessions, and only for read-only calls). In Claude Code, `/fast` speeds up the orchestrator's own output.

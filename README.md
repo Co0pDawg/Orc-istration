@@ -69,6 +69,8 @@ Six more roles (`review-*`) make up the [review panel](#review-panel) the Full r
 
 **Repo standards.** `node tools/orc.mjs standards` (run from the setup checkout) sets up a project's coding standards: `STANDARDS.md` at its root, which builders follow and refuters check diffs against, section by section. It detects the project's stacks and composes the file from a cited archive (`standards/`: ASP.NET Core, C#, Go, Java, Playwright, PowerShell, Python, React, Rust, SQL, TypeScript), from the team's own files (`--from`), or both. Before the first build in a repo without one, the orchestrator runs the setup in [`orchestration/standards.md`](orchestration/standards.md): it detects the stacks, then asks you in one several-picks question which to adopt and whether you have your own standards to import, then applies. A re-apply never overwrites a file the team has edited, or drops a stack or import it was applied with, unless forced, and then keeps a backup. `install` writes the setup checkout's path into the installed rulebook ("Setup checkout (this machine)"), so any tool can find the procedure and the command. Claude Code also gets the procedure as the `repo-standards` skill, but only where `~/.claude` is the setup checkout, since skills load from `~/.claude/skills`.
 
+**Sprint mode.** For a timeboxed build, such as a live AI-assisted interview exercise, ask for a sprint ("sprint mode", "a 45-minute sprint"). For that one task the orchestrator follows [`orchestration/sprint.md`](orchestration/sprint.md): at most three runnable slices, a walking skeleton by about minute 15, a feature freeze ten minutes before the deadline, one builder resumed per slice, Mid-tier refuters reviewing each slice's commit while the next is built, and one rework round. It skips the board, the standards setup, the review panel and the cost log; it never skips the orchestrator's diff read, one real run of the app, or the PR and safety rules. A sprint as an iteration name ("put this in sprint 45") does not trigger it. Claude Code also gets it as the `sprint` skill where `~/.claude/skills` has it.
+
 **The cost log.** Every orchestrated task writes one record: a row per dispatch with agent, model, tokens, minutes, result and a value label (`earned`, `marginal` or `waste`). The format and the review questions are in [`orchestration/README.md`](orchestration/README.md).
 
 ## Evidence
@@ -130,13 +132,13 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `profiles/*.md` | Optional rulebook additions (`--profile <name>`); `dotnet-azure-devops` holds the long rulebook's stack rules and general lessons |
 | `models.json` | Tier to model, per tool; `models.local.json` (untracked) overrides |
 | `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
-| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks`, `standards`; `help` |
+| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks`, `standards`; review panel: `calibration`, `metrics`; `help` |
 | `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them), install and check tests |
 | `CONTRIBUTING.md` | How to change this repo: sources vs generated files, the edit loop, traps |
 | `docs/cli.md` | The full command reference |
 | `orchestration/README.md` | Cost-log format and review questions |
 | `standards/`, `orchestration/standards.md`, `skills/repo-standards/` | The coding-standards archive (format in `standards/README.md`), the tool-neutral setup procedure, and its Claude Code skill |
-| `orchestration/sprint.md`, `skills/sprint/` | Sprint mode: a timeboxed build (default 45 minutes) that waives the board, standards setup, pre-PR review and cost log for one task, and its Claude Code skill |
+| `orchestration/sprint.md`, `skills/sprint/` | Sprint mode: a timeboxed build (default 45 minutes) that waives the board, standards setup, review panel and cost log for one task, and its Claude Code skill |
 | `docs/` | Rulebook incident notes; the tracker contract and how to adopt a repo; outlines for unattended runs and project memory |
 | `settings.example.json` | Claude Code hooks, status line and plugins, with no permissions |
 | `hooks.node.example.json` | The board-reminder hooks on Node (`hooks --node`) |
@@ -174,6 +176,8 @@ Every command is `node tools/orc.mjs <command>`. Options: `node tools/orc.mjs he
 | `brief` | Print or lint a marching-orders brief |
 | `review-tier` | Say whether a branch diff is Light-eligible or Full |
 | `costlog` | Draft a cost log from the board |
+| `calibration` | Per-lane precision of the review panel from its run logs |
+| `metrics` | Capture or report per-run review metrics from Claude Code transcripts |
 | `dispatch` | Run one role headlessly at its tier |
 | `hooks` | Merge the example hooks into `settings.json` (dry run without `--apply`) |
 | `standards` | List, show or detect archive coding standards, or compose a project's `STANDARDS.md` (dry run without `--apply`) |

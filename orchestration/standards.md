@@ -4,9 +4,10 @@ This procedure sets up a project's coding standards: `STANDARDS.md` at the proje
 
 `<repo>` below is the project, and `<setup>` is the setup checkout, found in this order:
 
-1. The "Setup checkout (this machine)" line in your rulebook's tool notes (`install` writes it).
-2. For Claude Code, `~/.claude` when it is the checkout (it has `tools/orc.mjs`).
-3. If neither applies, ask the user for the path.
+1. The `ORC_HOME` environment variable, when set.
+2. The "Setup checkout (this machine)" line in your rulebook's tool notes (`install` writes it).
+3. For Claude Code, `~/.claude` when it is the checkout (it has `tools/orc.mjs`).
+4. If none applies, ask the user for the path.
 
 ## When to run it
 
