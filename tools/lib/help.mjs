@@ -26,7 +26,7 @@ export const HELP = {
     options: { '--tool <id>|all': 'one adapter, or all (default all)' },
   },
   install: {
-    summary: 'Install one tool\'s generated files into a home folder (dry run without --apply)',
+    summary: 'Install one tool\'s generated files into a home folder (dry run without --apply); the rulebook names this checkout as the setup checkout',
     synopsis: 'install --tool <id> [--home <dir>] [--apply] [--force] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board]',
     options: {
       '--tool <id>': 'the adapter to install (required; not all)',
@@ -151,12 +151,12 @@ export const HELP = {
     synopsis: 'standards list | show <id> | detect [--repo <dir>] [--json] | apply --repo <dir> (--stack <ids> | --from <path>)... [--out <rel>] [--apply] [--force]',
     options: {
       '--repo <dir>': 'the project (not this checkout); detect defaults to the current folder, apply needs it',
-      '--json': 'detect: print JSON',
+      '--json': 'detect: print JSON, with current (the stacks and imports in the STANDARDS.md marker) and unreadable',
       '--stack <ids>': 'apply: archive ids (repeatable or comma-separated); their requires are added',
-      '--from <path>': 'apply: import a .md file, or every .md file in a folder (repeatable)',
+      '--from <path>': 'apply: import a .md file, or every .md file in a folder (repeatable); an archive-format file is validated and rendered like a stack',
       '--out <rel>': 'apply: target path relative to the project (default STANDARDS.md)',
       '--apply': 'apply: write the file (the dry run exits 0, also when --apply would refuse)',
-      '--force': 'apply: replace an edited or hand-written file (otherwise --apply exits 1), with a backup',
+      '--force': 'apply: replace an edited or hand-written file, or one whose stacks or imports the new set drops (otherwise --apply exits 1), with a backup',
     },
   },
   help: {
@@ -175,8 +175,8 @@ export function globalHelp() {
 }
 
 export function commandHelp(cmd) {
+  if (!Object.hasOwn(HELP, cmd)) return null;
   const h = HELP[cmd];
-  if (!h) return null;
   const opts = Object.entries(h.options);
   const width = Math.max(0, ...opts.map(([o]) => o.length));
   const lines = [`usage: node tools/orc.mjs ${h.synopsis}`, '', h.summary];

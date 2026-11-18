@@ -32,6 +32,7 @@ sources:
   - https://typescript-eslint.io/rules/only-throw-error/
   - https://typescript-eslint.io/rules/no-misused-promises/
   - https://nodejs.org/api/packages.html
+  - https://nodejs.org/api/child_process.html
 ---
 
 # TypeScript and JavaScript
@@ -78,11 +79,11 @@ Rules for TypeScript and modern JavaScript on Node. The compiler (`tsc`) enforce
 - Use `assert.strictEqual` and `assert.deepStrictEqual` rather than the loose variants. [12]
 - Mark async tests `async` and `await` every `t.test()` subtest; unawaited subtests are cancelled and counted as failures. [12]
 - Mock with `t.mock` (functions, methods, timers) so mocks are restored after the test; advance fake timers with `tick()` instead of waiting. [12]
-- Give every `skip` or `todo` a reason string, and do not commit `test.only`. [12]
+- Give every `skip` or `todo` a reason string. [12]
 
 ## Security
 - Never pass untrusted input to `eval`, `new Function` or `vm`; use a data format such as JSON. [13]
-- Spawn processes with `execFile` or `spawn` and an argument array, no shell, never a command string built from user input. [13]
+- Run child processes with `execFile` or `spawn` and an argument array, leaving the `shell` option off; with `exec` or a shell enabled, input containing shell metacharacters can run arbitrary commands. [20]
 - Validate untrusted JSON with a schema and do not recursively merge it into shared objects (prototype pollution). [13]
 - Check keys with `Object.hasOwn(obj, key)` on parsed data, and use `Object.create(null)` for lookup maps. [13]
 - Compare secrets with `crypto.timingSafeEqual`, not `===`. [13]

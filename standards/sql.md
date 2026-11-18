@@ -32,14 +32,14 @@ Rules for SQL that ships in application code, migrations and stored routines. It
 - Keep migrations forward-only. Do not rely on a down/undo script as the way to fix a bad release; fix forward with a new migration. [8]
 
 ## Naming
-- (T-SQL) Schema-qualify every table, view and procedure reference (`dbo.Orders`, not `Orders`), in both DDL and queries. It removes the lookup across schemas and avoids permission problems tied to a user's default schema. [2]
+- (T-SQL) Write object names with their schema (`dbo.Orders`, not `Orders`) in DDL and in queries alike, so the engine does not have to search schemas for the name and a caller's default schema cannot change what runs or what it may access. [2]
 
 ## Language and API usage
 - Do not use `SELECT *` in application code, views or procedures; list the columns needed. Added or reordered columns can break dependent code and inserts. [2]
 - Return only the columns and rows the caller needs; filter as early as possible. [2]
 - Give every `INSERT` an explicit column list. Without one, values are matched to columns by table order, which breaks when the table changes. [10]
 - Prefer one set-based statement that modifies many rows over a loop or cursor that touches one row at a time; this also cuts index-maintenance overhead. [3]
-- Do not call scalar functions per row in queries that return many rows; the cost behaves like row-by-row processing. [2]
+- Keep scalar function calls out of queries over large row sets: the function runs once per row, which makes the query perform like a cursor loop. [2]
 - Write sargable predicates: do not wrap an indexed column in a function or expression in `WHERE` or `JOIN` (`WHERE YEAR(d) = 2025`); compare the bare column against a computed range instead. [2]
 - Create an index on every foreign key column used in joins or cascade checks. The engine does not create one automatically. [4]
 - Index columns that appear often in predicates and joins, and keep keys narrow; every extra index slows writes, so avoid over-indexing heavily updated tables. [3]

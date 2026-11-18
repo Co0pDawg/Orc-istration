@@ -23,8 +23,13 @@ import { validateArchive, runStandards } from './lib/standards.mjs';
 
 const DEFAULT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-// The last line of every install: the per-project coding-standards setup comes next.
-const STANDARDS_NEXT = "set up each project's coding standards: see orchestration/standards.md in the setup checkout (Claude Code: the repo-standards skill).";
+// The checkout running orc.mjs, with forward slashes. The last line of every install points at the standards setup.
+// The real (on-disk) case, so every shell that starts node writes and compares the same line.
+const SETUP = fs.realpathSync.native(DEFAULT_REPO).replace(/\\/g, '/');
+const STANDARDS_NEXT = `set up each project's coding standards: see ${SETUP}/orchestration/standards.md (Claude Code: the repo-standards skill).`;
+
+// The Setup checkout line install adds (status adds it too): the checkout running orc.mjs, never recorded in the manifest.
+const setupNotes = () => [`- Setup checkout (this machine): ${SETUP}. Standards setup: node ${SETUP}/tools/orc.mjs standards ...; procedure: ${SETUP}/orchestration/standards.md.`];
 
 // Text from a file or stdin goes through the one shared reader (tools/lib/text.mjs).
 export { decodeText };
@@ -434,13 +439,40 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       [...new Set(outside)].forEach((u) => io.err(`refused: ${u}`));
       return fail('nothing written: unsafe tests/golden path(s)');
     }
+    // On a case-insensitive file system (win32, darwin) a golden that differs from the built name only by case is
+    // the same file: it is renamed, never deleted. A folder that differs only by case is refused before any write.
+    const key = ['win32', 'darwin'].includes(process.platform) ? (p) => p.toLowerCase() : (p) => p;
+    const onDiskOf = new Map(results.map(({ adapter }) => [adapter.id, new Map(walkFiles(path.join(root, adapter.id)).map((p) => [key(p), p]))]));
+    const badDirs = new Map();
+    for (const { adapter, files } of results) {
+      const dir = path.join(root, adapter.id);
+      for (const f of files) {
+        const target = path.join(dir, ...f.path.split('/'));
+        const disk = onDiskOf.get(adapter.id).get(key(target));
+        if (!disk || path.dirname(disk) === path.dirname(target)) continue;
+        const [have, want] = [disk, target].map((p) => path.relative(repo, path.dirname(p)).replace(/\\/g, '/'));
+        badDirs.set(have, want);
+      }
+    }
+    if (badDirs.size) {
+      for (const [have, want] of badDirs) io.err(`refused: folder ${have} differs only by case from ${want}; rename it by hand`);
+      return fail('nothing written: golden folder name(s) differ only by case');
+    }
     for (const { adapter, files } of results) {
       const dir = path.join(root, adapter.id);
       const wanted = new Set();
+      const onDisk = onDiskOf.get(adapter.id);
       for (const f of files) {
         const target = path.join(dir, ...f.path.split('/'));
-        wanted.add(target);
+        wanted.add(key(target));
         const rel = `tests/golden/${adapter.id}/${f.path}`;
+        const disk = onDisk.get(key(target));
+        if (disk && disk !== target) {
+          const tmp = `${disk}.orc-rename-${process.pid}`;
+          fs.renameSync(disk, tmp);
+          fs.renameSync(tmp, target);
+          io.out(`renamed tests/golden/${adapter.id}/${path.relative(dir, disk).replace(/\\/g, '/')} -> tests/golden/${adapter.id}/${f.path}`);
+        }
         if (fs.existsSync(target) && read(target) === f.content) {
           io.out(`unchanged ${rel}`);
           continue;
@@ -450,7 +482,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         io.out(`wrote ${rel}`);
       }
       for (const file of walkFiles(dir)) {
-        if (wanted.has(file)) continue;
+        if (wanted.has(key(file))) continue;
         fs.rmSync(file);
         io.out(`deleted tests/golden/${adapter.id}/${path.relative(dir, file).replace(/\\/g, '/')}`);
       }
@@ -470,7 +502,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const early = known ? loadManifest(home, known) : {};
     if (early.error) return fail(`${early.error}; remove or fix the manifest by hand`);
     const chosen = installOptions(opt, early.manifest, io);
-    const extraNotes = boardNotes(chosen);
+    const extraNotes = [...boardNotes(chosen), ...setupNotes()];
     if (!chosen.board) io.err('WARN the board address is not set: pass --board <address> --board-repo <path> so the rulebook names it');
     let built;
     try {
@@ -676,7 +708,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const chosen = installOptions(opt, loaded.manifest, io);
     let built;
     try {
-      [built] = await buildAll(repo, toolId, { extraNotes: boardNotes(chosen), profiles: chosen.profiles });
+      [built] = await buildAll(repo, toolId, { extraNotes: [...boardNotes(chosen), ...setupNotes()], profiles: chosen.profiles });
     } catch (e) {
       return fail(e.message);
     }
@@ -948,7 +980,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   }
 
   if (cmd === 'standards') {
-    return runStandards(opt, io, { archiveDir: path.join(DEFAULT_REPO, 'standards'), when: stamp(io.now ? io.now() : new Date()), cap: io.standardsCap });
+    return runStandards(opt, io, { archiveDir: path.join(DEFAULT_REPO, 'standards'), when: stamp(io.now ? io.now() : new Date()), cap: io.standardsCap, readdir: io.standardsReaddir });
   }
 
   return fail(USAGE);
