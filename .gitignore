@@ -5,6 +5,7 @@
 !/.gitignore
 !/.gitattributes
 !/README.md
+!/CONTRIBUTING.md
 !/CLAUDE.md
 !/AGENTS.md
 !/models.json
