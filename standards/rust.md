@@ -19,6 +19,9 @@ sources:
   - https://doc.rust-lang.org/book/ch11-03-test-organization.html
   - https://doc.rust-lang.org/book/ch11-01-writing-tests.html
   - https://github.com/rustsec/rustsec/tree/main/cargo-audit
+  - https://rust-lang.github.io/api-guidelines/interoperability.html
+  - https://rust-lang.github.io/api-guidelines/predictability.html
+  - https://rust-lang.github.io/api-guidelines/future-proofing.html
 ---
 
 # Rust
@@ -32,7 +35,7 @@ Formatting follows the Rust style guide and is enforced by rustfmt (`cargo fmt`)
 - Run `cargo clippy` with its default `clippy::all` lints and fail the build on warnings in CI. [2]
 - Deny warnings with `CARGO_BUILD_WARNINGS=deny` (or `[build] warnings = "deny"`) on Cargo 1.97+, otherwise `cargo clippy -- -D warnings`. [2]
 - Put an `#[allow(clippy::...)]` where a lint does not fit the code; Clippy expects some. [2]
-- Enable `clippy::restriction` lints one at a time, never as a group, and treat `clippy::pedantic` as opt-in. [2]
+- Cherry-pick individual `clippy::restriction` lints rather than enabling the whole group, and treat `clippy::pedantic` as opt-in. [2]
 - Run `cargo audit` in CI to check `Cargo.lock` against the RustSec advisory database. [12]
 - Do not run `cargo audit` on an untrusted project without `--file` pointing at its lockfile, since generating one can run project code. [12]
 
@@ -47,53 +50,53 @@ Formatting follows the Rust style guide and is enforced by rustfmt (`cargo fmt`)
 - Keep word order consistent across related names, such as error types. [4]
 
 ## Language and API usage
-- Keep struct fields private unless the type is a plain data carrier, so invariants can change later. [3]
-- Make constructors associated functions (`Type::new`), and turn functions with an obvious receiver into methods. [3]
-- Derive or implement the common traits eagerly where they make sense (`Debug`, `Clone`, `PartialEq`, `Hash`, `Default`) and implement `Display` on user-facing types. [3]
-- Implement `From`, `AsRef` and `AsMut` for conversions instead of ad-hoc functions. [3]
-- Make types `Send` and `Sync` where possible. [3]
-- Seal traits that downstream crates must not implement. [3]
+- Keep struct fields private unless the type is a plain, passive data carrier; a public field fixes the representation and blocks validation. [15]
+- Make constructors associated functions (`Type::new`), and turn operations with a clear receiver into methods. [14]
+- Implement the applicable common traits eagerly (`Clone`, `PartialEq`, `Hash`, `Debug`, `Display`, `Default` and friends), because downstream crates cannot add them later. [13]
+- Implement `From`, `TryFrom`, `AsRef` and `AsMut` for conversions where they fit, and implement `From` rather than `Into`. [13]
+- Check that types holding raw pointers report `Send` and `Sync` accurately, and add a test asserting the traits you rely on. [13]
+- Seal traits that only the defining crate should implement. [15]
 - Implement `Deref` / `DerefMut` only for smart pointers. [3]
 - Encode invariants in types (a validating newtype with a private field, a non-`Option` parameter, an unsigned integer) instead of repeating runtime checks. [6]
 - Keep `unsafe` blocks as small as possible and wrap them in a safe function so callers need no `unsafe`. [8]
 - Put a `// SAFETY:` comment on each unsafe operation saying why the safety rules hold, and on each `unsafe fn` say what the caller must guarantee. [8]
 - Remember `unsafe` does not switch off the borrow checker; check unsafe code with Miri (`cargo +nightly miri test`) where practical. [8]
-- Give every public item a rustdoc example that shows why to use it, not only how to call it. [3][5]
+- Give public items a rustdoc example, within reason, that shows why someone would use the item rather than only how to call it. [5]
 - Write examples with `?` rather than `unwrap`, ending doctests with `Ok::<(), E>(())` or a hidden `fn main() -> Result<...>`. [5][9]
 - Add `# Errors`, `# Panics` and `# Safety` sections to public functions that can fail, panic or are `unsafe`. [5]
 - Link related items in doc prose, and keep internal items `pub(crate)` or `#[doc(hidden)]`. [5]
 - Fill in `description`, `license`, `repository`, `keywords` and `categories` in `Cargo.toml` for published crates. [5]
 
 ## Errors, logging and nulls
-- Return `Result` for expected failures (bad input, I/O, parse errors) in library code; the caller decides how to react. [6]
-- Panic only when continuing is unsafe or meaningless: a broken contract or invariant, and document the panic condition. [6]
-- Do not call `unwrap` or `expect` in library code; reserve them for tests, examples and prototypes. [6]
+- Return `Result` when failure is an expected possibility (malformed input, a rate-limited response); that leaves recovery to the caller. [6]
+- Panic when a contract or invariant is broken and continuing would be harmful or insecure, and explain the contract in the API docs. [6]
+- Treat `unwrap` and `expect` as placeholders: fine in tests, examples and prototypes, and elsewhere only where failure is provably impossible. [6]
 - Use `expect` only where you can show the failure is impossible, and write a message that states why. [6]
 - Propagate errors with `?`, using `From` impls so one error type covers several sources. [7]
-- Use `?` only in functions returning a compatible `Result` or `Option`, and convert between the two with `ok()` or `ok_or`. [7]
-- Make error types meaningful and well-behaved. [3]
+- Use `?` only in functions whose return type is compatible with the value it is applied to (`Result` with `Result`, `Option` with `Option`). [7]
+- Implement `std::error::Error`, `Send` and `Sync` on every error type a public function returns. [13]
 
 ## Testing
 - Put unit tests in a `#[cfg(test)] mod tests` in the same file, using `use super::*;` to reach private items. [10]
 - Put integration tests in a top-level `tests/` directory; they see only the public API. [10]
-- Put shared test helpers in `tests/common/mod.rs`, not `tests/common.rs`, so it is not run as its own test crate. [10]
+- Put shared test helpers in `tests/common/mod.rs`, not `tests/common.rs`, so it does not show up as its own test file in the output. [10]
 - Prefer `assert_eq!` / `assert_ne!` (which print both sides) over `assert!(a == b)`, and add a message with context for non-obvious asserts. [11]
 - Give `#[should_panic]` an `expected = "..."` substring so unrelated panics do not pass. [11]
-- Have a test return `Result<(), E>` to use `?`, and check for expected errors with `is_err()`, not `#[should_panic]`. [11]
+- Have a test return `Result<(), E>` to use `?`, and assert an expected error with `is_err()`, since `#[should_panic]` cannot be combined with `Result` tests. [11]
 - Keep doctests compiling and passing (`cargo test --doc`); use `no_run` for code that must not execute and `text` for non-code blocks. [9]
 
 ## Security
-- Treat every `unsafe` block, `unsafe fn` and `unsafe impl` as a review hot spot and require a `// SAFETY:` justification for it. [8]
-- Do not add a dependency that `cargo audit` flags; ignore an advisory (`--ignore` or `audit.toml`) only when no fix exists and it does not affect the code. [12]
+- Treat every `unsafe` block and `unsafe fn` as a place to review closely, since memory-safety errors can only come from unsafe code, and require a `// SAFETY:` comment on each. [8]
+- Fix a flagged advisory by upgrading the crate; ignore it (`--ignore` or `audit.toml`) only when no upgrade exists and the advisory does not affect the code. [12]
 
 ## Review checklist
-- [ ] `cargo fmt` leaves the diff unchanged, and `cargo clippy` passes with warnings denied. [1][2]
-- [ ] No new `unwrap()` / `expect()` in non-test library code, and any `expect` message explains why failure is impossible. [6]
-- [ ] Fallible public functions return `Result`, errors propagate with `?`, and docs have `# Errors` where relevant. [5][7]
-- [ ] Each `unsafe` block is minimal, wrapped in a safe API, and carries a `// SAFETY:` comment. [8]
-- [ ] Panic conditions are documented under `# Panics`. [5][6]
-- [ ] Names follow casing rules, `as_` / `to_` / `into_` conversions, no `get_` prefix, and `iter` / `iter_mut` / `into_iter`. [3][4]
-- [ ] New public items have rustdoc with an example that uses `?` and compiles as a doctest. [5][9]
-- [ ] Struct fields are private unless intentionally public, and new types implement the common traits. [3]
-- [ ] New behavior has unit tests (in `#[cfg(test)]`) or integration tests in `tests/`, and `should_panic` tests set `expected`. [10][11]
-- [ ] `cargo audit` shows no new advisories for added or bumped dependencies. [12]
+- [ ] `cargo fmt` leaves the diff unchanged, and `cargo clippy` passes with warnings denied.
+- [ ] No new `unwrap()` / `expect()` outside tests, examples and prototypes, except an `expect` whose message explains why failure is impossible.
+- [ ] Fallible public functions return `Result`, errors propagate with `?`, and docs have `# Errors` where relevant.
+- [ ] Each `unsafe` block is minimal, wrapped in a safe API, and carries a `// SAFETY:` comment.
+- [ ] Panic conditions are documented under `# Panics`.
+- [ ] Names follow casing rules, `as_` / `to_` / `into_` conversions, no `get_` prefix, and `iter` / `iter_mut` / `into_iter`.
+- [ ] New public items have rustdoc with an example that uses `?` and compiles as a doctest.
+- [ ] Struct fields are private unless intentionally public, and new types implement the common traits.
+- [ ] New behavior has unit tests (in `#[cfg(test)]`) or integration tests in `tests/`, and `should_panic` tests set `expected`.
+- [ ] `cargo audit` shows no new unaddressed advisories for added or bumped dependencies.
