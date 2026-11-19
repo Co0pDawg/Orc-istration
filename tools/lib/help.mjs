@@ -110,13 +110,22 @@ export const HELP = {
     },
   },
   calibration: {
-    summary: 'Per-lane precision of the review panel from its run logs (review/calibration.md)',
+    summary: 'Per-lane precision and recall of the review panel from its run logs (review/calibration.md)',
     synopsis: 'calibration [--logs <dir>] [--min-precision <0..1>] [--out <file>] [--force]',
     options: {
       '--logs <dir>': 'the run logs (default <repo top>/.orc/reviews)',
       '--min-precision <0..1>': 'flag lanes below this precision',
       '--out <file>': 'write the report to a file instead of printing it',
       '--force': 'overwrite an existing --out file',
+    },
+  },
+  corpus: {
+    repo: true,
+    summary: 'List the review regression corpus, or score a panel report against one case (review/corpus.md)',
+    synopsis: 'corpus list | corpus score --case <id> --report <file>',
+    options: {
+      '--case <id>': 'score: the case, a folder under tests/fixtures/corpus',
+      '--report <file>': 'score: the panel report to score; exits 1 when an expected finding is missed',
     },
   },
   metrics: {

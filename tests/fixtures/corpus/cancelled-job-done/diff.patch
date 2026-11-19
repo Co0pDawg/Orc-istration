@@ -1,0 +1,21 @@
+diff --git a/src/jobs/exportJob.js b/src/jobs/exportJob.js
+new file mode 100644
+--- /dev/null
++++ b/src/jobs/exportJob.js
+@@ -0,0 +1,16 @@
++// Runs one export and records its outcome.
++import { jobs } from '../infra/jobs.js';
++import { writeExport } from './writer.js';
++
++export async function runExport(job, signal) {
++  await jobs.update(job.id, { status: 'running' });
++  try {
++    for (const batch of job.batches) {
++      if (signal.aborted) break;
++      await writeExport(job.target, batch);
++    }
++  } catch (err) {
++    console.debug('export batch failed', err);
++  }
++  await jobs.update(job.id, { status: 'done', finishedAt: Date.now() });
++}
