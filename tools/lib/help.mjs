@@ -84,7 +84,7 @@ export const HELP = {
     summary: 'Print the marching-orders template, or lint a brief against it',
     synopsis: 'brief new [--role <name>] [--out <file>] [--force] | brief lint <file> [--role <name>]',
     options: {
-      '--role <name>': 'the role the brief is for (items 9 and 10 only for builder, refuter and debugger)',
+      '--role <name>': 'the role the brief is for (items 9 to 11 only for builder, refuter and debugger)',
       '--out <file>': 'write the template to a file instead of printing it',
       '--force': 'overwrite an existing --out file',
     },

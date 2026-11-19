@@ -1,5 +1,5 @@
 ---
-description: "Work a ticket end to end: fetch and judge it, plan, branch, grill, builder/refuter loop with commit and push per accepted task, full tests once, pre-PR review, durable-rules check, live checklist on the ticket (workflows/start.md)."
+description: "Work a ticket end to end: fetch and judge it, plan, branch, grill, builder/refuter loop with commit and push per accepted task, full tests once, pre-PR review, live verification, durable-rules check, live checklist on the ticket (workflows/start.md)."
 argument-hint: <work item id or URL> [--lite|--full]
 allowed-tools:
   - Bash

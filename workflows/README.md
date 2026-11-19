@@ -4,7 +4,7 @@ Tool-neutral procedures for the work around the build loop. Each is a plain mark
 
 | Workflow | What it does |
 |---|---|
-| `start.md` | Work a ticket end to end: fetch and judge it, plan, branch, grill, builder/refuter loop per task with commit and push after ACCEPT, full tests once, pre-PR review, durable-rules check, live checklist on the ticket |
+| `start.md` | Work a ticket end to end: fetch and judge it, plan, branch, grill, builder/refuter loop per task with commit and push after ACCEPT, full tests once, pre-PR review, live verification, durable-rules check, live checklist on the ticket |
 | `grill.md` | Interview the developer on a plan until no decision is open; append a Decisions list |
 | `draft-pr.md` | Write the PR description from the branch and its work items; open it as a draft |
 | `peer-review.md` (+ `peer-review-score.sh`) | Review and fix a teammate's PR at a tier sized to its diff |

@@ -92,7 +92,7 @@ Every orchestrated task writes one record to `~/.claude/orchestration/log/<date>
 
 ### Orchestration Board
 
-- In AcmeApp, `/start` Step 11.5 runs the durable-rules check.
+- In AcmeApp, `/start` Step 15 runs the durable-rules check.
 - Every hours roll-up (`worklog.ps1 <date>`, in any project) ends by running `~/.claude/tools/worklog/sync-timeline.ps1 -Date <date> -Force` and uploading the pending files to the board (worklog README "Uploading"), so the Time page matches the roll-up without a "sync my timeline".
 
 ### Test runs

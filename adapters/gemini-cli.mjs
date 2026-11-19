@@ -21,6 +21,7 @@ export default {
   conflicts: [{ path: '.gemini/AGENTS.md', tool: 'Antigravity', warning: 'Antigravity could load two copies of the rulebook' }],
   gaps: [
     'No reasoning-effort key; tiers differ by model id only, and Low and Mid share the Flash id (no Flash-Lite id documented).',
+    'Low and Mid are the same model (`gemini-3-flash-preview`) in the shipped `models.json`, so a per-dispatch tier override between them changes nothing.',
     'Subagents cannot dispatch subagents, and parallel subagents are not documented: dispatch one at a time.',
     'No subagent-stop hook: the board update after an agent report is a build-loop step.',
     'Read-only is enforced only by the tools allowlist; run_shell_command can still change files, so the role body forbids edits.',
