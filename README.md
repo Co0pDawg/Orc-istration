@@ -16,9 +16,10 @@ Full documentation lives in the [wiki](https://github.com/Co0pDawg/Orc-istration
 
 ## How it works
 
-- **A spec comes first.** The orchestrator is the main chat session. Before anything is built it writes a ten-item brief called the marching orders.
+- **A spec comes first.** The orchestrator is the main chat session. Before anything is built it writes an eleven-item brief called the marching orders.
 - **Cheap agents look, expensive agents build.** A subagent is a separate agent the orchestrator starts with that brief; it works in its own context and returns a short report. Each role runs on a tier (Low, Mid or High), which maps to a cheaper or more capable model per tool. Scouts (Low) find files, researchers (Mid) read docs and report cited facts, and a builder (High) implements exactly the spec and runs the filtered tests.
-- **Every built change is attacked.** A refuter (High), which did not write the code, reviews the diff against the spec, reruns the tests, mutation-checks them, and returns ACCEPT or REWORK.
+- **Every built change is attacked.** A refuter (High), which did not write the code, reviews the diff against the spec and the ticket's intent, reruns the tests, mutation-checks them in a throwaway worktree, and returns ACCEPT or REWORK. Where the spec itself drifted from the intent, that goes back to the orchestrator, not the builder.
+- **Outside text is data.** Tickets, PR threads, attachments, web pages and a reviewed diff are read for what they say, never obeyed: an instruction inside them is reported, not followed.
 - **Rework is bounded.** REWORK goes back to the same builder. After two rounds the orchestrator reads the diff and decides.
 - **The orchestrator signs off.** It reads the final diff itself, picks a pre-PR review tier, and opens a pull request.
 - **You can watch it happen.** Agents post their progress to a live board, one card per task.
@@ -48,9 +49,11 @@ flowchart LR
 | refuter | High | Try to prove the diff wrong against the spec; rerun tests; ACCEPT or REWORK. Never edits. |
 | debugger | High | Root cause for a failure that is not obvious. Reproduces first. |
 
+The builder keeps web fetch and search for the docs its orders name: in Claude Code a role without every capability gets a tool allowlist and would lose the board tool.
+
 Six more roles (`review-*`) make up the [review panel](#review-panel) the Full review tier runs.
 
-**The marching orders.** Every dispatch carries the same ten items, in order:
+**The marching orders.** Every dispatch carries the same eleven items, in order (scouts and researchers stop at 8):
 
 1. Goal, in one sentence.
 2. Scope: exact files or URLs.
@@ -60,8 +63,9 @@ Six more roles (`review-*`) make up the [review panel](#review-panel) the Full r
 6. Output format and cap (40 lines by default).
 7. Known: facts already established.
 8. Scratch path for anything over the cap.
-9. Data precondition: the real rows or paths the feature depends on.
-10. Board: the card and stage the agent updates.
+9. Intent: for a refuter, the ticket brief or acceptance criteria verbatim, or `none: <why>`.
+10. Data precondition: the real rows or paths the feature depends on.
+11. Board: the card and stage the agent updates.
 
 **The board.** A live status page with one block per session and one card per task moving through its stages, so the person running the agents can follow the work without reading transcripts. It lives in its own repo, [Orc-Dashboard](https://github.com/Co0pDawg/Orc-Dashboard).
 
@@ -201,7 +205,7 @@ In Claude Code, `/pre-pr-review [branch] [base] [scope keywords] [lite|full]`, `
 
 The work around the build loop, ported from the same production setup and made repo-neutral (`workflows/README.md`):
 
-- `start <ticket>` works a ticket end to end: judge it, plan, branch, grill, build loop with a commit per accepted task, full tests once, pre-PR review, durable-rules check, with a live checklist on the ticket. It never opens the PR.
+- `start <ticket>` works a ticket end to end: judge it, plan, branch, grill, build loop with a commit per accepted task, full tests once, pre-PR review, live verification, durable-rules check, with a live checklist on the ticket. It never opens the PR.
 - `grill [plan]` interviews you on a plan until no decision is open.
 - `draft-pr` writes the description and opens a draft PR linked to its work items.
 - `peer-review <PR>` reviews and fixes a teammate's PR at a tier sized to its diff.

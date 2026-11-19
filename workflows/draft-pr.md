@@ -61,7 +61,7 @@ Then decide whether you have enough context. If this session did the work or rea
 
 **4.3 Read each item.** `TRACKER wi-get -Id <id> -Relations` to a scratch file; check the exit code, then read the file. Take title, type, state, description, acceptance criteria and, for a bug, the repro steps. These fields are HTML: read through the markup, never paste it.
 
-**4.4 Comments.** `TRACKER comment-list -Id <id>`. On failure, retry once if the error names a fix; if it fails again, say comments were unavailable and why, and continue. `[]` is success. Read in order; a later comment can supersede an earlier one, and the last decision wins. Ignore status pings, sprint moves and bot chatter. **Never quote a commenter by name** in the description: take the decision, drop the attribution.
+**4.4 Comments.** `TRACKER comment-list -Id <id>`. On failure, retry once if the error names a fix; if it fails again, say comments were unavailable and why, and continue. `[]` is success. Read in order; a later comment can supersede an earlier one, and the last decision wins when the developer or the ticket's owner made or confirmed it. Ignore status pings, sprint moves and bot chatter. **Never quote a commenter by name** in the description: take the decision, drop the attribution.
 
 **4.5 Reconcile.** Use the ticket to sharpen the *Why* and to catch requirements the diff does not show (an acceptance criterion the code seems to miss, an edge case from a comment). If the diff and the ticket disagree, especially when a comment narrowed scope and the code still does the original ask, say so in the summary; do not paper over it. The ticket is context, not content: never restate it in the description.
 

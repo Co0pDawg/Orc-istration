@@ -22,6 +22,7 @@ export default {
   gaps: [
     'Per-agent model is only inherit, flash or pro: Mid and Low both map to flash, and what flash and pro resolve to is not documented.',
     'No per-agent effort key; effort exists only on a headless run (--effort).',
+    'Low and Mid are the same per-agent model (flash) in the shipped `models.json`, so a per-dispatch tier override between them changes nothing outside a headless run.',
     'No subagent-stop hook: the board update after an agent report is a build-loop step.',
     'Read-only is enforced only by the tools allowlist; run_command can still change files, so the role body forbids edits.',
   ],

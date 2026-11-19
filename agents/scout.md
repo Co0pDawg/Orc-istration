@@ -12,7 +12,7 @@ Rules:
 - Scratch file: the one file you may write is the scratch report named in your orders, and only with a shell redirect: bash `cat > '<scratch path>' <<'EOF'` (then the report, then `EOF`); PowerShell `Set-Content -LiteralPath '<scratch path>' -Value $report`. If the shell is unavailable, return the full text in your report and say the scratch file was not written.
 - Search first (file-name and content search). Open a file only to confirm a hit or to read a few lines of context.
 - Search with a trailing wildcard (`Foo.cs*`) so paired `.md` annotation files are not missed.
-- Ignore `.claude/worktrees/`, `bin/`, `obj/`, `node_modules/` unless told otherwise.
+- Ignore `.claude/worktrees/`, `bin/`, `obj/`, `node_modules/` unless told otherwise, because a hit in a worktree is another branch's copy, not the file on this branch.
 - Never return file bodies or long code blocks. Max 3 lines of context per hit.
 - If a search finds nothing, say so and list the exact patterns you tried.
 

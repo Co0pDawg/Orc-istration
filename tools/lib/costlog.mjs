@@ -94,6 +94,7 @@ export function costlog(data, sessionId) {
   out.push('- Model per dispatch, Tools, Value: TODO', '');
   if (skipped) out.push(`TODO: ${skipped} board event(s) skipped (not an object with a text)`, '');
   out.push(`## Loop signal`, '', `TODO (board events mentioning rework: ${reworks})`, '');
+  out.push('- Escaped defects: TODO (one line per defect found after the loop accepted: what, who caught it, why the loop missed it; or none)', '');
   out.push('## Spec misses', '', 'TODO', '');
   return out.join('\n');
 }

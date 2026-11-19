@@ -47,7 +47,7 @@ Each of these is a standing rule that sprint mode turns off for this task only:
 - the standards setup before the first build: use the language's common conventions and say so;
 - scouts and researchers: the orchestrator greps and reads docs inline;
 - the inline threshold: ~10 tool calls instead of ~5;
-- marching-orders items 6 to 10 in a brief (a headless `orc dispatch` then needs `--no-lint`);
+- marching-orders items 6 to 11 in a brief (a headless `orc dispatch` then needs `--no-lint`);
 - the Light/Full pre-PR review (the review panel, `review/PROCEDURE.md`): replaced by the per-slice refuter and the orchestrator's diff read; run `/pre-pr-review` after the clock if the work will ship;
 - the 2-round REWORK limit: it is 1;
 - the end-of-task full suite when it takes 2 minutes or more;
