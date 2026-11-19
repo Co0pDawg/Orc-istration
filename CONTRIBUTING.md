@@ -84,6 +84,16 @@ The repo is designed to be checked out as `~/.claude`, but you can develop in a 
 - `tests/standards.test.mjs`: `standards list`, `show`, `detect` and `apply`, and the archive validation in `check`.
 - `tests/review-tools.test.mjs`: `calibration` and `metrics`.
 
+## Keep the README and wiki current
+
+Every pull request that changes what a user sees or does updates the README and the wiki as part of the same change, not in a later docs pass. That covers a command, a flag, a role, a workflow, a skill, a mode, an install or restore step, a supported tool, or a limit that is added, changed or removed.
+
+- **README.md** is in this repo, so its edit goes in the same commit range as the change.
+- **The wiki** is its own repo, `https://github.com/Co0pDawg/Orc-istration.wiki.git`. Clone it, edit the matching page (the Home page index says which page covers what), add any new page to `_Sidebar.md` and the Home page index, and keep the `Next: [[...]]` chain unbroken. Push the wiki once the pull request merges, so the wiki never describes unmerged work.
+- **The pull request description** carries a Docs line: the README sections and wiki pages updated, or `no user-facing change`. The pull request template asks for it.
+- **Reviewers and refuters** treat a stale README section or wiki page as a must-fix, the same as a stale `docs/cli.md` entry.
+- Evidence drawn from cost logs or other projects is anonymised before it goes in either place: the repo and the wiki are public.
+
 ## Pull requests
 
-Branch off `main` and open a draft pull request against `main`. CI runs `npm test` and `node tools/orc.mjs check` on Ubuntu and Windows, plus the worklog test on Windows.
+Branch off `main` and open a draft pull request against `main`. Fill in the template's Docs checklist (see "Keep the README and wiki current"). CI runs `npm test` and `node tools/orc.mjs check` on Ubuntu and Windows, plus the worklog test on Windows.
