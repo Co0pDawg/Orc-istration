@@ -10,7 +10,7 @@
 
 It is not an autonomous swarm. A person stays in charge: a spec is written before any code, each built change gets an independent review, and nothing counts as done until the orchestrator has read the final diff.
 
-> **Status: developed and used on Claude Code; early on other tools.** The full loop has run live only on Claude Code. Antigravity CLI has had one live run of a generated agent, and the other five adapters are verified by tests against each tool's documented format. See [Limits](#limits).
+> **Status: developed and used on Claude Code; early on other tools.** The full loop has run live only on Claude Code, on the files generated from this repo since 2026-11-18. Antigravity CLI has had one live run of a generated agent, and the other five adapters are verified by tests against each tool's documented format. See [Limits](#limits).
 
 Full documentation lives in the [wiki](https://github.com/Co0pDawg/Orc-istration/wiki).
 
@@ -67,7 +67,7 @@ Six more roles (`review-*`) make up the [review panel](#review-panel) the Full r
 
 ![The board in its Sleek skin: a session with its activity log on the left and task cards showing stages and progress lines, using demo data](https://raw.githubusercontent.com/Co0pDawg/Orc-Dashboard/main/docs/screenshots/board-sleek.png)
 
-**Repo standards.** `node tools/orc.mjs standards` (run from the setup checkout) sets up a project's coding standards: `STANDARDS.md` at its root, which builders follow and refuters check diffs against, section by section. It detects the project's stacks and composes the file from a cited archive (`standards/`: ASP.NET Core, C#, Go, Java, Playwright, PowerShell, Python, React, Rust, SQL, TypeScript), from the team's own files (`--from`), or both. Before the first build in a repo without one, the orchestrator runs the setup in [`orchestration/standards.md`](orchestration/standards.md): it detects the stacks, then asks you in one several-picks question which to adopt and whether you have your own standards to import, then applies. A re-apply never overwrites a file the team has edited, or drops a stack or import it was applied with, unless forced, and then keeps a backup. `install` writes the setup checkout's path into the installed rulebook ("Setup checkout (this machine)"), so any tool can find the procedure and the command. Claude Code also gets the procedure as the `repo-standards` skill, but only where `~/.claude` is the setup checkout, since skills load from `~/.claude/skills`.
+**Repo standards.** `node tools/orc.mjs standards` (run from the setup checkout) sets up a project's coding standards: `STANDARDS.md` at its root, which builders follow and refuters check diffs against, section by section. It detects the project's stacks and composes the file from a cited archive (`standards/`: ASP.NET Core, C#, Go, Java, Playwright, PowerShell, Python, React, Rust, SQL, TypeScript), from the team's own files (`--from`), or both. Before the first build in a repo without one, the orchestrator runs the setup in [`orchestration/standards.md`](orchestration/standards.md): it detects the stacks, then asks you in one several-picks question which to adopt and whether you have your own standards to import, then applies. A re-apply never overwrites a file the team has edited, or drops a stack or import it was applied with, unless forced, and then keeps a backup. `install` writes the setup checkout's path into the installed rulebook ("Setup checkout (this machine)"), so any tool can find the procedure and the command. Claude Code also gets the procedure as the `repo-standards` skill where `~/.claude/skills` has it: there when `~/.claude` is the setup checkout, copied by hand from a separate clone.
 
 **Sprint mode.** For a timeboxed build, such as a live AI-assisted interview exercise, ask for a sprint ("sprint mode", "a 45-minute sprint"). For that one task the orchestrator follows [`orchestration/sprint.md`](orchestration/sprint.md): at most three runnable slices, a walking skeleton by about minute 15, a feature freeze ten minutes before the deadline, one builder resumed per slice, Mid-tier refuters reviewing each slice's commit while the next is built, and one rework round. It skips the board, the standards setup, the review panel and the cost log; it never skips the orchestrator's diff read, one real run of the app, or the PR and safety rules. A sprint as an iteration name ("put this in sprint 45") does not trigger it. Claude Code also gets it as the `sprint` skill where `~/.claude/skills` has it.
 
@@ -83,7 +83,7 @@ Every change that goes through the build loop gets an independent adversarial re
 
 | Tool | What gets generated | Verified how | Main gap |
 |---|---|---|---|
-| Claude Code | `CLAUDE.md` + `agents/*.md` in `~/.claude` | The loop has run on the earlier Claude-only rulebook; the files generated from this repo have not run live yet | Builder and debugger keep MCP tools (no allowlist) |
+| Claude Code | `CLAUDE.md` + `agents/*.md` + the review panel's `commands/*.md` in `~/.claude` | Live: sessions run on the generated files since 2026-11-18 | Builder and debugger keep MCP tools (no allowlist) |
 | Antigravity CLI | `~/.gemini/AGENTS.md` + `config/agents/` | One headless live run of the scout (2026-11-15) | Models only `flash` or `pro`; no per-agent effort |
 | Gemini CLI | `~/.gemini/GEMINI.md` + `agents/` | Golden-file tests against documented formats | No nested or documented parallel subagents |
 | Codex CLI | `~/.codex/AGENTS.md` + `agents/*.toml` | Golden-file tests against documented formats | No tool allowlist; Windows through WSL2 |
@@ -97,14 +97,14 @@ Details per tool: [Supported Tools](https://github.com/Co0pDawg/Orc-istration/wi
 
 Requires Node 22 or later. No dependencies.
 
-**Claude Code.** This repo is rooted at `~/.claude` (see "Restore on a new machine"). After editing `AGENTS.md`, `roles/` or `adapters/`:
+**Claude Code.** Either check this repo out as `~/.claude` (see "Restore on a new machine"), or develop in a separate clone and install from it with `node tools/orc.mjs install --tool claude-code --home <your home>` (a dry run; add `--apply`), as [CONTRIBUTING.md](CONTRIBUTING.md#development-clone-vs-the-live-setup) describes. After editing `AGENTS.md`, `roles/` or `adapters/`:
 
 ```
-node tools/orc.mjs sync      # regenerates CLAUDE.md and agents/*.md
+node tools/orc.mjs sync      # regenerates CLAUDE.md, agents/*.md and the generated commands/*.md
 npm test                     # golden files, install tests, and check
 ```
 
-Then, in each project, set up its coding standards with the `repo-standards` skill ([`orchestration/standards.md`](orchestration/standards.md)). The skill is there because `~/.claude` is this checkout; from a separate clone, follow the procedure with that clone as `<setup>`.
+Then, in each project, set up its coding standards with the `repo-standards` skill ([`orchestration/standards.md`](orchestration/standards.md)). The skill is there when `~/.claude` is this checkout; from a separate clone, copy `skills/` into `~/.claude/skills` by hand, or follow the procedure with that clone as `<setup>` (`ORC_HOME`, or the "Setup checkout" line `install` writes).
 
 **Antigravity CLI.** From a clone of this repo:
 
@@ -133,7 +133,7 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `models.json` | Tier to model, per tool; `models.local.json` (untracked) overrides |
 | `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
 | `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks`, `standards`; review panel: `calibration`, `metrics`; `help` |
-| `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them), install and check tests |
+| `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them), install, check, tooling, standards and review-panel tool tests |
 | `CONTRIBUTING.md` | How to change this repo: sources vs generated files, the edit loop, traps |
 | `docs/cli.md` | The full command reference |
 | `orchestration/README.md` | Cost-log format and review questions |
@@ -148,7 +148,8 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 
 ## Limits
 
-- The full loop has run live only on Claude Code, and that was with the earlier Claude-only rulebook: the rulebook and agent files generated from this repo have not run a live session yet. Antigravity CLI has had one headless run of the generated scout.
+- The full loop has run live only on Claude Code (on the files generated from this repo since 2026-11-18). Antigravity CLI has had one headless run of the generated scout.
+- Slash commands, skills and review metrics are Claude Code only; other tools follow `review/PROCEDURE.md`, `workflows/*.md` and the `orchestration/` procedures by hand. `dispatch` runs headlessly on Antigravity and Claude Code only.
 - Gemini CLI, Codex, Cursor, Copilot and OpenCode are verified by tests against documented formats only.
 - Cursor and Copilot need model ids set in `models.local.json`; until then they use `inherit` or the default model.
 - Hooks, the worklog and sound alerts are Claude Code extras. On other tools the board update after each report is a build-loop step.
@@ -178,7 +179,7 @@ Every command is `node tools/orc.mjs <command>`. Options: `node tools/orc.mjs he
 | `costlog` | Draft a cost log from the board |
 | `calibration` | Per-lane precision of the review panel from its run logs |
 | `metrics` | Capture or report per-run review metrics from Claude Code transcripts |
-| `dispatch` | Run one role headlessly at its tier |
+| `dispatch` | Run one role headlessly at its tier (Antigravity and Claude Code) |
 | `hooks` | Merge the example hooks into `settings.json` (dry run without `--apply`) |
 | `standards` | List, show or detect archive coding standards, or compose a project's `STANDARDS.md` (dry run without `--apply`) |
 | `help` | List the commands, or one command's options |
