@@ -860,3 +860,139 @@ test('R6: install options are remembered; plain status and install reuse them; -
   assert.equal((await run(['install', ...base, '--no-board', '--board', 'http://localhost:1', '--board-repo', boardRepo])).code, 1);
   assert.equal((await run(['build', '--no-profile'])).code, 1);
 });
+
+// A temp copy of the repo with its goldens, for the golden command.
+function goldenRepo(name) {
+  const copy = tempDir(name);
+  for (const p of ['AGENTS.md', 'CLAUDE.md', 'models.json', 'roles', 'adapters', 'agents', 'tools/lib', 'tests/golden']) {
+    fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
+  }
+  return copy;
+}
+
+test('golden: an unchanged copy reports every file unchanged', async () => {
+  const copy = goldenRepo('golden-same');
+  const r = await run(['golden', '--repo', copy]);
+  assert.equal(r.code, 0, r.err);
+  const lines = r.out.split('\n');
+  const goldenFiles = fs.readdirSync(path.join(copy, 'tests', 'golden'), { recursive: true, withFileTypes: true }).filter((d) => d.isFile());
+  assert.equal(lines.length, goldenFiles.length);
+  assert.ok(lines.every((l) => l.startsWith('unchanged tests/golden/')), r.out);
+});
+
+test('golden: a role edit rewrites that role in every adapter; a stale golden is deleted', async () => {
+  const copy = goldenRepo('golden-edit');
+  const role = path.join(copy, 'roles', 'scout.md');
+  fs.writeFileSync(role, `${fs.readFileSync(role, 'utf8').replace(/\r\n/g, '\n')}Extra golden line.\n`);
+  const stale = path.join(copy, 'tests', 'golden', 'codex', '.codex', 'agents', 'gone.toml');
+  fs.writeFileSync(stale, 'old\n');
+  const r = await run(['golden', '--repo', copy]);
+  assert.equal(r.code, 0, r.err);
+  const wrote = r.out.split('\n').filter((l) => l.startsWith('wrote '));
+  const tools = ['antigravity', 'claude-code', 'codex', 'copilot', 'cursor', 'gemini-cli', 'opencode'];
+  const scoutTools = tools.filter((t) => wrote.some((l) => l.startsWith(`wrote tests/golden/${t}/`) && /scout/.test(l)));
+  assert.deepEqual(scoutTools, tools, r.out);
+  assert.ok(wrote.every((l) => /scout/.test(l)), r.out);
+  assert.match(r.out, /^deleted tests\/golden\/codex\/\.codex\/agents\/gone\.toml$/m);
+  assert.equal(fs.existsSync(stale), false);
+  assert.ok((await run(['golden', '--repo', copy])).out.split('\n').every((l) => l.startsWith('unchanged ')));
+});
+
+test('golden: --tool touches only that tool; an unknown tool or a build error exits 1 and writes nothing', async () => {
+  const copy = goldenRepo('golden-tool');
+  const codexStray = path.join(copy, 'tests', 'golden', 'codex', 'stray.md');
+  fs.writeFileSync(codexStray, 'x\n');
+  fs.writeFileSync(path.join(copy, 'tests', 'golden', 'cursor', 'stray.md'), 'x\n');
+  const r = await run(['golden', '--repo', copy, '--tool', 'cursor']);
+  assert.equal(r.code, 0, r.err);
+  assert.ok(r.out.split('\n').every((l) => l.includes(' tests/golden/cursor/')), r.out);
+  assert.ok(fs.existsSync(codexStray));
+  assert.equal(fs.existsSync(path.join(copy, 'tests', 'golden', 'cursor', 'stray.md')), false);
+  const bad = await run(['golden', '--repo', copy, '--tool', 'nope']);
+  assert.equal(bad.code, 1);
+  assert.match(bad.err, /unknown tool nope/);
+  const models = JSON.parse(fs.readFileSync(path.join(copy, 'models.json'), 'utf8'));
+  delete models.codex.low;
+  fs.writeFileSync(path.join(copy, 'models.json'), JSON.stringify(models));
+  const broken = await run(['golden', '--repo', copy]);
+  assert.equal(broken.code, 1);
+  assert.match(broken.err, /codex: no model for tier low/);
+  assert.equal(broken.out, '');
+  assert.ok(fs.existsSync(codexStray), 'nothing deleted on a build error');
+});
+
+test('help: every dispatched command has a help entry, and every entry is a command', async () => {
+  const { HELP } = await import('../tools/lib/help.mjs');
+  const src = fs.readFileSync(ORC, 'utf8');
+  const dispatched = [...src.matchAll(/cmd === '([a-z][a-z-]*)'/g)].map((m) => m[1]);
+  assert.deepEqual([...new Set(dispatched)].sort(), Object.keys(HELP).sort());
+  const global = await run(['help']);
+  assert.equal(global.code, 0);
+  for (const c of Object.keys(HELP)) assert.match(global.out, new RegExp(`^  ${c} +\\S`, 'm'), c);
+  for (const argv of [['--help'], ['-h']]) assert.equal((await run(argv)).out, global.out);
+  for (const c of Object.keys(HELP)) {
+    const one = await run(['help', c]);
+    assert.equal(one.code, 0, c);
+    assert.match(one.out, new RegExp(`^usage: node tools/orc\\.mjs ${c}\\b`), c);
+    if (c !== 'help') assert.equal((await run([c, '--help'])).out, one.out, c);
+  }
+  assert.match((await run(['install', '--help'])).out, /--board-repo <dir> +the Orc-Dashboard checkout/);
+  assert.equal((await run(['help', 'nope'])).code, 1);
+  const nope = await run(['nope']);
+  assert.equal(nope.code, 1);
+  assert.match(nope.err, /^usage: node tools\/orc\.mjs build\|check\|sync\|golden\|/);
+});
+
+test('generated marker: the old and new forms are recognised, including a Codex TOML first line', async () => {
+  const { isGenerated, generatedMarker } = await import('../tools/lib/frontmatter.mjs');
+  assert.match(generatedMarker('codex'), /^<!-- generated by orc\.mjs: codex\. Do not edit: .*CONTRIBUTING\.md.* -->$/);
+  assert.ok(isGenerated(`${generatedMarker('antigravity')}\nrules\n`));
+  assert.ok(isGenerated('<!-- generated by orc.mjs: antigravity -->\nrules\n'));
+  assert.ok(isGenerated(`@AGENTS.md\r\n${generatedMarker('claude-code')}\r\n`));
+  assert.ok(isGenerated('# generated by orc.mjs: codex\nname = "scout"\n'));
+  const toml = `# ${generatedMarker('codex').slice(5, -4)}`;
+  assert.equal(toml, '# generated by orc.mjs: codex. Do not edit: change the sources in the Orc-istration repo (see CONTRIBUTING.md) and regenerate.');
+  assert.ok(isGenerated(`${toml}\nname = "scout"\n`));
+  assert.ok(!isGenerated('my own rules\n'));
+});
+
+test('check names the source to edit for CLAUDE.md and a missing agent', async () => {
+  const copy = goldenRepo('check-src');
+  fs.appendFileSync(path.join(copy, 'CLAUDE.md'), 'hand edit\n');
+  fs.rmSync(path.join(copy, 'agents', 'refuter.md'));
+  const r = await run(['check', '--repo', copy]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /CLAUDE\.md: differs from generated at line \d+ \(generated from AGENTS\.md \/ adapters\/claude-code\.notes\.md \/ adapters\/claude-code\.mjs; edit those, then run node tools\/orc\.mjs sync\)/);
+  assert.match(r.err, /agents\/refuter\.md: missing \(generated from roles\/refuter\.md; run node tools\/orc\.mjs sync\)/);
+  // goldenRepo copies no commands/, so every generated command is missing and names its source.
+  assert.match(r.err, /commands\/pre-pr-review\.md: missing \(generated from adapters\/claude-code\.mjs; run node tools\/orc\.mjs sync\)/);
+});
+
+const canLink = (() => {
+  const d = tempDir('jprobe');
+  try {
+    fs.mkdirSync(path.join(d, 't'));
+    fs.symlinkSync(path.join(d, 't'), path.join(d, 'l'), 'junction');
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+test('golden refuses a linked tests/golden or tests/golden/<tool>; nothing outside is written or deleted', { skip: canLink ? false : 'this platform cannot create a junction or directory symlink' }, async () => {
+  for (const linked of [['tests', 'golden', 'cursor'], ['tests', 'golden']]) {
+    const copy = goldenRepo('golden-link');
+    const outside = tempDir('golden-outside');
+    fs.cpSync(path.join(copy, ...linked), outside, { recursive: true });
+    const canary = path.join(outside, 'victim.txt');
+    fs.writeFileSync(canary, 'keep me\n');
+    fs.rmSync(path.join(copy, ...linked), { recursive: true });
+    fs.symlinkSync(outside, path.join(copy, ...linked), 'junction');
+    const r = await run(['golden', '--repo', copy]);
+    assert.equal(r.code, 1, linked.join('/'));
+    assert.match(r.err, /^refused: .*(symlink or junction|resolves outside)/m);
+    assert.match(r.err, /nothing written: unsafe tests\/golden path/);
+    assert.equal(r.out, '');
+    assert.equal(fs.readFileSync(canary, 'utf8'), 'keep me\n');
+  }
+});

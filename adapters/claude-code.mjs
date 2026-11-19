@@ -12,9 +12,10 @@ const capabilityTools = {
   'web-search': ['WebSearch'],
 };
 
-// The checkout is found at run time ($ORC_HOME, else ~/.claude), so no machine path is written into these files.
+// The checkout is found at run time ($ORC_HOME, else the rulebook's Setup checkout line, else ~/.claude), so no
+// machine path is written into these files.
 const FIND_CHECKOUT =
-  'Find the Orc-istration checkout: the `ORC_HOME` environment variable when it is set (`echo "$ORC_HOME"`), otherwise `~/.claude`. Call it CHECKOUT and confirm the file named below exists there; if it does not, stop and say to set `ORC_HOME` to the checkout.';
+  'Find the Orc-istration checkout: the `ORC_HOME` environment variable when it is set (`echo "$ORC_HOME"`), else the "Setup checkout (this machine)" line in the rulebook\'s tool notes, else `~/.claude`. Call it CHECKOUT and confirm the file named below exists there; if it does not, stop and say to set `ORC_HOME` to the checkout.';
 
 const commands = [
   {

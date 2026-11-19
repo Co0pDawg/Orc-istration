@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { parse, serialize, normalizeEol } from '../tools/lib/frontmatter.mjs';
 import { parseRole } from '../tools/lib/roles.mjs';
 import { serializeToml, parseToml, tomlMultiline } from '../tools/lib/toml.mjs';
-import { main, loadRoles, loadModels, loadAdapters, buildTool, allowedTools, parseAgyModels, firstDiffLine } from '../tools/orc.mjs';
+import { main, loadRoles, loadModels, loadAdapters, buildTool, buildGolden, allowedTools, parseAgyModels, firstDiffLine } from '../tools/orc.mjs';
 import { spawnSync } from 'node:child_process';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -66,10 +66,11 @@ test('roles parse and validate', () => {
 });
 
 test('golden snapshots, tool allowlists, read-only roles', async () => {
-  const { roles, models, agentsMd, adapters } = await buildRepo();
-  assert.deepEqual(adapters.map((a) => a.id), ['antigravity', 'claude-code', 'codex', 'copilot', 'cursor', 'gemini-cli', 'opencode']);
-  for (const adapter of adapters) {
-    const { files, errors } = buildTool(adapter, roles, models, agentsMd);
+  // The same build `node tools/orc.mjs golden` writes, so the test and the command cannot drift.
+  const roles = loadRoles(REPO);
+  const results = await buildGolden(REPO);
+  assert.deepEqual(results.map((r) => r.adapter.id), ['antigravity', 'claude-code', 'codex', 'copilot', 'cursor', 'gemini-cli', 'opencode']);
+  for (const { adapter, files, errors } of results) {
     assert.deepEqual(errors, [], adapter.id);
     assert.equal(files.filter((f) => f.role).length, roles.length, `${adapter.id} emits every role`);
     const allowed = allowedTools(adapter);
@@ -227,6 +228,7 @@ test('no tracked text file holds a denylisted name or term', () => {
     new RegExp(['cos', 'airus'].join(''), 'i'),
     new RegExp(['kms', 'db', 'tool'].join(''), 'i'),
     new RegExp(['ela', 'von'].join(''), 'i'),
+    new RegExp(['head', 'hunter'].join(''), 'i'),
     new RegExp(`\\b(${['PE', 'T'].join('')}|${['KM', 'S'].join('')})-\\d+`, 'i'),
     // Surnames as whole words, case-sensitive; "wall clock" is ordinary English.
     new RegExp(`\\b${['Wa', 'll'].join('')}\\b(?!\\s+clock)`),
@@ -279,9 +281,13 @@ test('claude-code review commands: thin wrappers, no machine path, panel files p
   for (const f of cmds) {
     const { data, body } = parse(f.content);
     assert.deepEqual(Object.keys(data), ['description', 'argument-hint', 'allowed-tools'], f.path);
-    assert.match(body, /`ORC_HOME`.*otherwise `~\/\.claude`/, f.path);
+    assert.match(body, /`ORC_HOME`.*, else the "Setup checkout \(this machine\)" line in the rulebook's tool notes, else `~\/\.claude`/, f.path);
     assert.match(body, /`CHECKOUT\/review\/(PROCEDURE|calibration)\.md`/, f.path);
     assert.doesNotMatch(f.content, /[A-Za-z]:[\\/]|\/Users\/|\/home\//, `${f.path} names no machine path`);
+  }
+  // The hand-written commands find the checkout in the same order.
+  for (const n of ['create', 'draft-pr', 'fix-ci', 'grill', 'peer-review', 'start']) {
+    assert.match(read(path.join(REPO, 'commands', `${n}.md`)), /`ORC_HOME`.*, else the "Setup checkout \(this machine\)" line in the rulebook's tool notes, else `~\/\.claude`/, n);
   }
   for (const f of ['PROCEDURE.md', 'contract.md', 'shared-rules.md', 'selection.md']) assert.ok(fs.existsSync(path.join(REPO, 'review', f)), f);
   const lanes = ['architecture-reviewer', 'code-reviewer', 'code-simplifier', 'comment-analyzer', 'pr-test-analyzer', 'secondary-artifacts', 'silent-failure-hunter', 'ticket-coverage', 'type-design-analyzer', 'ui-test-reviewer'];
@@ -384,12 +390,34 @@ test('install --board adds the Board line; without it a warning', async () => {
     assert.equal(r.code, 1);
     assert.match(r.err, /pass --board and --board-repo together, or neither/);
   }
+  // An artifact address needs no --board-repo, ignores one given, and its line names ArtifactData, not board.js.
+  for (const [url, extra] of [['https://claude.ai/artifact/abc', []], ['claude.ai/code/artifact/def', ['--board-repo', 'C:/x']]]) {
+    const ch = tempDir('board-artifact');
+    const inst = await run(['install', '--tool', 'claude-code', '--home', ch, '--apply', '--board', url, ...extra]);
+    assert.equal(inst.code, 0, inst.err);
+    const rulebook = read(path.join(ch, '.claude', 'CLAUDE.md'));
+    assert.ok(rulebook.includes(`- **Board:** this machine's board address is \`${url}\` (artifact backend: write it with ArtifactData, as the tool notes say).`), rulebook);
+    assert.doesNotMatch(rulebook, /board\.js/);
+    const st = await run(['status', '--tool', 'claude-code', '--home', ch]);
+    assert.equal(st.code, 0, st.out);
+    assert.match(st.out, /same: .*CLAUDE\.md/);
+  }
+  // Only Claude Code can write an artifact board: other tools refuse it, with or without --board-repo, in install and status.
+  const cx = tempDir('board-artifact-codex');
+  for (const cmd of [['install', '--apply'], ['status']]) {
+    for (const extra of [[], ['--board-repo', 'C:/x']]) {
+      const r = await run([cmd[0], '--tool', 'codex', '--home', cx, ...cmd.slice(1), '--board', 'https://claude.ai/artifact/abc', ...extra]);
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.err, /the artifact board can be written only from Claude Code; use a local board address/);
+    }
+  }
+  assert.equal(fs.existsSync(path.join(cx, '.codex', 'AGENTS.md')), false, 'nothing installed');
 });
 
 test('install warns about two rulebooks in a shared ~/.gemini', async () => {
   const home = tempDir('gemini');
   assert.equal((await run(['install', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
-  assert.match(read(path.join(home, '.gemini', 'AGENTS.md')), /^<!-- generated by orc\.mjs: antigravity -->\n/);
+  assert.match(read(path.join(home, '.gemini', 'AGENTS.md')), /^<!-- generated by orc\.mjs: antigravity\. Do not edit: .* -->\n/);
   const g = await run(['install', '--tool', 'gemini-cli', '--home', home]);
   assert.match(g.err, /AGENTS\.md is an orc-generated Antigravity rulebook .*two copies.*Remove .*AGENTS\.md unless you also use Antigravity/);
   const home2 = tempDir('gemini2');

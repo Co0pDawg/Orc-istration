@@ -5,6 +5,7 @@
 !/.gitignore
 !/.gitattributes
 !/README.md
+!/CONTRIBUTING.md
 !/CLAUDE.md
 !/AGENTS.md
 !/models.json
@@ -48,11 +49,18 @@
 !/orchestration/
 /orchestration/*
 !/orchestration/README.md
+!/orchestration/standards.md
+!/orchestration/sprint.md
 # Cost logs stay local: the repo is public and they carry ticket and PR detail.
 
 # Own skills only (synced and plugin skills reinstall themselves)
 !/skills/
 /skills/*
+!/skills/repo-standards/
+!/skills/sprint/
+
+# Coding standards archive (format in standards/README.md)
+!/standards/
 
 # Setup docs: restore guide and outlines for ops automation and project memory
 !/docs/

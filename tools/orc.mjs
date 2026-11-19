@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // Orchestration generator and installer. Node 22+, standard library only.
-// build | check | sync | install | uninstall | status | models | brief | review-tier | costlog | calibration | metrics
-// | dispatch | hooks (see README "Other tools"; calibration and metrics: review/calibration.md, review/metrics.md)
+// Commands: the HELP table in tools/lib/help.mjs (node tools/orc.mjs help); reference: docs/cli.md.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -17,8 +16,18 @@ import { capture, loadRuns, metricsReport, repoTop, DEFAULT_PRICES } from './lib
 import { dispatchPlan, runDispatch, formatCommand, argvProblem, binEnv } from './lib/dispatch.mjs';
 import { mergeHooks, formatLike } from './lib/hooks.mjs';
 import { decodeText, readText } from './lib/text.mjs';
+import { USAGE, globalHelp, commandHelp } from './lib/help.mjs';
+import { validateArchive, runStandards } from './lib/standards.mjs';
 
 const DEFAULT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// The checkout running orc.mjs, with forward slashes. The last line of every install points at the standards setup.
+// The real (on-disk) case, so every shell that starts node writes and compares the same line.
+const SETUP = fs.realpathSync.native(DEFAULT_REPO).replace(/\\/g, '/');
+const STANDARDS_NEXT = `set up each project's coding standards: see ${SETUP}/orchestration/standards.md (Claude Code: the repo-standards skill, where ~/.claude/skills has it).`;
+
+// The Setup checkout line install adds (status adds it too): the checkout running orc.mjs, never recorded in the manifest.
+const setupNotes = () => [`- Setup checkout (this machine): ${SETUP}. Standards setup: node "${SETUP}/tools/orc.mjs" standards ...; procedure: ${SETUP}/orchestration/standards.md.`];
 
 // Text from a file or stdin goes through the one shared reader (tools/lib/text.mjs).
 export { decodeText };
@@ -88,9 +97,16 @@ export function loadProfiles(repo, names = []) {
   });
 }
 
+// An artifact board is written only with ArtifactData from Claude Code, so it needs no --board-repo.
+const isArtifactBoard = (board) => /^(?:https:\/\/)?claude\.ai\/(?:code\/)?artifact\//.test(board ?? '');
+const boardPairError = (opt, toolId) => (opt['board-repo'] ? !opt.board : Boolean(opt.board) && !(toolId === 'claude-code' && isArtifactBoard(opt.board)));
+const ARTIFACT_ONLY_CLAUDE = 'the artifact board can be written only from Claude Code; use a local board address';
+const artifactRefused = (board, toolId) => toolId !== 'claude-code' && isArtifactBoard(board);
+
 // The Board line that install adds, so status compares against the same text.
-function boardNotes({ board, boardRepo }) {
+function boardNotes({ board, boardRepo }, toolId) {
   if (!board) return [];
+  if (toolId === 'claude-code' && isArtifactBoard(board)) return [`- **Board:** this machine's board address is \`${board}\` (artifact backend: write it with ArtifactData, as the tool notes say).`];
   const cli = `${boardRepo.replace(/\\/g, '/')}/local/board.js`;
   const port = /^https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)/.exec(board)?.[1];
   const portNote = port ? ` (set \`ORC_BOARD_PORT=${port}\`)` : '';
@@ -111,7 +127,7 @@ function installOptions(opt, manifest, io) {
   let board = opt.board ?? null;
   let boardRepo = opt['board-repo'] ?? null;
   if (opt['no-board']) board = boardRepo = null;
-  else if (!opt.board && typeof rec.board === 'string' && typeof rec.boardRepo === 'string') {
+  else if (!opt.board && typeof rec.board === 'string' && (typeof rec.boardRepo === 'string' || isArtifactBoard(rec.board))) {
     board = rec.board;
     boardRepo = rec.boardRepo;
     reused.push(`board ${board}`);
@@ -188,6 +204,25 @@ async function buildAll(repo, toolId, { local = true, extraNotes = [], profiles 
   return picked.map((adapter) => ({ adapter, ...buildTool(adapter, roles, models, agentsMd, { extraNotes, profiles: loaded }) }));
 }
 
+// The build the golden test compares against and the golden command writes: models.json only, no profiles, no extra notes.
+export function buildGolden(repo, toolId = 'all') {
+  return buildAll(repo, toolId, { local: false });
+}
+
+// Every file below dir, absolute paths.
+function walkFiles(dir) {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walkFiles(path.join(dir, e.name)) : [path.join(dir, e.name)]));
+}
+
+// What to edit for a checked-in generated file.
+function sourceOf(rel) {
+  if (rel === 'CLAUDE.md') return { src: 'AGENTS.md / adapters/claude-code.notes.md / adapters/claude-code.mjs', those: true };
+  if (/^commands\/.+\.md$/.test(rel)) return { src: 'adapters/claude-code.mjs', those: false };
+  const m = /^agents\/(.+)\.md$/.exec(rel);
+  return m ? { src: `roles/${m[1]}.md`, those: false } : null;
+}
+
 function checkedInTargets(results) {
   const claude = results.find((r) => r.adapter.id === 'claude-code');
   const prefix = `${claude.adapter.home.root}/`;
@@ -231,12 +266,15 @@ function stamp(d = new Date()) {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices'];
+const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices', 'stack', 'from'];
 
 // Value options that may repeat; each value may also be comma-separated.
-const LIST_OPTIONS = ['profile'];
+const LIST_OPTIONS = ['profile', 'stack'];
 
-const FLAG_OPTIONS = ['apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print'];
+// Value options that may repeat but are never comma-split (paths).
+const REPEAT_OPTIONS = ['from'];
+
+const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print', 'json'];
 
 // Accepts `--key value` and `--key=value`. An unknown option is an error, never a silent boolean: a mistyped
 // `--home=<dir>` once fell through to the real home directory.
@@ -257,7 +295,8 @@ export function args(argv) {
         const items = value.split(',').map((s) => s.trim());
         if (items.some((s) => s === '')) throw new Error(`--${key} needs a value`);
         out[key] = [...(out[key] ?? []), ...items];
-      } else out[key] = value;
+      } else if (REPEAT_OPTIONS.includes(key)) out[key] = [...(out[key] ?? []), value];
+      else out[key] = value;
     } else if (FLAG_OPTIONS.includes(key) && eq < 0) out[key] = true;
     else throw new Error(`unknown option ${a}`);
   }
@@ -287,10 +326,22 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     return fail(e.message);
   }
   const cmd = opt._[0];
+  if (opt.help || opt._.includes('-h') || cmd === 'help') {
+    const topic = cmd === 'help' || cmd === '-h' ? opt._.find((a, i) => i > 0 && a !== '-h') : cmd;
+    if (!topic) {
+      io.out(globalHelp());
+      return 0;
+    }
+    const text = commandHelp(topic);
+    if (!text) return fail(`unknown command ${topic}\n${USAGE}`);
+    io.out(text);
+    return 0;
+  }
   const repo = path.resolve(opt.repo ?? DEFAULT_REPO);
   const profiles = opt.profile ?? [];
   if (profiles.length && !['build', 'install', 'status'].includes(cmd)) return fail('--profile applies to build, install and status only');
   if ((opt['no-profile'] || opt['no-board']) && !['install', 'status'].includes(cmd)) return fail('--no-profile and --no-board apply to install and status only');
+  if ((opt.stack || opt.from || opt.json) && cmd !== 'standards') return fail('--stack, --from and --json apply to standards only');
   if (opt['no-profile'] && opt.profile) return fail('pass --profile or --no-profile, not both');
   if (opt['no-board'] && (opt.board || opt['board-repo'])) return fail('pass --board or --no-board, not both');
   try {
@@ -337,13 +388,17 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     if (results.some((r) => r.adapter.id === 'claude-code' && !r.errors.length)) {
       for (const { rel, content } of checkedInTargets(results)) {
         const file = path.join(repo, ...rel.split('/'));
-        if (!fs.existsSync(file)) problems.push(`${rel}: missing (run node tools/orc.mjs sync)`);
+        const from = sourceOf(rel);
+        const gen = from ? `generated from ${from.src}; ` : '';
+        if (!fs.existsSync(file)) problems.push(`${rel}: missing (${gen}run node tools/orc.mjs sync)`);
         else if (read(file) !== content) {
-          problems.push(`${rel}: differs from generated at line ${firstDiffLine(read(file), content)} (run node tools/orc.mjs sync)`);
+          const edit = from ? `edit ${from.those ? 'those' : 'that'}, then ` : '';
+          problems.push(`${rel}: differs from generated at line ${firstDiffLine(read(file), content)} (${gen}${edit}run node tools/orc.mjs sync)`);
         }
       }
       for (const s of staleAgents(repo, loadRoles(repo))) problems.push(`${s.rel}: no matching role in roles/ (stale)`);
     }
+    problems.push(...validateArchive(path.join(repo, 'standards')));
     if (problems.length) {
       problems.forEach((p) => io.err(`FAIL ${p}`));
       return 1;
@@ -372,20 +427,91 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     return code;
   }
 
+  if (cmd === 'golden') {
+    let results;
+    try {
+      results = await buildGolden(repo, opt.tool ?? 'all');
+    } catch (e) {
+      return fail(e.message);
+    }
+    const errors = results.flatMap((r) => r.errors);
+    if (errors.length) return fail(errors.join('\n'));
+    const root = path.join(repo, 'tests', 'golden');
+    // The install containment check: tests, tests/golden and every folder below must be real folders inside the repo.
+    const outside = results.flatMap(({ adapter, files }) =>
+      [path.join(root, adapter.id), ...files.map((f) => path.join(root, adapter.id, ...f.path.split('/')))].map((t) => escapes(repo, 'tests/golden', t)).filter(Boolean),
+    );
+    if (outside.length) {
+      [...new Set(outside)].forEach((u) => io.err(`refused: ${u}`));
+      return fail('nothing written: unsafe tests/golden path(s)');
+    }
+    // On a case-insensitive file system (win32, darwin) a golden that differs from the built name only by case is
+    // the same file: it is renamed, never deleted. A folder that differs only by case is refused before any write.
+    const key = ['win32', 'darwin'].includes(process.platform) ? (p) => p.toLowerCase() : (p) => p;
+    const onDiskOf = new Map(results.map(({ adapter }) => [adapter.id, new Map(walkFiles(path.join(root, adapter.id)).map((p) => [key(p), p]))]));
+    const badDirs = new Map();
+    for (const { adapter, files } of results) {
+      const dir = path.join(root, adapter.id);
+      for (const f of files) {
+        const target = path.join(dir, ...f.path.split('/'));
+        const disk = onDiskOf.get(adapter.id).get(key(target));
+        if (!disk || path.dirname(disk) === path.dirname(target)) continue;
+        const [have, want] = [disk, target].map((p) => path.relative(repo, path.dirname(p)).replace(/\\/g, '/'));
+        badDirs.set(have, want);
+      }
+    }
+    if (badDirs.size) {
+      for (const [have, want] of badDirs) io.err(`refused: folder ${have} differs only by case from ${want}; rename it by hand`);
+      return fail('nothing written: golden folder name(s) differ only by case');
+    }
+    for (const { adapter, files } of results) {
+      const dir = path.join(root, adapter.id);
+      const wanted = new Set();
+      const onDisk = onDiskOf.get(adapter.id);
+      for (const f of files) {
+        const target = path.join(dir, ...f.path.split('/'));
+        wanted.add(key(target));
+        const rel = `tests/golden/${adapter.id}/${f.path}`;
+        const disk = onDisk.get(key(target));
+        if (disk && disk !== target) {
+          const tmp = `${disk}.orc-rename-${process.pid}`;
+          fs.renameSync(disk, tmp);
+          fs.renameSync(tmp, target);
+          io.out(`renamed tests/golden/${adapter.id}/${path.relative(dir, disk).replace(/\\/g, '/')} -> tests/golden/${adapter.id}/${f.path}`);
+        }
+        if (fs.existsSync(target) && read(target) === f.content) {
+          io.out(`unchanged ${rel}`);
+          continue;
+        }
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, f.content);
+        io.out(`wrote ${rel}`);
+      }
+      for (const file of walkFiles(dir)) {
+        if (wanted.has(key(file))) continue;
+        fs.rmSync(file);
+        io.out(`deleted tests/golden/${adapter.id}/${path.relative(dir, file).replace(/\\/g, '/')}`);
+      }
+    }
+    return 0;
+  }
+
   if (cmd === 'install') {
     const toolId = opt.tool;
     if (!toolId || toolId === 'all') return fail('install needs --tool <id>');
     if (toolId === 'claude-code' && !opt.home) {
       return fail('refusing --tool claude-code without --home: the live ~/.claude is synced by hand');
     }
-    if (!opt.board !== !opt['board-repo']) return fail('pass --board and --board-repo together, or neither');
+    if (artifactRefused(opt.board, toolId)) return fail(ARTIFACT_ONLY_CLAUDE);
+    if (boardPairError(opt, toolId)) return fail('pass --board and --board-repo together, or neither (an artifact --board needs no --board-repo)');
     const home = path.resolve(opt.home ?? (await import('node:os')).homedir());
     const known = (await loadAdapters(repo)).find((a) => a.id === toolId);
     const early = known ? loadManifest(home, known) : {};
     if (early.error) return fail(`${early.error}; remove or fix the manifest by hand`);
     const chosen = installOptions(opt, early.manifest, io);
-    const extraNotes = boardNotes(chosen);
-    if (!chosen.board) io.err('WARN the board address is not set: pass --board <address> --board-repo <path> so the rulebook names it');
+    if (artifactRefused(chosen.board, toolId)) return fail(ARTIFACT_ONLY_CLAUDE);
+    const extraNotes = [...boardNotes(chosen, toolId), ...setupNotes()];
+    if (!chosen.board) io.err('WARN the board address is not set: pass --board <address> (with --board-repo <path> for a local board) so the rulebook names it');
     let built;
     try {
       [built] = await buildAll(repo, toolId, { extraNotes, profiles: chosen.profiles });
@@ -500,6 +626,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       io.out(`dry run for ${adapter.id}; add --apply to write`);
       if (blocked.length) io.out(`--apply would refuse: ${blocked.length} ${kind} file(s) in the way (use --force to replace them, with backups)`);
     }
+    io.out(`${opt.apply ? 'Next' : 'After --apply, next'}: ${STANDARDS_NEXT}`);
     return 0;
   }
 
@@ -581,15 +708,17 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   if (cmd === 'status') {
     const toolId = opt.tool;
     if (!toolId || toolId === 'all') return fail('status needs --tool <id>');
-    if (!opt.board !== !opt['board-repo']) return fail('pass --board and --board-repo together, or neither');
+    if (artifactRefused(opt.board, toolId)) return fail(ARTIFACT_ONLY_CLAUDE);
+    if (boardPairError(opt, toolId)) return fail('pass --board and --board-repo together, or neither (an artifact --board needs no --board-repo)');
     const home = path.resolve(opt.home ?? (await import('node:os')).homedir());
     const known = (await loadAdapters(repo)).find((a) => a.id === toolId);
     const loaded = known ? loadManifest(home, known) : {};
     if (loaded.error) io.err(`WARN ${loaded.error}; ignoring it`);
     const chosen = installOptions(opt, loaded.manifest, io);
+    if (artifactRefused(chosen.board, toolId)) return fail(ARTIFACT_ONLY_CLAUDE);
     let built;
     try {
-      [built] = await buildAll(repo, toolId, { extraNotes: boardNotes(chosen), profiles: chosen.profiles });
+      [built] = await buildAll(repo, toolId, { extraNotes: [...boardNotes(chosen, toolId), ...setupNotes()], profiles: chosen.profiles });
     } catch (e) {
       return fail(e.message);
     }
@@ -757,7 +886,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     } catch (e) {
       return fail(e.message.startsWith('metrics:') ? e.message : `metrics: ${e.message}`);
     }
-    return fail('usage: metrics capture --workflow <name> [--session <id> | --transcript <path>] [--log <run log>] [--mode lite|full] [--version <v>] [--out <dir>] [--print] | metrics report [--dir <dir>] [--prices <file>] [--out <file>]');
+    return fail('usage: metrics capture --workflow <name> [--session <id> | --transcript <path>] [--log <run log>] [--mode lite|full] [--version <v>] [--out <dir>] [--print] | metrics report [--dir <dir>] [--prices <file>] [--out <file>] [--force]');
   }
 
   if (cmd === 'dispatch') {
@@ -860,7 +989,11 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     }
   }
 
-  return fail('usage: node tools/orc.mjs build|check|sync|install|uninstall|status|models|brief|review-tier|costlog|calibration|metrics|dispatch|hooks [options]');
+  if (cmd === 'standards') {
+    return runStandards(opt, io, { archiveDir: path.join(DEFAULT_REPO, 'standards'), when: stamp(io.now ? io.now() : new Date()), cap: io.standardsCap, readdir: io.standardsReaddir });
+  }
+
+  return fail(USAGE);
 }
 
 function isMain() {
