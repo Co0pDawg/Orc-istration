@@ -64,8 +64,8 @@ Reports may be committed and read by anyone with repository access.
 | `result` | Per agent: `verdicts` (a refuter's `VERDICT: ACCEPT \| REWORK`), `statuses` (a builder's `STATUS: DONE \| BLOCKED \| PARTIAL`), and for `review-verifier` its `leads` and `severityReview` |
 | `outcomes.refuter` | `verdicts`, `accept`, `rework`, `acceptedFirstPass` (accepts with no REWORK since the previous accept) and `openRework` (REWORK with no later accept) |
 | `outcomes.builder` | Counts of `done`, `blocked` and `partial` reports |
-| `outcomes.verifier` | Lead counts by verdict, counting only leads a verifier settled. A verifier resumed for its severity review reports its leads in an earlier message, and that message is the one counted; `result.severityReview` holds its RAISE and KEEP counts |
-| `outcomes.findings` | From `--log`: `leads` (the `Leads:` line), `bySeverity`, `byVerdict` (once per finding) and, per lane, `total`, `confirmed`, `falsePositive`, `wontFix`, `notActioned` and `pending`. A finding tagged with two lanes counts under each; a non-canonical verdict counts as `pending` |
+| `outcomes.verifier` | Lead counts by verdict, counting only leads a verifier settled. A verifier resumed for its severity review reports its leads in an earlier message, and that message is the one counted; `result.severityReview` holds its RAISE and KEEP counts. Finding verification (procedure 1.1.0) answers in the same shape, so when the verifier is resumed for it, whichever of its lead and findings messages settles more items is the one counted |
+| `outcomes.findings` | From `--log`: `leads` (the `Leads:` line), `bySeverity`, `byVerdict` (once per finding) and, per lane, `total`, `confirmed`, `falsePositive`, `wontFix`, `notActioned`, `pending` and `agent`. A finding tagged with two lanes counts under each; a non-canonical verdict counts as `pending`; a `confirmed`, `false-positive` or `wont-fix` verdict ending `(agent)` (`calibration.md`, "Verdict source") counts only under `agent`, exactly as `calibration` counts it |
 
 Characters, not tokens, measure tool output and files: a token is roughly three to four characters of code.
 
@@ -82,7 +82,7 @@ node <orc checkout>/tools/orc.mjs metrics report [--dir <dir>] [--prices <file>]
 | `builder` | Share of `DONE` reports |
 | `refuter` | Share of `ACCEPT` verdicts; the Build loop line adds first-pass acceptance and REWORK rounds per accepted task |
 | `review-verifier` | Leads upheld (confirmed or plausible) |
-| review lanes | Precision = confirmed / (confirmed + false-positive), from the latest report per workflow, branch and developer, because a re-run carries earlier verdicts forward |
+| review lanes | Precision = confirmed / (confirmed + false-positive), from developer verdicts only (agent verdicts have their own column) and shown only from 5 such verdicts (`n/a` below), exactly as `calibration` computes it, from the latest report per workflow, branch and developer, because a re-run carries earlier verdicts forward |
 
 **Prices.** Costs are API-equivalent dollars per million tokens, computed at report time, so a price change re-prices every run. Cache writes are priced as input times 1.25 (5-minute) or 2 (1-hour). The built-in table is in `tools/lib/metrics.mjs`; `--prices <file>` replaces it with a JSON file of the same shape (`cacheWrite5mMultiplier`, `cacheWrite1hMultiplier`, `models: { <id>: { input, output, cacheRead } }`). A model missing from the table is listed under the report and left out of cost totals, never priced at zero. Subscription seats are not billed per token.
 

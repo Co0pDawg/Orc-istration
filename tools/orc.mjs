@@ -12,6 +12,7 @@ import { briefTemplate, lintBrief, parseMarchingOrders } from './lib/brief.mjs';
 import { reviewTier } from './lib/reviewtier.mjs';
 import { costlog, readBoardExport } from './lib/costlog.mjs';
 import { calibrationReport, DEFAULT_MIN_PRECISION } from './lib/calibration.mjs';
+import { listCases, scoreReport } from './lib/corpus.mjs';
 import { capture, loadRuns, metricsReport, repoTop, DEFAULT_PRICES } from './lib/metrics.mjs';
 import { dispatchPlan, runDispatch, formatCommand, argvProblem, binEnv } from './lib/dispatch.mjs';
 import { mergeHooks, formatLike } from './lib/hooks.mjs';
@@ -266,7 +267,7 @@ function stamp(d = new Date()) {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices', 'stack', 'from'];
+const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices', 'stack', 'from', 'case', 'report'];
 
 // Value options that may repeat; each value may also be comma-separated.
 const LIST_OPTIONS = ['profile', 'stack'];
@@ -849,6 +850,27 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     } catch (e) {
       return fail(e.message);
     }
+  }
+
+  if (cmd === 'corpus') {
+    const sub = opt._[1];
+    const root = path.join(repo, 'tests', 'fixtures', 'corpus');
+    try {
+      if (sub === 'list' && opt._.length === 2 && !opt.case && !opt.report) {
+        const cases = listCases(root);
+        io.out(cases.map((c) => `${c.id}  [${c.lanes.join(', ')}]  ${c.title}`).join('\n'));
+        return 0;
+      }
+      if (sub === 'score' && opt._.length === 2) {
+        if (!opt.case || !opt.report) return fail('corpus: score needs --case <id> and --report <file>');
+        const { text, missed } = scoreReport(root, opt.case, path.resolve(opt.report));
+        io.out(text.replace(/\n$/, ''));
+        return missed ? 1 : 0;
+      }
+    } catch (e) {
+      return fail(e.message);
+    }
+    return fail('usage: corpus list | corpus score --case <id> --report <file>');
   }
 
   if (cmd === 'metrics') {

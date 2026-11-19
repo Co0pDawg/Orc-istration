@@ -18,7 +18,7 @@ Edit the sources. Never hand-edit a generated file; regenerate it.
 | `models.json` | Tier to model, per tool |
 | `profiles/*.md` | Optional rulebook additions |
 | `standards/*.md` | The coding-standards archive, one file per stack (format in `standards/README.md`) |
-| `review/` | The review panel: procedure, explorer contract, lane checklists, calibration and metrics formats |
+| `review/` | The review panel: procedure, explorer contract, lane checklists, calibration, regression corpus and metrics formats |
 | `workflows/*.md`, `templates/` | The portable workflows (`/start`, `/draft-pr` and others) and the target-repo rulebook template |
 | `orchestration/standards.md`, `orchestration/sprint.md` | The standards setup procedure and sprint mode |
 | `skills/*/SKILL.md` | Claude Code skills (copied into `~/.claude/skills` by hand) |
@@ -76,13 +76,13 @@ The repo is designed to be checked out as `~/.claude`, but you can develop in a 
 ## Where things are
 
 - `tools/orc.mjs`: the CLI. Loads roles, models and adapters, builds each tool (`buildTool`), and dispatches the commands.
-- `tools/lib/`: `frontmatter.mjs` (frontmatter, generated marker), `roles.mjs` (role parsing), `models.mjs` (models validation), `toml.mjs` (Codex TOML), `manifest.mjs` (install manifest, path safety), `text.mjs` (the one text reader), `help.mjs` (the help table), `brief.mjs`, `reviewtier.mjs`, `costlog.mjs`, `dispatch.mjs`, `hooks.mjs` (the method-tooling commands), `standards.mjs` (the standards archive, detect and apply), `calibration.mjs` and `metrics.mjs` (the review panel's calibration and metrics).
+- `tools/lib/`: `frontmatter.mjs` (frontmatter, generated marker), `roles.mjs` (role parsing), `models.mjs` (models validation), `toml.mjs` (Codex TOML), `manifest.mjs` (install manifest, path safety), `text.mjs` (the one text reader), `help.mjs` (the help table), `brief.mjs`, `reviewtier.mjs`, `costlog.mjs`, `dispatch.mjs`, `hooks.mjs` (the method-tooling commands), `standards.mjs` (the standards archive, detect and apply), `calibration.mjs`, `corpus.mjs` and `metrics.mjs` (the review panel's calibration, regression corpus and metrics).
 - `tests/orc.test.mjs`: goldens, roles, frontmatter, caps, `check`, `install`, rulebook hygiene.
 - `tests/hardening.test.mjs`: option parsing, refusals, stale agents, YAML quoting, running through a junction, BOM and UTF-16 input, first differing line.
 - `tests/manifest.test.mjs`: install manifest, re-install, `uninstall`, `status`, symlink and junction refusals.
 - `tests/tooling.test.mjs`: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks`, the board reminder, models validation, `golden`, `help`, the generated marker.
 - `tests/standards.test.mjs`: `standards list`, `show`, `detect` and `apply`, and the archive validation in `check`.
-- `tests/review-tools.test.mjs`: `calibration` and `metrics`.
+- `tests/review-tools.test.mjs`: `calibration`, `corpus` and `metrics`, over the run-log fixtures in `tests/fixtures/reviews/` and the corpus cases in `tests/fixtures/corpus/` (format: `review/corpus.md`).
 
 ## Keep the README and wiki current
 

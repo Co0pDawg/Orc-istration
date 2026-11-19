@@ -124,7 +124,7 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `AGENTS.md` | The tool-neutral rulebook (the source) |
 | `CLAUDE.md`, `agents/*.md` | Generated Claude Code files (`node tools/orc.mjs sync`) |
 | `roles/*.md` | The agent roles (the five above and the six `review-*` panel roles): tier, access, capabilities, body |
-| `review/` | The review panel: `PROCEDURE.md`, the explorer contract, shared rules, lane selection and `lanes/*.md` |
+| `review/` | The review panel: `PROCEDURE.md`, the explorer contract, shared rules, lane selection, `lanes/*.md`, calibration, metrics and the regression corpus |
 | `commands/*.md` | Claude Code slash commands: the review panel's three are generated (`node tools/orc.mjs sync`); the six workflow wrappers are hand-written |
 | `workflows/` | Tool-neutral workflows around the build loop: `start`, `grill`, `draft-pr`, `peer-review`, `create`, `fix-ci` |
 | `templates/AGENTS.md` | Starting rulebook for a repo you work on, with its Project settings block (`docs/adopt-a-repo.md`) |
@@ -132,7 +132,7 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `profiles/*.md` | Optional rulebook additions (`--profile <name>`); `dotnet-azure-devops` holds the long rulebook's stack rules and general lessons |
 | `models.json` | Tier to model, per tool; `models.local.json` (untracked) overrides |
 | `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
-| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks`, `standards`; review panel: `calibration`, `metrics`; `help` |
+| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks`, `standards`; review panel: `calibration`, `corpus`, `metrics`; `help` |
 | `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them), install, check, tooling, standards and review-panel tool tests |
 | `CONTRIBUTING.md` | How to change this repo: sources vs generated files, the edit loop, traps |
 | `docs/cli.md` | The full command reference |
@@ -177,7 +177,8 @@ Every command is `node tools/orc.mjs <command>`. Options: `node tools/orc.mjs he
 | `brief` | Print or lint a marching-orders brief |
 | `review-tier` | Say whether a branch diff is Light-eligible or Full |
 | `costlog` | Draft a cost log from the board |
-| `calibration` | Per-lane precision of the review panel from its run logs |
+| `calibration` | Per-lane precision and recall of the review panel from its run logs |
+| `corpus` | List the review regression corpus, or score a panel report against one case |
 | `metrics` | Capture or report per-run review metrics from Claude Code transcripts |
 | `dispatch` | Run one role headlessly at its tier (Antigravity and Claude Code) |
 | `hooks` | Merge the example hooks into `settings.json` (dry run without `--apply`) |
@@ -188,9 +189,11 @@ CI (`.github/workflows/test.yml`) runs `npm test` and `check` on Ubuntu and Wind
 
 ## Review panel
 
-The Full pre-PR review tier runs the review panel, ported from a production setup and made tool-neutral. `review/PROCEDURE.md` is the orchestrator's procedure: select lanes for the diff (`review/selection.md`), run read-only explorers over them in parallel (code, failure, docs, checklist, and design on large diffs), settle each lead with `review-verifier` or the owning explorer, raise under-rated items in a severity review, then write one report and a run log. Each lane is a checklist in `review/lanes/` (code-reviewer, silent-failure-hunter, comment-analyzer, type-design-analyzer, architecture-reviewer, code-simplifier, pr-test-analyzer, ui-test-reviewer, secondary-artifacts, ticket-coverage); `review/contract.md` and `review/shared-rules.md` hold the rules every explorer follows.
+The Full pre-PR review tier runs the review panel, ported from a production setup and made tool-neutral. `review/PROCEDURE.md` is the orchestrator's procedure: select lanes for the diff (`review/selection.md`), run read-only explorers over them in parallel (code, failure, docs, checklist, and design on large diffs), settle each lead with `review-verifier` or the owning explorer, have the verifier check every `issue:` and `warning:` finding before anyone fixes it (refuted ones move to their own report section), raise under-rated items in a severity review, then write one report and a run log. Leads that only a running app can settle become runtime checks with steps; the panel never runs the app, so the developer or the calling workflow runs them and records the result. Each lane is a checklist in `review/lanes/` (code-reviewer, silent-failure-hunter, comment-analyzer, type-design-analyzer, architecture-reviewer, code-simplifier, pr-test-analyzer, ui-test-reviewer, secondary-artifacts, ticket-coverage); `review/contract.md` and `review/shared-rules.md` hold the rules every explorer follows.
 
 Stack-specific checks (tenant scoping, CSRF, migration co-change, UI test hooks, generated files, a documentation map) come from the reviewed repo's own `REVIEW.md`, or the file its rulebook names; without one the lanes skip those checks. A ticket brief comes from ticket text or a brief file you give. Run logs and metrics land in the reviewed repo's `.orc/` folder (`review/calibration.md`, `review/metrics.md`).
+
+Each verdict in a run log may end `(developer)` or `(agent)`; `calibration` computes precision from the developer's verdicts only and counts agent verdicts apart. Defects a review missed are appended to its log as escaped defects, which give each lane a recall figure. Before a change to a lane, a role or `models.json` is kept, the affected lanes run on the regression corpus (`tests/fixtures/corpus/`, `review/corpus.md`) and `corpus score` checks that nothing expected was missed.
 
 In Claude Code, `/pre-pr-review [branch] [base] [scope keywords] [lite|full]`, `/review-verdict` and `/calibration-report` are generated into `commands/`. They find this checkout through the `ORC_HOME` environment variable, else the rulebook's "Setup checkout (this machine)" line, else `~/.claude`. Other tools follow `review/PROCEDURE.md` by hand.
 

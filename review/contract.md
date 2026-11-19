@@ -83,12 +83,17 @@ LEADS
   Unresolved because: <what would confirm or refute it>
   Owner: <lane best placed to verify it>
   Check by: static | runtime
+  Runtime steps: <what to do in the running app, and what would be seen if the defect is real>   (Check by: runtime only)
 QUESTIONS
 - [lane] question: <intent question> — <file:line or spec item id>
 VERDICT: approved | needs changes | informational — N issue / N warning / N suggestion / N nit / N question, N leads
 ```
 
 Write `(none)` under an empty heading. Keep each finding's `Screenshot:` line when a lane produces one.
+
+A lead with `Check by: runtime` always gives `Runtime steps:`: the actions in the running app (the page, the input,
+the order of events) and the result that would show the defect is real, against the result a correct build gives. The
+panel never runs the app; these steps go to whoever does (`review/PROCEDURE.md`, **Runtime checks**).
 
 ## When resumed to verify leads
 

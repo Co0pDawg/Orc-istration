@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { parseRunLog } from './calibration.mjs';
+import { parseRunLog, bucket, precision, MIN_DENOMINATOR } from './calibration.mjs';
 import { readText } from './text.mjs';
 
 export const SCHEMA_VERSION = 1;
@@ -237,20 +237,22 @@ export function measureAgent(ev, since, until, roots, agentType) {
   };
 }
 
-// The run log's verdict counts, in the report's shape (a non-canonical verdict counts as pending).
-// Parser warnings (a Leads: line missing a count) go into `warnings`, not the report.
+// The run log's verdict counts, in the report's shape (a non-canonical verdict counts as pending). A triaged verdict
+// ending `(agent)` counts under `agent`, not confirmed / falsePositive / wontFix, through calibration's own bucket, so
+// precision here matches `calibration`. Parser warnings (a Leads: line missing a count) go into `warnings`.
 export function findingsFromLog(text, name, warnings = []) {
   const log = parseRunLog(text);
   for (const w of log.warnings) warnings.push(`metrics: ${name}: ${w}`);
   const bySeverity = {};
-  const byVerdict = { confirmed: 0, falsePositive: 0, wontFix: 0, notActioned: 0, pending: 0 };
+  const byVerdict = { confirmed: 0, falsePositive: 0, wontFix: 0, notActioned: 0, pending: 0, agent: 0 };
   const byLane = {};
   for (const r of log.rows) {
-    const v = r.kind === 'nonCanonical' ? 'pending' : r.kind;
+    const b = bucket(r);
+    const v = b === 'nonCanonical' ? 'pending' : b;
     bySeverity[r.severity] = (bySeverity[r.severity] ?? 0) + 1;
     byVerdict[v]++;
     for (const lane of r.lanes) {
-      byLane[lane] ??= { total: 0, confirmed: 0, falsePositive: 0, wontFix: 0, notActioned: 0, pending: 0 };
+      byLane[lane] ??= { total: 0, confirmed: 0, falsePositive: 0, wontFix: 0, notActioned: 0, pending: 0, agent: 0 };
       byLane[lane].total++;
       byLane[lane][v]++;
     }
@@ -616,17 +618,19 @@ export function metricsReport(runs, prices = DEFAULT_PRICES) {
     const lanes = {};
     for (const r of reviewed) {
       for (const [lane, v] of Object.entries(r.outcomes.findings.byLane ?? {})) {
-        lanes[lane] ??= { total: 0, confirmed: 0, falsePositive: 0, wontFix: 0, notActioned: 0, pending: 0 };
+        lanes[lane] ??= { total: 0, confirmed: 0, falsePositive: 0, wontFix: 0, notActioned: 0, pending: 0, agent: 0 };
         for (const k of Object.keys(lanes[lane])) lanes[lane][k] += Number(v[k] ?? 0);
       }
     }
     L.push('## Review lanes', '');
-    L.push(`From the latest review of each of ${reviewed.length} branches. Precision is confirmed / (confirmed + false-positive); wont-fix, not-actioned and pending are left out of it.`, '');
-    L.push('| Lane | Findings | Confirmed | False positive | Wont fix | Not actioned | Pending | Precision |');
-    L.push('|---|---|---|---|---|---|---|---|');
+    L.push(`From the latest review of each of ${reviewed.length} branches. Precision is confirmed / (confirmed + false-positive), from developer verdicts only and shown from ${MIN_DENOMINATOR} such verdicts, as in \`calibration\`; wont-fix, not-actioned, pending and agent verdicts (\`(agent)\`) are left out of it.`, '');
+    L.push('| Lane | Findings | Confirmed | False positive | Wont fix | Not actioned | Pending | Precision | Agent verdicts |');
+    L.push('|---|---|---|---|---|---|---|---|---|');
     for (const k of Object.keys(lanes).sort()) {
       const l = lanes[k];
-      L.push(`| ${k} | ${l.total} | ${l.confirmed} | ${l.falsePositive} | ${l.wontFix} | ${l.notActioned} | ${l.pending} | ${fpct(l.confirmed, l.confirmed + l.falsePositive)} |`);
+      // calibration's own precision and rounding: n/a under its minimum of developer verdicts, so both tools agree.
+      const p = precision(l);
+      L.push(`| ${k} | ${l.total} | ${l.confirmed} | ${l.falsePositive} | ${l.wontFix} | ${l.notActioned} | ${l.pending} | ${p === null ? 'n/a' : `${Math.round(p * 100)}%`} | ${l.agent} |`);
     }
     L.push('');
   }

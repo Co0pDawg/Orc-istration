@@ -38,7 +38,7 @@ const commands = [
   },
   {
     name: 'calibration-report',
-    description: 'Aggregate review run-log verdicts into per-lane precision and ranked recalibration recommendations (review/calibration.md).',
+    description: 'Aggregate review run-log verdicts and escaped defects into per-lane precision and recall, and ranked recalibration recommendations (review/calibration.md).',
     hint: '[lane to focus on, e.g. code-reviewer]',
     tools: ['Bash', 'Glob', 'Grep', 'Read', 'Edit'],
     title: 'Calibration Report',
