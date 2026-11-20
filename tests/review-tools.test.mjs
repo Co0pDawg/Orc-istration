@@ -67,12 +67,15 @@ test('calibration aggregates per lane, flags low precision and false-positive ta
   assert.match(strict.out, /\| code-reviewer \| 9 \| 3 \| 4 \| 1 \| 0 \| 1 \| 43% \| 4 false positives \|/);
 });
 
-test('sourceOf reads a trailing (developer) or (agent); no suffix is the developer; verdictOf ignores the suffix', () => {
+test('sourceOf: (agent) anywhere in the cell is the agent, otherwise the developer; verdictOf ignores the suffix', () => {
   assert.equal(sourceOf('confirmed — fixed in session (agent)'), 'agent');
   assert.equal(sourceOf('false-positive — x (Developer)'), 'developer');
   assert.equal(sourceOf('confirmed'), 'developer');
   assert.equal(sourceOf('CONFIRMED (code read)'), 'developer', 'only the two source words are a suffix');
-  assert.equal(sourceOf('confirmed (agent) — later note'), 'developer', 'the suffix must end the cell');
+  assert.equal(sourceOf('confirmed (agent) — later note'), 'agent', '(agent) anywhere in the cell marks the agent');
+  assert.equal(sourceOf('false-positive (AGENT): refuted by verifier'), 'agent');
+  assert.equal(sourceOf('confirmed (developer) — later note'), 'developer');
+  assert.equal(verdictOf('confirmed (agent) — later note'), 'confirmed');
   assert.equal(verdictOf('false-positive — refuted by verifier: guard at a.js:3 (agent)'), 'falsePositive');
   assert.equal(verdictOf('_pending_ (agent)'), 'pending');
   assert.equal(verdictOf('(developer)'), 'pending');
@@ -90,6 +93,36 @@ test('parseRunLog reads the escaped-defects table, keeps an escaped pipe in its 
   assert.equal(log.escapes[0].defect, 'Merge reads `a \\|\\| b` with the wrong precedence');
   assert.deepEqual([log.escapes[0].where, log.escapes[0].foundBy, log.escapes[0].why], ['src/AcmeApp/Merge.cs:22', 'teammate', 'outside the changed hunk']);
   assert.deepEqual(log.leads, { raised: 2, confirmed: 1, plausible: 0, refuted: 1 }, 'the Verification: line is not the Leads: line');
+  assert.deepEqual(log.verification, { checked: 5, confirmed: 4, plausible: 0, refuted: 1 });
+  assert.deepEqual(log.warnings, []);
+  assert.equal(parseRunLog('# Review Log: a → main\n').verification, null, 'no Verification: line');
+  assert.match(parseRunLog('Verification: 3 checked, 2 confirmed\n').warnings.join('\n'), /the Verification: line has no count for: plausible, refuted/);
+});
+
+// Escaped-defects rows the parser cannot read: each table shape drops its rows with a warning naming why.
+test('parseRunLog drops unreadable escaped-defect rows with a warning, never silently; calibration prints it', async () => {
+  const head = '# Review Log: a → main\n\n| # | Severity | Agent | Finding (one line) | Where | Verdict |\n|---|---|---|---|---|---|\n| 1 | issue | code-reviewer | f | a.js:1 | confirmed |\n\n## Escaped defects\n\n';
+  const good = '| # | Lane | Defect (one line) | Where | Found by | Why missed |\n|---|---|---|---|---|---|\n';
+  const shapes = [
+    [`${good}| E1 | code-reviewer | d | a.js:9 | teammate | w |\n| 2 | code-reviewer | d | a.js:9 | teammate | w |\n`, 1, /escaped defects: 1 row\(s\) dropped: its # is not a number \("E1"\)/],
+    [`${good}| 1 | code-reviewer | d | a.js:9 |\n`, 0, /escaped defects: 1 row\(s\) dropped: it has 4 cells, fewer than the header's 6/],
+    ['| # | Lanes | Defect | Where | Who | Why |\n|---|---|---|---|---|---|\n| 1 | code-reviewer | d | a.js:9 | teammate | w |\n| 2 | code-reviewer | d | a.js:9 | teammate | w |\n', 0, /escaped defects: 2 row\(s\) dropped: its table header is not/],
+    ['| Id | Lane | Defect | Where | Found by | Why missed |\n|---|---|---|---|---|---|\n| 1 | code-reviewer | d | a.js:9 | teammate | w |\n', 0, /escaped defects: 1 row\(s\) dropped: its table header does not start with `#`/],
+    ['No table yet.\n', 0, /the Escaped defects section has no rows/],
+  ];
+  for (const [table, read, warning] of shapes) {
+    const log = parseRunLog(head + table);
+    assert.equal(log.escapes.length, read, table);
+    assert.match(log.warnings.join('\n'), warning, table);
+    assert.equal(log.rows.length, 1, 'the finding table is unaffected');
+  }
+  const dir = tempDir('esc-warn');
+  fs.writeFileSync(path.join(dir, '2026-04-01-x.md'), head + shapes[0][0]);
+  const r = await run(['calibration', '--logs', dir]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Escaped defects: 1\./);
+  assert.match(r.out, /## Parser warnings\n\nLines the counts above could not use:\n\n- 2026-04-01-x\.md: escaped defects: 1 row\(s\) dropped: its # is not a number \("E1"\)/);
+  assert.doesNotMatch((await run(['calibration', '--logs', RECALL])).out, /Parser warnings/, 'a clean log prints no warnings');
 });
 
 test('a log whose only table is Runtime checks has no findings and no escapes', () => {
@@ -308,6 +341,56 @@ test('corpus score: a row with a list of lines is found at any of them, and its 
   assert.match(only.out, /^MISSED E1 /m, 'a 9-15 finding counts by its first line, so not for E1 (12-14)');
 });
 
+test('corpus list warns about a case with no title or Lanes: line and a folder with no case.md', async () => {
+  const root = tempDir('corpus-list');
+  const corpus = path.join(root, 'tests', 'fixtures', 'corpus');
+  for (const [id, files] of [['good', { 'case.md': '# Good\nLanes: code-reviewer\n', 'expected.md': 'x' }], ['bare', { 'case.md': 'no title\n' }], ['orphan', { 'expected.md': 'x' }]]) {
+    fs.mkdirSync(path.join(corpus, id), { recursive: true });
+    for (const [f, t] of Object.entries(files)) fs.writeFileSync(path.join(corpus, id, f), t);
+  }
+  const r = await run(['corpus', 'list', '--repo', root]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.out.split('\n'), ['bare  []  ', 'good  [code-reviewer]  Good']);
+  assert.deepEqual(r.err.split('\n'), [
+    'WARN corpus: bare/case.md has no `# <title>` heading',
+    'WARN corpus: bare/case.md has no `Lanes:` line, so no lane change selects it',
+    'WARN corpus: orphan has expected.md but no case.md, so it is not listed',
+  ]);
+  assert.equal((await run(['corpus', 'list'])).err, '', 'the shipped corpus has no warning');
+});
+
+test('corpus score names a report with no finding section instead of reporting every row missed', async () => {
+  const r = await run(['corpus', 'score', '--case', 'cache-key-scope', '--report', writeReport('## Findings\n- [code-reviewer] Unscoped key — src/catalog/priceCache.js:12\n')]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /corpus: no ### Must fix, Review before submitting or Suggestions heading in .*report\.md/);
+  assert.equal(r.out, '');
+});
+
+// Every expected range must sit on lines the case's diff adds, so a stale range cannot pass or fail by accident.
+test('every corpus expected range falls inside lines its diff.patch adds', () => {
+  const root = path.join(FIX, 'corpus');
+  const ids = fs.readdirSync(root).filter((d) => fs.existsSync(path.join(root, d, 'expected.md')));
+  assert.ok(ids.length >= 2);
+  for (const id of ids) {
+    const added = new Map();
+    let file = null;
+    let line = 0;
+    for (const l of fs.readFileSync(path.join(root, id, 'diff.patch'), 'utf8').split(/\r?\n/)) {
+      const h = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(l);
+      if (l.startsWith('+++ ')) {
+        file = l.slice(4).replace(/^b\//, '');
+        added.set(file, new Set());
+      } else if (h) line = Number(h[1]);
+      else if (file && l.startsWith('+')) added.get(file).add(line++);
+      else if (file && l.startsWith(' ')) line++;
+    }
+    for (const e of parseExpected(fs.readFileSync(path.join(root, id, 'expected.md'), 'utf8'))) {
+      assert.ok(added.has(e.file), `${id} ${e.id}: ${e.file} is not in diff.patch`);
+      for (const r of e.ranges) for (let n = r.from; n <= r.to; n++) assert.ok(added.get(e.file).has(n), `${id} ${e.id}: ${e.file}:${n} is not an added line`);
+    }
+  }
+});
+
 test('parseExpected reads ranges and lists, and refuses a backwards range, a malformed range and a table with no rows', () => {
   const head = '| Id | Lane | File | Lines | Defect |\n|----|------|------|-------|--------|\n';
   assert.deepEqual(parseExpected(`${head}| E1 | a | ./src/x.js | 7 | d |\n`), [{ id: 'E1', lane: 'a', file: 'src/x.js', ranges: [{ from: 7, to: 7 }], defect: 'd' }]);
@@ -386,6 +469,37 @@ test('agentResult reads a resumed verifier: leads from its lead report, RAISE/KE
   assert.deepEqual(agentResult('refuter', [{ text: 'VERDICT: ACCEPT | REWORK' }]), {}, 'a template line is not a verdict');
 });
 
+test('agentResult counts a verifier\'s lead verdicts and its findings-mode verdicts apart', () => {
+  // One message answering both batches under headings, numbered A1.. and B1.. (the shape a combined prompt gets).
+  const both = [
+    '# review-verifier: x -> main (leads A1-A3, findings mode B1-B2)',
+    '## A. Leads',
+    'A1. CONFIRMED — [code-reviewer] a',
+    'A2. PLAUSIBLE — [code-reviewer] b',
+    '**A3.** PLAUSIBLE — [code-reviewer] c',
+    '## B. Findings mode',
+    'B1. CONFIRMED — [silent-failure-hunter] d',
+    'B12. REFUTED — [code-reviewer] e',
+  ].join('\n');
+  const a = agentResult('review-verifier', [{ ts: 2, text: both }], [1]);
+  assert.deepEqual([a.leads, a.findings], [{ CONFIRMED: 1, PLAUSIBLE: 2, REFUTED: 0 }, { CONFIRMED: 1, PLAUSIBLE: 0, REFUTED: 1 }]);
+  // A verifier resumed for finding verification: the reply after the findings-mode prompt is the findings set.
+  const resumed = agentResult('review-verifier', [
+    { ts: 1, text: '1. REFUTED - a\n2. CONFIRMED - b' },
+    { ts: 3, text: '1. CONFIRMED - x\n2. CONFIRMED - y\n3. PLAUSIBLE - z' },
+  ], [2]);
+  assert.deepEqual([resumed.leads, resumed.findings], [{ CONFIRMED: 1, PLAUSIBLE: 0, REFUTED: 1 }, { CONFIRMED: 2, PLAUSIBLE: 1, REFUTED: 0 }], 'more findings than leads never replace the lead count');
+  // A findings-mode verifier launched on its own reports findings only.
+  const fresh = agentResult('review-verifier', [{ ts: 5, text: '1. CONFIRMED - x' }], [4]);
+  assert.deepEqual([fresh.leads, fresh.findings], [undefined, { CONFIRMED: 1, PLAUSIBLE: 0, REFUTED: 0 }]);
+  const o = loopOutcomes([
+    { agentType: 'review-verifier', result: resumed },
+    { agentType: 'review-verifier', result: fresh },
+  ]);
+  assert.deepEqual(o.verifier, { CONFIRMED: 1, PLAUSIBLE: 0, REFUTED: 1 });
+  assert.deepEqual(o.verifierFindings, { CONFIRMED: 3, PLAUSIBLE: 1, REFUTED: 0 });
+});
+
 test('loopOutcomes counts REWORK rounds and first-pass acceptance in dispatch order', () => {
   const o = loopOutcomes([
     { agentType: 'refuter', startedUtc: new Date(at(1)).toISOString(), result: { verdicts: ['REWORK', 'ACCEPT'] } },
@@ -401,6 +515,8 @@ test('findingsFromLog counts a non-canonical verdict as pending', () => {
   assert.deepEqual(f.byVerdict, { confirmed: 1, falsePositive: 1, wontFix: 1, notActioned: 1, pending: 2, agent: 0 });
   assert.deepEqual(f.byLane['code-reviewer'], { total: 4, confirmed: 1, falsePositive: 1, wontFix: 1, notActioned: 0, pending: 1, agent: 0 });
   assert.equal(f.bySeverity.warning, 2);
+  assert.equal(f.verification, null);
+  assert.deepEqual(findingsFromLog(fs.readFileSync(RECALL_LOG, 'utf8'), 'x.md').verification, { checked: 5, confirmed: 4, plausible: 0, refuted: 1 });
 });
 
 test('a review run starts at its invocation; a later session capture links it as a child run', () => {

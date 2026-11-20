@@ -370,6 +370,46 @@ test('status: same, differs, missing, extra; never writes', async () => {
   assert.match((await run(['status', '--home', ch])).err, /status needs --tool/);
 });
 
+test('install copies the hook scripts for claude-code; status reports them; a hand-copied one is kept', async () => {
+  const home = tempDir('hookscripts');
+  const scripts = ['guard.mjs', 'guard.ps1', 'board-reminder.ps1', 'board-reminder.mjs'];
+  const tools = path.join(home, '.claude', 'tools');
+  // A hand-copied, older board reminder from before install shipped the scripts.
+  fs.mkdirSync(tools, { recursive: true });
+  fs.writeFileSync(path.join(tools, 'board-reminder.ps1'), 'old copy\n');
+  const r = await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board']);
+  assert.equal(r.code, 0, r.err);
+  for (const s of ['guard.mjs', 'guard.ps1', 'board-reminder.mjs']) {
+    assert.match(r.out, new RegExp(`applied create: .*tools[\\\\/]${s.replace('.', '\\.')}`));
+    assert.equal(read(path.join(tools, s)), read(path.join(REPO, 'tools', s)), s);
+  }
+  assert.match(r.out, /kept \(hand-copied hook script, differs; --force replaces it, with a backup\): .*board-reminder\.ps1/);
+  assert.equal(fs.readFileSync(path.join(tools, 'board-reminder.ps1'), 'utf8'), 'old copy\n', 'the hand copy is not overwritten');
+  const manifest = JSON.parse(fs.readFileSync(path.join(home, '.claude', '.orc-manifest.claude-code.json'), 'utf8'));
+  assert.deepEqual(Object.keys(manifest.files).filter((k) => k.startsWith('.claude/tools/')).sort(), ['.claude/tools/board-reminder.mjs', '.claude/tools/guard.mjs', '.claude/tools/guard.ps1']);
+  const st = await run(['status', '--tool', 'claude-code', '--home', home, '--no-board']);
+  assert.equal(st.code, 1, 'the kept copy differs');
+  assert.match(st.out, /same: .*guard\.mjs/);
+  assert.match(st.out, /differs \(first difference at line 1\): .*board-reminder\.ps1/);
+  // The installed Node guard runs on its own, outside the checkout.
+  const repo = path.join(home, 'r');
+  fs.mkdirSync(repo);
+  spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repo });
+  const hook = spawnSync(process.execPath, [path.join(tools, 'guard.mjs')], { input: JSON.stringify({ tool_name: 'Bash', cwd: repo, tool_input: { command: 'git commit -m x' } }), encoding: 'utf8' });
+  assert.equal(JSON.parse(hook.stdout).hookSpecificOutput.permissionDecision, 'deny', hook.stderr);
+  // --force replaces the hand copy, with a backup.
+  const forced = await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board', '--force']);
+  assert.equal(forced.code, 0, forced.err);
+  assert.equal(read(path.join(tools, 'board-reminder.ps1')), read(path.join(REPO, 'tools', 'board-reminder.ps1')));
+  assert.equal(fs.readdirSync(tools).filter((f) => f.startsWith('board-reminder.ps1.orc-backup-')).length, 1);
+  assert.equal((await run(['status', '--tool', 'claude-code', '--home', home, '--no-board'])).code, 0);
+  for (const s of scripts) assert.ok(fs.existsSync(path.join(tools, s)), s);
+  // Other tools wire no hooks and get no scripts.
+  const agy = tempDir('hookscripts-agy');
+  assert.equal((await run(['install', '--tool', 'antigravity', '--home', agy, '--apply', '--no-board'])).code, 0);
+  assert.ok(!fs.existsSync(path.join(agy, '.gemini', 'tools')));
+});
+
 test('install --board adds the Board line; without it a warning', async () => {
   const home = tempDir('board');
   const without = await run(['install', '--tool', 'antigravity', '--home', home, '--apply']);

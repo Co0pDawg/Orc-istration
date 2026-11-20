@@ -135,6 +135,12 @@ test('brief lint: a filled brief passes; one test per rule', async () => {
   assert.match(lintBrief(doubleColon, items, 'refuter').join('\n'), /item 9 \(Intent\) needs a value for a refuter/, 'label colon, then "(refuters):"');
   assert.match(lintBrief(goodBrief({ 9: 'TBD - later' }), items, 'refuter').join('\n'), /item 9 \(Intent\) needs a value for a refuter/, 'placeholder with a trailing note');
   assert.deepEqual(lintBrief(goodBrief({ 9: 'todo/ticket-brief.md' }), items, 'refuter'), [], 'a path that starts with a placeholder word');
+  for (const v of ['todo-app/ticket-brief.md', 'tbd-notes/brief.md', 'tba.md', 'n/a-cases/brief.md']) {
+    assert.deepEqual(lintBrief(goodBrief({ 9: v }), items, 'refuter'), [], `a path that starts with a placeholder word: ${v}`);
+  }
+  for (const v of ['TBD.', 'todo:', 'tba - later', 'n/a, no ticket']) {
+    assert.match(lintBrief(goodBrief({ 9: v }), items, 'refuter').join('\n'), /item 9 \(Intent\) needs a value for a refuter/, v);
+  }
   // Free-form labels in the orders' own style pass.
   const caps = goodBrief().replace(/^1\. .*$/m, '1. GOAL').replace(/^ {3}Find where.*$/m, '   Find it.');
   assert.deepEqual(lintBrief(caps, items), []);
@@ -478,7 +484,25 @@ test('hooks: existing settings keep every key and hook byte-for-byte; second run
   assert.equal(fs.readFileSync(file, 'utf8'), after, 'second run changes nothing');
 });
 
-test('hooks --node merges only the Node board-reminder entries', () => {
+test('hooks warns once per wired script that is not at its path, on stderr', () => {
+  const home = tempDir('hookhome');
+  const missing = isolated(['hooks', '--home', home, '--node']);
+  assert.equal(missing.code, 0, missing.err);
+  const tools = path.join(home, '.claude', 'tools');
+  const warned = missing.err.split('\n').filter((l) => l.startsWith('WARN hook script not found: '));
+  assert.deepEqual(warned.map((l) => path.basename(l.slice(28).split(' (')[0])).sort(), ['board-reminder.mjs', 'guard.mjs']);
+  assert.doesNotMatch(missing.out, /WARN/);
+  // Once the scripts are there, no warning.
+  fs.mkdirSync(tools, { recursive: true });
+  for (const s of ['board-reminder.mjs', 'guard.mjs']) fs.writeFileSync(path.join(tools, s), '');
+  const present = isolated(['hooks', '--home', home, '--node']);
+  assert.equal(present.code, 0, present.err);
+  assert.doesNotMatch(present.err, /hook script not found/);
+  // The PowerShell example wires the guard too.
+  assert.match(isolated(['hooks', '--home', home]).err, /WARN hook script not found: .*guard\.ps1/);
+});
+
+test('hooks --node merges only the Node entries (board-reminder and guard)', () => {
   const home = tempDir('hookhome');
   const r = isolated(['hooks', '--home', home, '--node', '--apply']);
   assert.equal(r.code, 0, r.err);

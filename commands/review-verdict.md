@@ -1,5 +1,5 @@
 ---
-description: Record confirmed / false-positive / wont-fix verdicts on findings from a review panel run, in its run log (review/calibration.md).
+description: Record confirmed / false-positive / wont-fix verdicts on findings from a review panel run, confirm or overrule agent verdicts, and log escaped defects, in its run log (review/calibration.md).
 argument-hint: "[branch or run log file] [verdicts, e.g. 1 confirmed, 2 fp: covered by an end-to-end test]"
 allowed-tools:
   - Bash

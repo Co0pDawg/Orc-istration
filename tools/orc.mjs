@@ -205,6 +205,12 @@ async function buildAll(repo, toolId, { local = true, extraNotes = [], profiles 
   return picked.map((adapter) => ({ adapter, ...buildTool(adapter, roles, models, agentsMd, { extraNotes, profiles: loaded }) }));
 }
 
+// The scripts the tool's example hooks run (adapter.hookScripts), as files under its root: install copies them beside
+// the generated files and status compares them, but build, golden and check never emit them.
+function hookScriptFiles(repo, adapter) {
+  return (adapter.hookScripts ?? []).map((rel) => ({ path: `${adapter.home.root}/${rel}`, content: read(path.join(repo, ...rel.split('/'))), hookScript: true }));
+}
+
 // The build the golden test compares against and the golden command writes: models.json only, no profiles, no extra notes.
 export function buildGolden(repo, toolId = 'all') {
   return buildAll(repo, toolId, { local: false });
@@ -519,8 +525,9 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     } catch (e) {
       return fail(e.message);
     }
-    const { adapter, files, errors } = built;
+    const { adapter, errors } = built;
     if (errors.length) return fail(errors.join('\n'));
+    const files = [...built.files, ...hookScriptFiles(repo, adapter)];
     for (const c of adapter.conflicts ?? []) {
       const other = path.join(home, ...c.path.split('/'));
       if (fs.existsSync(other) && isGenerated(read(other))) {
@@ -564,6 +571,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
           // manifest entry only rulebooks and TOML agents carry a marker; any other differing file is hand-written.
           if (m && diskHash(target) !== m.sha256) state = 'REPLACE EDITED';
           else if (!m && !isGenerated(current)) state = 'REPLACE HAND-WRITTEN';
+          // A hook script copied by hand before install shipped them is kept, so it never refuses the whole install.
+          if (state === 'REPLACE HAND-WRITTEN' && f.hookScript && !opt.force) state = 'KEEP';
         }
         return { f, target, exists, state };
       });
@@ -594,6 +603,10 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       dirs: [...(manifest?.dirs ?? [])],
     };
     for (const { f, target, exists, state } of plan) {
+      if (state === 'KEEP') {
+        io.out(`${opt.apply ? 'kept' : 'would keep'} (hand-copied hook script, differs; --force replaces it, with a backup): ${target}`);
+        continue;
+      }
       if (opt.apply && state !== 'unchanged') {
         for (let d = path.dirname(target), rel = path.posix.dirname(f.path); !fs.existsSync(d); d = path.dirname(d), rel = path.posix.dirname(rel)) {
           if (safeRel(home, rel, adapter.home.root) && !next.dirs.includes(rel)) next.dirs.push(rel);
@@ -723,9 +736,9 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     } catch (e) {
       return fail(e.message);
     }
-    const { adapter, files, errors } = built;
+    const { adapter, errors } = built;
     if (errors.length) return fail(errors.join('\n'));
-    const installed = files.filter((f) => f.install !== false);
+    const installed = [...built.files, ...hookScriptFiles(repo, adapter)].filter((f) => f.install !== false);
     const recorded = loaded.manifest?.files ?? null;
     const ours = new Set();
     let clean = true;
@@ -857,7 +870,9 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const root = path.join(repo, 'tests', 'fixtures', 'corpus');
     try {
       if (sub === 'list' && opt._.length === 2 && !opt.case && !opt.report) {
-        const cases = listCases(root);
+        const warnings = [];
+        const cases = listCases(root, warnings);
+        for (const w of warnings) io.err(`WARN ${w}`);
         io.out(cases.map((c) => `${c.id}  [${c.lanes.join(', ')}]  ${c.title}`).join('\n'));
         return 0;
       }
@@ -973,6 +988,11 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       for (const a of added) {
         io.out(`${opt.apply ? 'added' : 'would add'} ${a.event}${a.matcher ? ` [${a.matcher}]` : ''}: ${a.command}`);
         if (a.otherMatchers?.length) io.out(`  note: the same command already runs under matcher ${a.otherMatchers.map((m) => JSON.stringify(m)).join(', ')}; that entry is left as it is`);
+      }
+      // A hook whose script is not at the path it names fails on every call; say so before it is wired.
+      const scripts = [...new Set(added.map((a) => /"([^"]+\.(?:ps1|mjs))"/.exec(a.command)?.[1]).filter(Boolean))];
+      for (const s of scripts.filter((p) => !fs.existsSync(p))) {
+        io.err(`WARN hook script not found: ${s} (install --tool claude-code --apply copies the guard and board-reminder scripts; copy any other by hand)`);
       }
       if (original !== null && formatLike(original, settings) !== original) {
         io.err(`WARN ${target} is not in plain indented JSON layout; writing it re-indents the existing content (values and order unchanged)`);

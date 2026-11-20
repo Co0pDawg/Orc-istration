@@ -1,5 +1,5 @@
 ---
-description: "Run the review panel on the current branch changes: explorers over checklist lanes, a verifier for leads, one report, a run log (review/PROCEDURE.md)."
+description: "Run the review panel on the current branch changes: explorers over checklist lanes, a verifier for leads and issue and warning findings, one report, a run log (review/PROCEDURE.md)."
 argument-hint: "[branch] [base] [code|errors|comments|types|tests|simplify|ui|arch|secondary|tickets] [lite|full] [ticket brief path]"
 allowed-tools:
   - Bash

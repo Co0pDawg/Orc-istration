@@ -92,9 +92,10 @@ export function lintBrief(text, items, role) {
     const body = [head, ...got.body.slice(1)].join('\n');
     if (!/\w/.test(body.replace(/<[^>\n]*>/g, ''))) problems.push(`item ${n} (${item.label}) is empty`);
     // The value, after any "(refuters…):" the brief kept from the label. Empty, `n/a`, a placeholder such as `TBD`,
-    // or a `none` without the `none: <why>` form is not one.
+    // or a `none` without the `none: <why>` form is not one. A placeholder is a whole word, alone or followed by a
+    // note (`TBD - later`), never the start of a path (`todo-app/brief.md`).
     const value = body.replace(/<[^>\n]*>/g, '').replace(/^(\s*(\([^)\n]*\)|:))*/, '').trim();
-    const placeholder = !value || /^(n\/a|tbd|tba|todo|\?+)(\s|[-–—:.,;]|$)/i.test(value) || (/^none\b/i.test(value) && !/^none:\s*\S/i.test(value));
+    const placeholder = !value || /^(n\/a|tbd|tba|todo|\?+)(?=$|\s|[-–—:.,;](\s|$))/i.test(value) || (/^none\b/i.test(value) && !/^none:\s*\S/i.test(value));
     if (item.refuterOnly && role === 'refuter' && placeholder) {
       problems.push(`item ${n} (${item.label}) needs a value for a refuter: a path, the criteria, or "none: <why>"`);
     }

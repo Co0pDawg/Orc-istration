@@ -3,9 +3,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readText } from './text.mjs';
-
 // Cells split on unescaped pipes only, as in the run logs.
-const cells = (line) => line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim());
+import { cells } from './calibration.mjs';
+
 const normPath = (p) => p.replace(/\\/g, '/').replace(/^\.\//, '');
 const CASE_ID = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -23,10 +23,23 @@ export function readCase(text) {
   return { title, lanes };
 }
 
-export function listCases(root) {
+// A case with no title or no Lanes: line, and a folder with expected.md but no case.md, add a line to `warnings`:
+// lane selection would skip them without a word.
+export function listCases(root, warnings = []) {
   if (!fs.existsSync(root)) throw new Error(`corpus: no corpus folder at ${root}`);
-  const ids = fs.readdirSync(root).filter((d) => fs.existsSync(path.join(root, d, 'case.md'))).sort();
-  return ids.map((id) => ({ id, ...readCase(readText(path.join(root, id, 'case.md'))) }));
+  const dirs = fs.readdirSync(root).filter((d) => fs.statSync(path.join(root, d)).isDirectory()).sort();
+  const cases = [];
+  for (const id of dirs) {
+    if (!fs.existsSync(path.join(root, id, 'case.md'))) {
+      if (fs.existsSync(path.join(root, id, 'expected.md'))) warnings.push(`corpus: ${id} has expected.md but no case.md, so it is not listed`);
+      continue;
+    }
+    const c = { id, ...readCase(readText(path.join(root, id, 'case.md'))) };
+    if (!c.title) warnings.push(`corpus: ${id}/case.md has no \`# <title>\` heading`);
+    if (!c.lanes.length) warnings.push(`corpus: ${id}/case.md has no \`Lanes:\` line, so no lane change selects it`);
+    cases.push(c);
+  }
+  return cases;
 }
 
 // expected.md: a table `| Id | Lane | File | Lines | Defect |`. Lines is a range `a-b`, one line number, or a comma list
@@ -107,7 +120,12 @@ export function scoreReport(root, id, reportFile) {
   const dir = caseDir(root, id);
   if (!fs.existsSync(reportFile)) throw new Error(`corpus: report not found: ${reportFile}`);
   const expected = parseExpected(readText(path.join(dir, 'expected.md')));
-  const findings = parseReport(readText(reportFile));
+  const report = readText(reportFile);
+  // A report in another shape would read as every row missed; name the format problem instead.
+  if (!report.split(/\r?\n/).some((l) => FINDING_SECTIONS.test(l))) {
+    throw new Error(`corpus: no ### Must fix, Review before submitting or Suggestions heading in ${reportFile} (the review/PROCEDURE.md Step 4 report format)`);
+  }
+  const findings = parseReport(report);
   const s = scoreCase(expected, findings);
   const range = (e) => e.ranges.map((r) => (r.from === r.to ? `${r.from}` : `${r.from}-${r.to}`)).join(',');
   const out = [`Corpus case ${id}: ${expected.length} expected, ${s.found.length} found, ${s.missed.length} missed, ${s.extra.length} extra`];

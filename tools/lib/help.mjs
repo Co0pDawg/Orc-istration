@@ -32,7 +32,7 @@ export const HELP = {
   },
   install: {
     repo: true,
-    summary: 'Install one tool\'s generated files into a home folder (dry run without --apply); the rulebook names this checkout as the setup checkout',
+    summary: 'Install one tool\'s generated files (for claude-code also its hook scripts) into a home folder (dry run without --apply); the rulebook names this checkout as the setup checkout',
     synopsis: 'install --tool <id> [--home <dir>] [--apply] [--force] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board]',
     options: {
       '--tool <id>': 'the adapter to install (required; not all)',
