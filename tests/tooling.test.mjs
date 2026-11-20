@@ -484,9 +484,9 @@ test('hooks --node merges only the Node board-reminder entries', () => {
   assert.equal(r.code, 0, r.err);
   const s = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
   const cmds = Object.values(s.hooks).flatMap((gs) => gs.flatMap((g) => g.hooks.map((h) => h.command)));
-  assert.equal(cmds.length, 3);
+  assert.equal(cmds.length, 4);
   const fwd = home.replace(/\\/g, '/');
-  for (const c of cmds) assert.match(c, new RegExp(`^node "${fwd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/\\.claude/tools/board-reminder\\.mjs" (mark|relay)$`));
+  for (const c of cmds) assert.match(c, new RegExp(`^node "${fwd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/\\.claude/tools/(board-reminder\\.mjs" (mark|relay)|guard\\.mjs")$`));
   assert.ok(!JSON.stringify(s).includes('powershell'));
 });
 

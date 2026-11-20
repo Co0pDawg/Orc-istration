@@ -144,9 +144,10 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `standards/`, `orchestration/standards.md`, `skills/repo-standards/` | The coding-standards archive (format in `standards/README.md`), the tool-neutral setup procedure, and its Claude Code skill |
 | `orchestration/sprint.md`, `skills/sprint/` | Sprint mode: a timeboxed build (default 45 minutes) that waives the board, standards setup, review panel and cost log for one task, and its Claude Code skill |
 | `docs/` | Rulebook incident notes; the tracker contract and how to adopt a repo; outlines for unattended runs and project memory |
-| `settings.example.json` | Claude Code hooks, status line and plugins, with no permissions |
-| `hooks.node.example.json` | The board-reminder hooks on Node (`hooks --node`) |
+| `settings.example.json` | Claude Code hooks, status line and plugins, and a `permissions.deny` block for secret files |
+| `hooks.node.example.json` | The board-reminder and git-guard hooks on Node (`hooks --node`) |
 | `tools/board-reminder.ps1`, `tools/board-reminder.mjs`, `tools/peon/` | Claude Code hooks: board reminder (PowerShell or Node), sound alert while input is pending and when a turn finishes |
+| `tools/guard.ps1`, `tools/guard.mjs` | Claude Code hook: the git guard (PowerShell or Node; see "The git guard") |
 | `tools/worklog/` | A Windows-only example of time tracking on the hooks (one ticket format, Azure DevOps); not part of the method |
 | `.github/workflows/` | CI: tests and `check` on Ubuntu and Windows |
 
@@ -214,6 +215,37 @@ The work around the build loop, ported from the same production setup and made r
 
 A workflow reads every repo-specific fact (tracker, base branch, branch naming, build and test commands, review rules) from the target repo's rulebook **Project settings**, then git, then one question. Start a repo's rulebook from `templates/AGENTS.md` and follow `docs/adopt-a-repo.md`. Work items, PRs and CI go through one tracker helper command (`docs/tracker-contract.md`); `tools/tracker/ado.ps1` implements it for Azure DevOps, with organization, project and repository from `ORC_ADO_ORG`, `ORC_ADO_PROJECT` and `ORC_ADO_REPO` and no defaults. In Claude Code they run as `/start`, `/grill`, `/draft-pr`, `/peer-review`, `/create` and `/fix-ci`; other tools follow `workflows/<name>.md` by hand.
 
+## The git guard
+
+`tools/guard.ps1` (and its Node port `tools/guard.mjs`, wired by `hooks --node`) is a Claude Code PreToolUse hook on the Bash and PowerShell tools. It enforces the rulebook's hard git rules in the harness instead of only in prose. It reads the command text before it runs, follows `cd`, `Set-Location`, `git -C <dir>`, chained commands (`&&`, `;`, `|`), line continuations and shell keywords or wrappers in front of git (`then`, `do`, `!`, `{`, `time`, `env`, `command`, `exec`, `nohup`), skips comments, heredoc bodies (also inside `"$( )"`) and PowerShell here-strings, and asks git for the current branch and whether the folder is a linked worktree.
+
+It blocks (the reason goes back to the agent):
+
+- `git commit` while the current branch is protected;
+- `git push` to a protected branch: an explicit refspec (`origin main`, `HEAD:main`), `--all` when a protected branch exists locally, `--mirror`, or a push with no refspec while on one (`--tags` alone pushes only tags and is allowed);
+- `git stash` other than `list` and `show` in a linked worktree, because every worktree shares one stash stack;
+- for the read-only roles (`scout`, `researcher`, `refuter`, `review-*`, named by the hook's `agent_type`): `git commit`, `push`, `merge`, `rebase`, `reset`, `clean`, `stash`, `rm`, `mv`, `checkout`, `switch` and `restore`. They keep `git worktree add|remove`, `git apply`, `git diff`, `log`, `show` and `status`, so a refuter can still try mutations in a throwaway worktree.
+
+It asks you first (the reason shows in the prompt): any force-push (`--force`, `-f`, `--force-with-lease`, `+refspec`), and `git add -A`, `git add --all` or `git add .`. In a headless run (`claude -p`, `orc dispatch`) nobody can answer, so an ask acts as a deny.
+
+Protected branches are `main`, `develop` and `master`; set `ORC_PROTECTED_BRANCHES` to a comma list (such as `main,release`) to replace them. The hook is installed for the user, so it applies in every repository: in one where you do commit on `main`, set `ORC_PROTECTED_BRANCHES` under `env` in that project's `.claude/settings.json` to a name no branch has (such as `none`); an empty value keeps the defaults. The guard fails open: bad input, a missing field or a git that does not answer lets the command run, with one `guard:` line on stderr. Every Bash or PowerShell call pays the hook's start-up: about half a second for the PowerShell variant and about a tenth of a second for the Node variant (averaged over ten runs on one Windows machine), so `--node` is the lighter choice.
+
+It is a seat belt, not a sandbox. Its command parser is a best-effort reading of shell syntax, so an unusual quoting form can still slip past it or be blocked in error; the push rule is the backstop. It cannot catch:
+
+- a write through a redirect, a script or another program (`bash do-release.sh`, a git library, an editor);
+- an aliased git (`git ci`, a shell alias or function, a renamed binary);
+- a command built at run time (`eval`, `Invoke-Expression`, variables holding the subcommand);
+- a push whose remote configuration maps a feature branch onto a protected one;
+- switching to a protected branch and committing in the same command (`git switch main && git commit`): the branch is read before the command runs;
+- a push destination built by command substitution (`git push origin $(git branch --show-current)`);
+- `git merge`, `pull`, `cherry-pick`, `revert` and `am`, which also create commits on the current branch: only `git commit` is checked;
+- a repository picked with `GIT_DIR` or `--git-dir` (the guard asks git about the working folder, not that repository);
+- a file write by a read-only role through the shell (a redirect or a script): the guard checks git commands only.
+
+For the commit cases above, the push rule is the backstop: such a commit still cannot be pushed to the protected branch by name, by `HEAD` or by a push with no refspec while on it.
+
+`settings.example.json` also carries a `permissions.deny` block: `Read(.env)`, `Read(.env.*)` and `Read(**/.credentials.json)` (any depth under the session's folder) and `Read(~/.claude/.credentials.json)`. Claude Code applies them to its file tools and to shell commands that name the file (`cat .env`, a redirect), but not to a command that reads without naming it (`grep -r key .`) or a script that opens the file itself.
+
 ## How the .gitignore works
 
 It is an allow-list: `/*` ignores everything in `~/.claude`, then `!` lines re-include named files and folders. Transcripts, credentials, caches, plugins, memory and logs never get staged.
@@ -236,7 +268,7 @@ git fetch origin
 git checkout -f main        # overwrites tracked files only; ignored files stay
 ```
 
-If git reports "dubious ownership", run `git config --global --add safe.directory C:/Users/<user>/.claude` once. Do not copy `settings.example.json` over `settings.json`: run `node tools/orc.mjs hooks --home <your home>` to see the hook entries it would add, then add `--apply` (it backs up `settings.json` and adds only missing hooks, with `<you>` replaced). Use `--node` for the board reminder without PowerShell. The example's other keys (`model`, `statusLine`, `enabledPlugins`, `extraKnownMarketplaces`, `effortLevel`, `env`, `modelSettings`, `autoUpdatesChannel`, `theme`, `agentPushNotifEnabled`) are optional preferences: copy any you want by hand. Clone the board repo into `orchestration/board`, and put the board address in `~/.claude/board.local.md`.
+If git reports "dubious ownership", run `git config --global --add safe.directory C:/Users/<user>/.claude` once. Do not copy `settings.example.json` over `settings.json`: run `node tools/orc.mjs hooks --home <your home>` to see the hook entries it would add, then add `--apply` (it backs up `settings.json` and adds only missing hooks, with `<you>` replaced). Use `--node` for the board reminder and the git guard on Node, without PowerShell. The example's other keys (`model`, `permissions`, `statusLine`, `enabledPlugins`, `extraKnownMarketplaces`, `effortLevel`, `env`, `modelSettings`, `autoUpdatesChannel`, `theme`, `agentPushNotifEnabled`) are optional preferences: copy any you want by hand. Clone the board repo into `orchestration/board`, and put the board address in `~/.claude/board.local.md`.
 
 ## Not in the repo (reinstall or recreate)
 
