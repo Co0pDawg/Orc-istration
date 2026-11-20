@@ -3,7 +3,8 @@
 
 export const WRITER_ROLES = ['builder', 'refuter', 'debugger'];
 
-// [{n, text, label, writerOnly}] from AGENTS.md.
+// [{n, text, label, writerOnly, refuterOnly}] from AGENTS.md. A "(refuters)" item is printed for every writer role but
+// must be filled only for a refuter; builders and debuggers may write `n/a`.
 export function parseMarchingOrders(agentsMd) {
   const lines = agentsMd.split('\n');
   const start = lines.findIndex((l) => /^#+\s+Marching orders\b/i.test(l));
@@ -14,7 +15,8 @@ export function parseMarchingOrders(agentsMd) {
     const m = /^(\d+)\.\s+(.*)$/.exec(l);
     if (!m) continue;
     const label = (/^\*\*(.+?)\*\*/.exec(m[2])?.[1] ?? m[2]).replace(/[.:]+$/, '');
-    items.push({ n: Number(m[1]), text: m[2], label, writerOnly: /\(builders?\/refuters?\)/i.test(m[2]) });
+    const refuterOnly = /\(refuters?[;)]/i.test(m[2]);
+    items.push({ n: Number(m[1]), text: m[2], label, writerOnly: refuterOnly || /\(builders?\/refuters?\)/i.test(m[2]), refuterOnly });
   }
   if (!items.length) throw new Error('AGENTS.md "Marching orders" has no numbered items');
   return items;
@@ -26,7 +28,8 @@ export function briefTemplate(items, role) {
   const out = [];
   forRole(items, role).forEach((item, i) => {
     out.push(`${i + 1}. ${item.text}`);
-    out.push(/^board\b/i.test(item.label) ? '   BOARD: <board address> card cards/<card id> stage <label>' : '   <fill in>');
+    if (/^board\b/i.test(item.label)) out.push('   BOARD: <board address> card cards/<card id> stage <label>');
+    else out.push(item.refuterOnly && role && role !== 'refuter' ? '   n/a' : '   <fill in>');
   });
   return `${out.join('\n')}\n`;
 }
@@ -80,13 +83,22 @@ export function lintBrief(text, items, role) {
       const word = firstWord(item.label);
       const plain = head.replace(/^\*\*/, '');
       if (!plain.toLowerCase().startsWith(word)) {
-        problems.push(`item ${n} should be ${item.label}, found "${head.slice(0, 40)}"`);
+        const isNew = item.refuterOnly ? `; ${item.label} is new at item ${n}, so renumber the items after it` : '';
+        problems.push(`item ${n} should be ${item.label}, found "${head.slice(0, 40)}"${isNew}`);
         return;
       }
       head = /^[^:*]*?(\*\*|:)/.test(plain) ? plain.replace(/^[^:*]*?(\*\*|:)/, '') : plain.slice(word.length);
     }
     const body = [head, ...got.body.slice(1)].join('\n');
     if (!/\w/.test(body.replace(/<[^>\n]*>/g, ''))) problems.push(`item ${n} (${item.label}) is empty`);
+    // The value, after any "(refuters…):" the brief kept from the label. Empty, `n/a`, a placeholder such as `TBD`,
+    // or a `none` without the `none: <why>` form is not one. A placeholder is a whole word, alone or followed by a
+    // note (`TBD - later`), never the start of a path (`todo-app/brief.md`).
+    const value = body.replace(/<[^>\n]*>/g, '').replace(/^(\s*(\([^)\n]*\)|:))*/, '').trim();
+    const placeholder = !value || /^(n\/a|tbd|tba|todo|\?+)(?=$|\s|[-–—:.,;](\s|$))/i.test(value) || (/^none\b/i.test(value) && !/^none:\s*\S/i.test(value));
+    if (item.refuterOnly && role === 'refuter' && placeholder) {
+      problems.push(`item ${n} (${item.label}) needs a value for a refuter: a path, the criteria, or "none: <why>"`);
+    }
     if (/^must verify/i.test(item.label) && !COMMAND.test(body)) problems.push(`item ${n} (${item.label}) names no command`);
     if (/^output/i.test(item.label) && !CAP.test(body)) problems.push(`item ${n} (${item.label}) states no cap`);
   });

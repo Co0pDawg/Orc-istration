@@ -20,7 +20,7 @@ const FIND_CHECKOUT =
 const commands = [
   {
     name: 'pre-pr-review',
-    description: 'Run the review panel on the current branch changes: explorers over checklist lanes, a verifier for leads, one report, a run log (review/PROCEDURE.md).',
+    description: 'Run the review panel on the current branch changes: explorers over checklist lanes, a verifier for leads and issue and warning findings, one report, a run log (review/PROCEDURE.md).',
     hint: '[branch] [base] [code|errors|comments|types|tests|simplify|ui|arch|secondary|tickets] [lite|full] [ticket brief path]',
     tools: ['Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit', 'Agent', 'SendMessage', 'AskUserQuestion'],
     title: 'Pre-PR Review',
@@ -29,7 +29,7 @@ const commands = [
   },
   {
     name: 'review-verdict',
-    description: 'Record confirmed / false-positive / wont-fix verdicts on findings from a review panel run, in its run log (review/calibration.md).',
+    description: 'Record confirmed / false-positive / wont-fix verdicts on findings from a review panel run, confirm or overrule agent verdicts, and log escaped defects, in its run log (review/calibration.md).',
     hint: '[branch or run log file] [verdicts, e.g. 1 confirmed, 2 fp: covered by an end-to-end test]',
     tools: ['Bash', 'Glob', 'Grep', 'Read', 'Edit', 'AskUserQuestion'],
     title: 'Review Verdict',
@@ -38,7 +38,7 @@ const commands = [
   },
   {
     name: 'calibration-report',
-    description: 'Aggregate review run-log verdicts into per-lane precision and ranked recalibration recommendations (review/calibration.md).',
+    description: 'Aggregate review run-log verdicts and escaped defects into per-lane precision and recall, and ranked recalibration recommendations (review/calibration.md).',
     hint: '[lane to focus on, e.g. code-reviewer]',
     tools: ['Bash', 'Glob', 'Grep', 'Read', 'Edit'],
     title: 'Calibration Report',
@@ -58,6 +58,8 @@ export default {
   title: 'Claude Code',
   home: { root: '.claude', rulebook: '.claude/CLAUDE.md', agentsDir: '.claude/agents' },
   capabilityTools,
+  // Scripts the example hooks (settings.example.json, hooks.node.example.json) run; install copies them to <root>/tools/.
+  hookScripts: ['tools/guard.mjs', 'tools/guard.ps1', 'tools/board-reminder.ps1', 'tools/board-reminder.mjs'],
   limits: {},
   gaps: [
     'A role with every capability gets no `tools:` line, so it keeps MCP tools such as ArtifactData; only those roles can write the artifact board.',

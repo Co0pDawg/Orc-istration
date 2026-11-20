@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { parseRunLog } from './calibration.mjs';
+import { parseRunLog, bucket, precision, pct, MIN_DENOMINATOR } from './calibration.mjs';
 import { readText } from './text.mjs';
 
 export const SCHEMA_VERSION = 1;
@@ -43,14 +43,19 @@ function resultChars(content) {
   return sum;
 }
 
+// A prompt or a message sent to a running agent that puts a review-verifier in findings mode (review/PROCEDURE.md).
+const FINDINGS_MODE = /findings mode/i;
+
 // One transcript as events. Streaming repeats a message id; the last usage seen wins (what was billed), with the
-// first timestamp. A tool result repeated in the file counts once.
+// first timestamp. A tool result repeated in the file counts once. `findingsModeAt` holds the times of user text
+// that names findings mode, so a verifier's verdicts can be told apart from its lead verdicts.
 export function readTranscript(file) {
   const usage = new Map();
   const toolUses = new Map();
   const results = new Map();
   const texts = [];
   const invocations = [];
+  const findingsModeAt = [];
   const info = { version: null, cwd: null, entrypoint: null, branch: null };
   for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
     if (!/"type"\s*:\s*"(assistant|user)"/.test(line)) continue;
@@ -87,6 +92,7 @@ export function readTranscript(file) {
       if (typeof m.content === 'string') {
         const c = COMMAND.exec(m.content);
         if (c) invocations.push({ ts, workflow: c[1], source: 'command' });
+        if (FINDINGS_MODE.test(m.content)) findingsModeAt.push(ts);
         continue;
       }
       for (const b of blocks) {
@@ -95,11 +101,12 @@ export function readTranscript(file) {
         else if (b.type === 'text' && typeof b.text === 'string') {
           const c = COMMAND.exec(b.text);
           if (c) invocations.push({ ts, workflow: c[1], source: 'command' });
+          if (FINDINGS_MODE.test(b.text)) findingsModeAt.push(ts);
         }
       }
     }
   }
-  return { usage, toolUses, results, texts, invocations, info };
+  return { usage, toolUses, results, texts, invocations, info, findingsModeAt };
 }
 
 const newCounter = () => ({ input: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0, output: 0, context: 0 });
@@ -137,7 +144,27 @@ export function redactPath(p, roots, home = os.homedir()) {
   return '<external>';
 }
 
-export function agentResult(agentType, texts) {
+// One verifier message's verdict lines (`3. CONFIRMED`, `A3. CONFIRMED`, `Lead 3: CONFIRMED`), split into the lead set
+// and the findings-mode set. The message starts in findings mode when a findings-mode prompt came before it; a heading
+// naming only leads, or only findings, switches the set for the lines below it.
+function verifierVerdicts(text, findingsMode) {
+  const sets = { leads: [], findings: [] };
+  let set = findingsMode ? 'findings' : 'leads';
+  for (const line of text.split('\n')) {
+    if (/^\s*#{1,6}\s/.test(line)) {
+      const lead = /\bleads?\b/i.test(line);
+      const finding = /\bfindings?\b/i.test(line);
+      if (lead !== finding) set = lead ? 'leads' : 'findings';
+      continue;
+    }
+    const m = /^\s*[*_]*\s*(?:[A-Za-z]?\d+\.|Lead\s+\d+[:.]?)\s*[*_]*\s*(CONFIRMED|PLAUSIBLE|REFUTED)\b/.exec(line);
+    if (m) sets[set].push(m[1]);
+  }
+  return sets;
+}
+
+// `findingsModeAt`: the times of prompts that put the agent in findings mode (readTranscript).
+export function agentResult(agentType, texts, findingsModeAt = []) {
   const all = texts.map((x) => x.text).join('\n');
   const r = {};
   const verdicts = [...all.matchAll(/VERDICT:\s*\**\s*(ACCEPT|REWORK)\b(?!\s*\|)/g)].map((m) => m[1]);
@@ -145,16 +172,18 @@ export function agentResult(agentType, texts) {
   const statuses = [...all.matchAll(/STATUS:\s*\**\s*(DONE|BLOCKED|PARTIAL)\b(?!\s*\|)/g)].map((m) => m[1]);
   if (statuses.length) r.statuses = statuses;
   if (agentType === 'review-verifier') {
-    // A verifier resumed for its severity review ends with RAISE/KEEP; its lead verdicts sit in an earlier message,
-    // so take the message that settles the most leads, and the last one with RAISE/KEEP.
-    let best = [];
+    // A verifier resumed for finding verification or its severity review answers in later messages. Its lead verdicts
+    // and its findings-mode verdicts are counted apart (`leads`, `findings`), each from the message that settles the
+    // most of that kind; RAISE/KEEP comes from the last message that has them.
+    const best = { leads: [], findings: [] };
     for (const x of texts) {
-      const found = [...x.text.matchAll(/^\s*[*_]*\s*(?:\d+\.|Lead\s+\d+[:.]?)\s*[*_]*\s*(CONFIRMED|PLAUSIBLE|REFUTED)\b/gm)];
-      if (found.length > best.length) best = found;
+      const sets = verifierVerdicts(x.text, findingsModeAt.some((t) => t <= (x.ts ?? Infinity)));
+      for (const k of Object.keys(best)) if (sets[k].length > best[k].length) best[k] = sets[k];
     }
-    if (best.length) {
-      r.leads = { CONFIRMED: 0, PLAUSIBLE: 0, REFUTED: 0 };
-      for (const m of best) r.leads[m[1]]++;
+    for (const k of Object.keys(best)) {
+      if (!best[k].length) continue;
+      r[k] = { CONFIRMED: 0, PLAUSIBLE: 0, REFUTED: 0 };
+      for (const v of best[k]) r[k][v]++;
     }
     for (let i = texts.length - 1; i >= 0; i--) {
       const t = texts[i].text;
@@ -233,29 +262,35 @@ export function measureAgent(ev, since, until, roots, agentType) {
       avgChars: reads ? toInt(readChars / reads) : 0,
       top: [...perFile].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([p, chars]) => ({ path: p, chars })),
     },
-    result: agentResult(agentType, texts),
+    result: agentResult(agentType, texts, ev.findingsModeAt ?? []),
   };
 }
 
-// The run log's verdict counts, in the report's shape (a non-canonical verdict counts as pending).
-// Parser warnings (a Leads: line missing a count) go into `warnings`, not the report.
+// One lane's verdict counts, in the run report and in the report's Review lanes table.
+const laneCounter = () => ({ total: 0, confirmed: 0, falsePositive: 0, wontFix: 0, notActioned: 0, pending: 0, agent: 0 });
+
+// The run log's verdict counts, in the report's shape (a non-canonical verdict counts as pending). A triaged verdict
+// carrying `(agent)` counts under `agent`, not confirmed / falsePositive / wontFix, through calibration's own bucket, so
+// precision here matches `calibration`. `verification` is the run log's Verification: line (finding verification), or
+// null. Parser warnings (a Leads: or Verification: line missing a count) go into `warnings`.
 export function findingsFromLog(text, name, warnings = []) {
   const log = parseRunLog(text);
   for (const w of log.warnings) warnings.push(`metrics: ${name}: ${w}`);
   const bySeverity = {};
-  const byVerdict = { confirmed: 0, falsePositive: 0, wontFix: 0, notActioned: 0, pending: 0 };
+  const byVerdict = { confirmed: 0, falsePositive: 0, wontFix: 0, notActioned: 0, pending: 0, agent: 0 };
   const byLane = {};
   for (const r of log.rows) {
-    const v = r.kind === 'nonCanonical' ? 'pending' : r.kind;
+    const b = bucket(r);
+    const v = b === 'nonCanonical' ? 'pending' : b;
     bySeverity[r.severity] = (bySeverity[r.severity] ?? 0) + 1;
     byVerdict[v]++;
     for (const lane of r.lanes) {
-      byLane[lane] ??= { total: 0, confirmed: 0, falsePositive: 0, wontFix: 0, notActioned: 0, pending: 0 };
+      byLane[lane] ??= laneCounter();
       byLane[lane].total++;
       byLane[lane][v]++;
     }
   }
-  return { log: name, leads: log.leads, bySeverity, byVerdict, byLane };
+  return { log: name, leads: log.leads, verification: log.verification, bySeverity, byVerdict, byLane };
 }
 
 export function loopOutcomes(agents) {
@@ -286,10 +321,12 @@ export function loopOutcomes(agents) {
     const n = (s) => statuses.filter((x) => x === s).length;
     o.builder = { done: n('DONE'), blocked: n('BLOCKED'), partial: n('PARTIAL') };
   }
-  const leadSets = agents.filter((a) => a.result.leads);
-  if (leadSets.length) {
-    o.verifier = { CONFIRMED: 0, PLAUSIBLE: 0, REFUTED: 0 };
-    for (const a of leadSets) for (const k of Object.keys(o.verifier)) o.verifier[k] += a.result.leads[k];
+  // Lead verdicts only; findings-mode verdicts are summed apart, so each count covers one defined set.
+  for (const [key, field] of [['verifier', 'leads'], ['verifierFindings', 'findings']]) {
+    const sets = agents.filter((a) => a.result[field]);
+    if (!sets.length) continue;
+    o[key] = { CONFIRMED: 0, PLAUSIBLE: 0, REFUTED: 0 };
+    for (const a of sets) for (const k of Object.keys(o[key])) o[key][k] += a.result[field][k];
   }
   return o;
 }
@@ -616,17 +653,18 @@ export function metricsReport(runs, prices = DEFAULT_PRICES) {
     const lanes = {};
     for (const r of reviewed) {
       for (const [lane, v] of Object.entries(r.outcomes.findings.byLane ?? {})) {
-        lanes[lane] ??= { total: 0, confirmed: 0, falsePositive: 0, wontFix: 0, notActioned: 0, pending: 0 };
+        lanes[lane] ??= laneCounter();
         for (const k of Object.keys(lanes[lane])) lanes[lane][k] += Number(v[k] ?? 0);
       }
     }
     L.push('## Review lanes', '');
-    L.push(`From the latest review of each of ${reviewed.length} branches. Precision is confirmed / (confirmed + false-positive); wont-fix, not-actioned and pending are left out of it.`, '');
-    L.push('| Lane | Findings | Confirmed | False positive | Wont fix | Not actioned | Pending | Precision |');
-    L.push('|---|---|---|---|---|---|---|---|');
+    L.push(`From the latest review of each of ${reviewed.length} branches. Precision is confirmed / (confirmed + false-positive), from developer verdicts only and shown from ${MIN_DENOMINATOR} such verdicts, as in \`calibration\`; wont-fix, not-actioned, pending and agent verdicts (\`(agent)\`) are left out of it.`, '');
+    L.push('| Lane | Findings | Confirmed | False positive | Wont fix | Not actioned | Pending | Precision | Agent verdicts |');
+    L.push('|---|---|---|---|---|---|---|---|---|');
     for (const k of Object.keys(lanes).sort()) {
       const l = lanes[k];
-      L.push(`| ${k} | ${l.total} | ${l.confirmed} | ${l.falsePositive} | ${l.wontFix} | ${l.notActioned} | ${l.pending} | ${fpct(l.confirmed, l.confirmed + l.falsePositive)} |`);
+      // calibration's own precision and rounding: n/a under its minimum of developer verdicts, so both tools agree.
+      L.push(`| ${k} | ${l.total} | ${l.confirmed} | ${l.falsePositive} | ${l.wontFix} | ${l.notActioned} | ${l.pending} | ${pct(precision(l))} | ${l.agent} |`);
     }
     L.push('');
   }

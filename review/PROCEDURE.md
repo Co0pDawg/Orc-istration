@@ -1,6 +1,6 @@
 # Pre-PR Review Procedure
 
-Version: 1.0.0 (bump on change: major = workflow reshape, minor = new behavior, patch = fix or wording; the metrics
+Version: 1.1.0 (bump on change: major = workflow reshape, minor = new behavior, patch = fix or wording; the metrics
 capture records it)
 
 The orchestrator's procedure for the review panel: a pre-submission review of every change a branch introduces
@@ -75,7 +75,7 @@ the tool's session scratch folder, or `.orc/tmp/` in the reviewed repo when the 
 1. A header: branch, base, and where the text came from.
 2. A **Spec items** table (`| Id | Item | Source |`), one row per checkable requirement: `S1`..`Sn` from the
    acceptance criteria, then from the description, then requirements later comments add (a later comment outranks the
-   criteria it changes; say so in the row). Requirements agreed after the ticket was written (a plan's decisions)
+   criteria it changes when the developer or the ticket's owner made or confirmed it; say so in the row). Requirements agreed after the ticket was written (a plan's decisions)
    get `R1`..`Rn`. Each How to Test step in a PR description gets a `PR-HT<n>` row. Mark an item from a parent ticket
    as `goal` or `context` in its Source cell when it is not this branch's work.
 3. The source text verbatim: description, acceptance criteria, repro steps, comments, PR description and threads.
@@ -103,7 +103,7 @@ explorers:
 | `review-docs-explorer` | High | comment-analyzer |
 | `review-checklist-explorer` | Mid | pr-test-analyzer, ui-test-reviewer, secondary-artifacts, ticket-coverage |
 | `review-design-explorer` | High | architecture-reviewer, type-design-analyzer, code-simplifier (large diffs only) |
-| `review-verifier` | High | settles leads and reviews severity (Step 3) |
+| `review-verifier` | High | settles leads, verifies findings and reviews severity (Step 3) |
 
 An explorer runs only when at least one of its lanes is selected. Without scope filters `code-reviewer` is always
 selected, so `review-code-explorer` always runs; scope filters can leave it out (`errors comments` runs only the
@@ -229,6 +229,27 @@ or asking them as questions. Settle every lead before the report:
    review rules path and the `BRIEF` path. Run it in parallel with step 2's messages.
 4. `CONFIRMED` and `PLAUSIBLE` leads become findings under their original lane tag, at the severity the verifier or
    owning explorer gave; tag `PLAUSIBLE` ones `(plausible)`. `REFUTED` leads leave the report; count them.
+5. A `PLAUSIBLE` lead marked `Check by: runtime` is also listed under **Runtime checks** in the report, with its
+   `Runtime steps:` and the expected result against the defective one (see [Runtime checks](#runtime-checks)).
+
+### Finding verification
+
+Explorers verify their own findings, but an explorer that is wrong about a caller or a guard is wrong with
+confidence, and a fix built on a wrong finding costs more than the check. Before severity review, send every `issue:`
+and `warning:` finding that did not come from a lead the verifier or an owning explorer already settled to
+`review-verifier` in **findings mode**: one batch, each with its number, lane tag, severity, text, location and
+evidence, plus `CHECKOUT`, `BRANCH`, `BASE`, the diff command, the project's review rules path and the `BRIEF` path.
+Resume the lead-routing verifier if one ran and the tool can resume it; otherwise launch one. Skip the step when there
+are no issues or warnings.
+
+- `CONFIRMED` findings stay, and `PLAUSIBLE` ones stay tagged `(plausible)`, each at the severity the verifier
+  returns: a raise moves the finding to its new severity section with the verifier's reason (the verifier never
+  lowers one).
+- A `PLAUSIBLE` finding the verifier says only a running app can settle comes with its `Runtime steps:`; list it
+  under **Runtime checks** as well, like a runtime lead.
+- `REFUTED` findings leave the severity sections and move to **Refuted by verification** in the report, each with the
+  verifier's quoted evidence, so the developer can overrule a wrong refutation. Count them in the Verdict block. They
+  are logged with an agent verdict (Step 5).
 
 ### Severity review
 
@@ -275,18 +296,37 @@ finding's `Suggested fix:` and `Screenshot:` lines with it. Then produce a conso
 ### Not verified
 - ticket-coverage's Not verified list
 
+### Runtime checks
+- [lane] <check> — file:line
+  Steps: <what to do in the running app>
+  Expected: <a correct build> / Defective: <what shows the defect>
+
+### Refuted by verification
+- [lane] <severity>: finding — file:line
+  Evidence: <the verifier's quoted line, constraint or count>
+
 ### Strengths
 - One to three things the change does well, specific to this diff (omit the section if nothing stands out)
 
 ### Verdict
 approved | needs changes | informational — N issue / N warning / N suggestion / N nit / N question
 Leads: N raised, N confirmed, N plausible, N refuted
+Verification: N checked, N confirmed, N plausible, N refuted
 Severity review: N raised
 ```
 
 **Ticket coverage** (only with a `BRIEF`) has one row per id from the brief's Spec items table, plus the edge-case
 rows (`<id>a`) the agents added. **Static** is `ticket-coverage`'s status. Omit **Not verified** when it listed
-nothing.
+nothing. Omit **Runtime checks**, **Refuted by verification** and the `Verification:` line when they would be empty.
+The counts in the first Verdict line leave refuted findings out.
+
+### Runtime checks
+
+**Runtime checks** lists the `PLAUSIBLE` leads marked `Check by: runtime`, and the `PLAUSIBLE` findings that finding
+verification returned with `Runtime steps:`: each stays a finding in its severity
+section and is repeated here with its steps. The panel itself never runs the app. Running the checks belongs to the
+caller: the developer, or the `start` workflow's live step when that workflow invoked the review. Whoever runs one
+records its result in the run log's `## Runtime checks` table (Step 6).
 
 > This review is static — it does not compile the branch or run tests. Run the project's build and the affected tests
 > (its rulebook or review rules name the commands) before treating a clean review as a green branch.
@@ -300,9 +340,12 @@ and list anything the description still has to cover.
 ## Step 5 — Log the run
 
 Write the run log record exactly as `review/calibration.md` specifies (its location, file name, header lines, table
-and carry-forward from an earlier run of the same branch). One row per finding in the report. The agent cell uses
+and carry-forward from an earlier run of the same branch). One row per finding in the report, plus one row per
+finding under **Refuted by verification**, its verdict already set to
+`false-positive — refuted by verifier: <evidence> (agent)`. The agent cell uses
 exact **lane** names (the tag on each finding, never an explorer name), comma-separated for merged findings, so
-per-lane aggregation keys stay stable. The Where cell takes the spec item id for a finding about a requirement.
+per-lane aggregation keys stay stable. The Where cell takes the spec item id for a finding about a requirement. When
+the report has **Runtime checks**, the log gets a `## Runtime checks` table with each check's Result `_not run_`.
 
 **Metrics.** Then capture the run's token, context and outcome metrics (`review/metrics.md`):
 
@@ -323,12 +366,19 @@ Verdicts are recorded **as the session resolves each finding**, not in a separat
 verdict cells, using the verdict values in `review/calibration.md`, at these moments:
 
 - **A finding is fixed** (you apply the fix, or the user fixes it and tells you): it is confirmed, fixed in session.
-  Accepting and fixing a finding *is* the confirmation — no separate sign-off needed. A `secondary-artifacts`
+  Accepting and fixing a finding *is* the confirmation — no separate sign-off needed. The verdict ends with its
+  source: `(developer)` when the developer asked for the fix or made it, `(agent)` when a workflow applied it on its
+  own, until the developer confirms it (then change it to `(developer)`). A `secondary-artifacts`
   `(out-of-repo)` finding is not fixed here; once the user accepts it, it is confirmed and handed to the artifact's
   owner.
 - **A finding is discussed and rejected**: false-positive (the finding was wrong) or wont-fix (right but not worth
   acting on), each with the reason. The reason is the calibration payload — capture the user's actual objection, not a
-  paraphrase of the finding.
+  paraphrase of the finding. A developer who overrules a verifier refutation replaces that row's agent verdict with
+  their own.
+- **A runtime check is run**: set its Result to `pass` or `fail — <what was seen>`. A failed check confirms its
+  finding, `(developer)` when the developer ran it and `(agent)` when a workflow's live step did. A passed check sets
+  only the Result to `pass`: the `(plausible)` finding's verdict stays open for the developer to give (a pass on one
+  path rarely proves the defect impossible).
 - **The review concludes** (the user asks to commit, open a PR, or moves on): sweep remaining `suggestion:`/`nit:`
   rows to not-actioned — logged but not engaged with, excluded from precision math. `issue:`/`warning:` rows the user
   never addressed stay pending; list them when closing so nothing blocking is silently dropped. After the sweep, run

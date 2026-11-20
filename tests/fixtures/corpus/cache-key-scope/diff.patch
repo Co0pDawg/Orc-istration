@@ -1,0 +1,25 @@
+diff --git a/src/catalog/priceCache.js b/src/catalog/priceCache.js
+new file mode 100644
+--- /dev/null
++++ b/src/catalog/priceCache.js
+@@ -0,0 +1,20 @@
++// Price lookups, cached per tenant.
++import { cache } from '../infra/cache.js';
++import { loadPrice } from './priceStore.js';
++
++const TTL_SECONDS = 300;
++
++export async function warmPrices(tenantId, skus) {
++  for (const sku of skus) {
++    const price = await loadPrice(tenantId, sku);
++    await cache.set(`price:${tenantId}:${sku}`, price, TTL_SECONDS);
++  }
++}
++
++export async function getPrice(tenantId, sku) {
++  const hit = await cache.get(`price:${sku}`);
++  if (hit !== undefined) return hit;
++  const price = await loadPrice(tenantId, sku);
++  await cache.set(`price:${sku}`, price, TTL_SECONDS);
++  return price;
++}

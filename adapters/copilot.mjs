@@ -21,6 +21,7 @@ export default {
   limits: { agentBodyChars: 30000 },
   gaps: [
     'Exact model ids are unverified: agents carry no `model` until you set ids in `models.local.json`.',
+    'Low, Mid and High carry no model in the shipped `models.json`, so all three run the default model and a per-dispatch tier override changes nothing.',
     'Tools are coarse aliases (`search` covers listing and searching; `web` covers fetch and search).',
     'Read-only rests on leaving out the `edit` alias; `execute` can still change files, so the role body forbids edits.',
     'No hook system in the research: the board update after an agent report is a build-loop step.',

@@ -32,7 +32,7 @@ export const HELP = {
   },
   install: {
     repo: true,
-    summary: 'Install one tool\'s generated files into a home folder (dry run without --apply); the rulebook names this checkout as the setup checkout',
+    summary: 'Install one tool\'s generated files (for claude-code also its hook scripts) into a home folder (dry run without --apply); the rulebook names this checkout as the setup checkout',
     synopsis: 'install --tool <id> [--home <dir>] [--apply] [--force] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board]',
     options: {
       '--tool <id>': 'the adapter to install (required; not all)',
@@ -84,7 +84,7 @@ export const HELP = {
     summary: 'Print the marching-orders template, or lint a brief against it',
     synopsis: 'brief new [--role <name>] [--out <file>] [--force] | brief lint <file> [--role <name>]',
     options: {
-      '--role <name>': 'the role the brief is for (items 9 and 10 only for builder, refuter and debugger)',
+      '--role <name>': 'the role the brief is for (items 9 to 11 only for builder, refuter and debugger)',
       '--out <file>': 'write the template to a file instead of printing it',
       '--force': 'overwrite an existing --out file',
     },
@@ -110,13 +110,22 @@ export const HELP = {
     },
   },
   calibration: {
-    summary: 'Per-lane precision of the review panel from its run logs (review/calibration.md)',
+    summary: 'Per-lane precision and recall of the review panel from its run logs (review/calibration.md)',
     synopsis: 'calibration [--logs <dir>] [--min-precision <0..1>] [--out <file>] [--force]',
     options: {
       '--logs <dir>': 'the run logs (default <repo top>/.orc/reviews)',
       '--min-precision <0..1>': 'flag lanes below this precision',
       '--out <file>': 'write the report to a file instead of printing it',
       '--force': 'overwrite an existing --out file',
+    },
+  },
+  corpus: {
+    repo: true,
+    summary: 'List the review regression corpus, or score a panel report against one case (review/corpus.md)',
+    synopsis: 'corpus list | corpus score --case <id> --report <file>',
+    options: {
+      '--case <id>': 'score: the case, a folder under tests/fixtures/corpus',
+      '--report <file>': 'score: the panel report to score; exits 1 when an expected finding is missed',
     },
   },
   metrics: {
@@ -156,7 +165,7 @@ export const HELP = {
     options: {
       '--home <dir>': 'home folder (required; no default)',
       '--apply': 'write the file, after a backup',
-      '--node': 'use hooks.node.example.json (board reminder on Node, no PowerShell)',
+      '--node': 'use hooks.node.example.json (board reminder and git guard on Node, no PowerShell)',
     },
   },
   standards: {

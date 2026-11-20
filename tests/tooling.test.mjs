@@ -44,8 +44,9 @@ function goodBrief(extra = {}) {
     6: 'Paths only, cap 20 lines.',
     7: 'The board CLI is local/board.js.',
     8: 'scratch/scout-board.md',
-    9: 'The real sessions collection.',
-    10: 'BOARD: http://localhost:8377 card cards/c1 stage Build',
+    9: 'none: a tooling change with no ticket.',
+    10: 'The real sessions collection.',
+    11: 'BOARD: http://localhost:8377 card cards/c1 stage Build',
     ...extra,
   };
   return parseMarchingOrders(AGENTS)
@@ -57,12 +58,17 @@ function goodBrief(extra = {}) {
 
 test('brief new follows the AGENTS.md list, also after the list changes', async () => {
   const items = parseMarchingOrders(AGENTS);
-  assert.equal(items.length, 10);
+  assert.equal(items.length, 11);
   const r = await run(['brief', 'new', '--role', 'builder']);
   assert.equal(r.code, 0, r.err);
   for (const it of items) assert.ok(r.out.includes(`${it.n}. ${it.text}`), it.label);
   const scout = await run(['brief', 'new', '--role', 'scout']);
-  assert.ok(!scout.out.includes('Data precondition') && !scout.out.includes('BOARD:'), 'items 9 and 10 only for writers');
+  assert.ok(!scout.out.includes('Intent') && !scout.out.includes('Data precondition') && !scout.out.includes('BOARD:'), 'items 9 to 11 only for writers');
+  const refuter = await run(['brief', 'new', '--role', 'refuter']);
+  assert.match(refuter.out, /^9\. \*\*Intent\*\* \(refuters; builders and debuggers write `n\/a`\)/m);
+  assert.match(refuter.out, /^9\. .*\n {3}<fill in>$/m);
+  assert.match(refuter.out, /^10\. \*\*Data precondition\*\*/m);
+  assert.match(r.out, /^9\. .*\n {3}n\/a$/m, 'a builder template prefills Intent with n/a');
   assert.match(scout.out, /^8\. \*\*Scratch path\*\*/m);
 
   const copy = tempDir('brief');
@@ -96,12 +102,45 @@ test('brief lint: a filled brief passes; one test per rule', async () => {
   // Item 6 states no cap.
   assert.match(lintBrief(goodBrief({ 6: 'a short report' }), items).join('\n'), /item 6 \(Output format and cap\) states no cap/);
   // BOARD line shape.
-  assert.match(lintBrief(goodBrief({ 10: 'BOARD: http://localhost:8377 card c1 stage Build' }), items).join('\n'), /BOARD line does not match/);
-  assert.deepEqual(lintBrief(goodBrief({ 10: 'BOARD: https://claude.ai/artifact/x slug 1234 card cards/imp-i3 stage Build' }), items), []);
-  // Writer roles require items 9 and 10.
+  assert.match(lintBrief(goodBrief({ 11: 'BOARD: http://localhost:8377 card c1 stage Build' }), items).join('\n'), /BOARD line does not match/);
+  assert.deepEqual(lintBrief(goodBrief({ 11: 'BOARD: https://claude.ai/artifact/x slug 1234 card cards/imp-i3 stage Build' }), items), []);
+  // Writer roles require items 9 to 11.
   const eight = goodBrief().split('\n').slice(0, 16).join('\n');
   assert.deepEqual(lintBrief(eight, items, 'scout'), []);
-  assert.match(lintBrief(eight, items, 'builder').join('\n'), /item 9 \(Data precondition\) is missing/);
+  assert.match(lintBrief(eight, items, 'builder').join('\n'), /item 9 \(Intent\) is missing/);
+  // Intent: a refuter needs a value; builders and debuggers may write n/a.
+  assert.deepEqual(lintBrief(goodBrief({ 9: 'n/a' }), items, 'builder'), []);
+  assert.deepEqual(lintBrief(goodBrief({ 9: 'n/a' }), items, 'debugger'), []);
+  assert.match(lintBrief(goodBrief({ 9: 'n/a' }), items, 'refuter').join('\n'), /item 9 \(Intent\) needs a value for a refuter/);
+  assert.match(lintBrief(goodBrief({ 9: 'none' }), items, 'refuter').join('\n'), /item 9 \(Intent\) needs a value for a refuter/);
+  assert.match(lintBrief(goodBrief({ 9: 'none:' }), items, 'refuter').join('\n'), /item 9 \(Intent\) needs a value for a refuter/);
+  assert.match(lintBrief(goodBrief({ 9: '<fill in>' }), items, 'refuter').join('\n'), /item 9 \(Intent\) is empty/);
+  assert.deepEqual(lintBrief(goodBrief(), items, 'refuter'), [], 'none: <why> passes');
+  const inline = (v) => goodBrief().replace(/^9\. .*\n.*$/m, `9. **Intent** (refuters): ${v}`);
+  assert.match(lintBrief(inline('n/a'), items, 'refuter').join('\n'), /item 9 \(Intent\) needs a value for a refuter/, 'inline label form');
+  assert.match(lintBrief(inline(''), items, 'refuter').join('\n'), /item 9 \(Intent\) needs a value for a refuter/, 'label kept, value empty');
+  assert.deepEqual(lintBrief(inline('none: no ticket'), items, 'refuter'), []);
+  assert.deepEqual(lintBrief(inline('n/a'), items, 'builder'), []);
+  assert.deepEqual(lintBrief(goodBrief({ 9: 'scratch/ticket-brief.md' }), items, 'refuter'), []);
+  const noIntent = goodBrief().split('\n').filter((l, i, a) => !/^9\. /.test(l) && !(i > 0 && /^9\. /.test(a[i - 1])))
+    .join('\n').replace(/^10\. /m, '9. ').replace(/^11\. /m, '10. ');
+  assert.match(lintBrief(noIntent, items, 'refuter').join('\n'), /item 9 should be Intent, found "[^"]*"; Intent is new at item 9, so renumber the items after it/);
+  assert.match(lintBrief(noIntent, items, 'builder').join('\n'), /Intent is new at item 9/);
+  for (const v of ['TBD', 'todo', 'none - no ticket', 'None no ticket']) {
+    assert.match(lintBrief(goodBrief({ 9: v }), items, 'refuter').join('\n'), /item 9 \(Intent\) needs a value for a refuter/, v);
+    assert.deepEqual(lintBrief(goodBrief({ 9: v }), items, 'builder'), [], `builder: ${v}`);
+  }
+  assert.deepEqual(lintBrief(goodBrief({ 9: 'None: tooling only' }), items, 'refuter'), []);
+  const doubleColon = goodBrief().replace(/^9\. .*\n.*$/m, '9. **Intent**: (refuters): TBD');
+  assert.match(lintBrief(doubleColon, items, 'refuter').join('\n'), /item 9 \(Intent\) needs a value for a refuter/, 'label colon, then "(refuters):"');
+  assert.match(lintBrief(goodBrief({ 9: 'TBD - later' }), items, 'refuter').join('\n'), /item 9 \(Intent\) needs a value for a refuter/, 'placeholder with a trailing note');
+  assert.deepEqual(lintBrief(goodBrief({ 9: 'todo/ticket-brief.md' }), items, 'refuter'), [], 'a path that starts with a placeholder word');
+  for (const v of ['todo-app/ticket-brief.md', 'tbd-notes/brief.md', 'tba.md', 'n/a-cases/brief.md']) {
+    assert.deepEqual(lintBrief(goodBrief({ 9: v }), items, 'refuter'), [], `a path that starts with a placeholder word: ${v}`);
+  }
+  for (const v of ['TBD.', 'todo:', 'tba - later', 'n/a, no ticket']) {
+    assert.match(lintBrief(goodBrief({ 9: v }), items, 'refuter').join('\n'), /item 9 \(Intent\) needs a value for a refuter/, v);
+  }
   // Free-form labels in the orders' own style pass.
   const caps = goodBrief().replace(/^1\. .*$/m, '1. GOAL').replace(/^ {3}Find where.*$/m, '   Find it.');
   assert.deepEqual(lintBrief(caps, items), []);
@@ -256,6 +295,7 @@ test('costlog rows, spans and per-card tokens from a real-shaped export', async 
   assert.match(md, /- Wall clock: 100 min across 5 dispatch\(es\); 1 without an end event/);
   assert.match(md, /Orchestrator context: TODO/);
   assert.match(md, /## Loop signal\n\nTODO \(board events mentioning rework: 2\)/);
+  assert.match(md, /## Loop signal\n\nTODO [^\n]*\n\n- Escaped defects: TODO \(one line per defect found after the loop accepted: what, who caught it, why the loop missed it; or none\)\n\n## Spec misses/);
   assert.match(md, /## Spec misses\n\nTODO/);
   assert.equal((await run(['costlog', '--session', 'missing', '--board-export', file])).code, 1);
   assert.equal((await run(['costlog', '--session', SID])).code, 1);
@@ -444,15 +484,33 @@ test('hooks: existing settings keep every key and hook byte-for-byte; second run
   assert.equal(fs.readFileSync(file, 'utf8'), after, 'second run changes nothing');
 });
 
-test('hooks --node merges only the Node board-reminder entries', () => {
+test('hooks warns once per wired script that is not at its path, on stderr', () => {
+  const home = tempDir('hookhome');
+  const missing = isolated(['hooks', '--home', home, '--node']);
+  assert.equal(missing.code, 0, missing.err);
+  const tools = path.join(home, '.claude', 'tools');
+  const warned = missing.err.split('\n').filter((l) => l.startsWith('WARN hook script not found: '));
+  assert.deepEqual(warned.map((l) => path.basename(l.slice(28).split(' (')[0])).sort(), ['board-reminder.mjs', 'guard.mjs']);
+  assert.doesNotMatch(missing.out, /WARN/);
+  // Once the scripts are there, no warning.
+  fs.mkdirSync(tools, { recursive: true });
+  for (const s of ['board-reminder.mjs', 'guard.mjs']) fs.writeFileSync(path.join(tools, s), '');
+  const present = isolated(['hooks', '--home', home, '--node']);
+  assert.equal(present.code, 0, present.err);
+  assert.doesNotMatch(present.err, /hook script not found/);
+  // The PowerShell example wires the guard too.
+  assert.match(isolated(['hooks', '--home', home]).err, /WARN hook script not found: .*guard\.ps1/);
+});
+
+test('hooks --node merges only the Node entries (board-reminder and guard)', () => {
   const home = tempDir('hookhome');
   const r = isolated(['hooks', '--home', home, '--node', '--apply']);
   assert.equal(r.code, 0, r.err);
   const s = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
   const cmds = Object.values(s.hooks).flatMap((gs) => gs.flatMap((g) => g.hooks.map((h) => h.command)));
-  assert.equal(cmds.length, 3);
+  assert.equal(cmds.length, 4);
   const fwd = home.replace(/\\/g, '/');
-  for (const c of cmds) assert.match(c, new RegExp(`^node "${fwd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/\\.claude/tools/board-reminder\\.mjs" (mark|relay)$`));
+  for (const c of cmds) assert.match(c, new RegExp(`^node "${fwd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/\\.claude/tools/(board-reminder\\.mjs" (mark|relay)|guard\\.mjs")$`));
   assert.ok(!JSON.stringify(s).includes('powershell'));
 });
 
@@ -577,6 +635,27 @@ test('gemini-cli gap says the headless syntax exists and why dispatch does not u
   assert.equal(typeof gemini.headless, 'undefined');
 });
 
+test('a tool whose tiers share a model in models.json has a gap naming those tiers; others have none', async () => {
+  const models = JSON.parse(fs.readFileSync(path.join(REPO, 'models.json'), 'utf8'));
+  const collapsed = [];
+  for (const [tool, tiers] of Object.entries(models)) {
+    const byModel = {};
+    // A tier with no model runs the tool's default, so tiers without one share that model.
+    for (const t of ['low', 'mid', 'high']) (byModel[tiers[t]?.model ?? '(default)'] ??= []).push(t);
+    const shared = Object.values(byModel).filter((ts) => ts.length > 1).flat();
+    const adapter = (await import(`../adapters/${tool}.mjs`)).default;
+    const gap = adapter.gaps.find((g) => /tier override/.test(g));
+    if (!shared.length) {
+      assert.equal(gap, undefined, `${tool}: no tiers share a model, so no tier-override gap`);
+      continue;
+    }
+    collapsed.push(tool);
+    assert.ok(gap, `${tool}: tiers ${shared.join(', ')} share a model but no gap says so`);
+    for (const t of shared) assert.match(gap, new RegExp(`\\b${t}\\b`, 'i'), `${tool}: gap names ${t}`);
+  }
+  assert.ok(collapsed.length > 0 && collapsed.length < Object.keys(models).length, 'the check covers both branches');
+});
+
 test('review-tier: prompts count as product; uncommitted changes warn', async () => {
   for (const p of ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'roles/scout.md', 'agents/scout.md', '.claude/x.md', '.agents/x.md', '.codex/AGENTS.md',
     '.cursor/agents/a.md', '.gemini/GEMINI.md', 'profiles/p.md', 'adapters/codex.notes.md', 'skills/x/SKILL.md', 'a/b.agent.md']) {
@@ -643,12 +722,12 @@ test('brief lint: text outside the items, a command-like item 4, and BOARD: none
   assert.deepEqual(lintBrief(realistic, items), [], 'unindented bullets and lettered lines under an item are part of it');
   assert.deepEqual(lintBrief(`${goodBrief()}\n\nThanks, and good luck\n`, items), [], 'closing text is part of the last item');
   assert.match(lintBrief(goodBrief({ 2: '' }), items).join('\n'), /item 2 \(Scope\) is empty/);
-  assert.match(lintBrief(`${goodBrief()}\n11. one more\n   x`, items).join('\n'), /item 11 is past the rulebook's 10 items/);
+  assert.match(lintBrief(`${goodBrief()}\n12. one more\n   x`, items).join('\n'), /item 12 is past the rulebook's 11 items/);
   assert.match(lintBrief(goodBrief({ 4: 'Make sure the node tests pass' }), items).join('\n'), /item 4 \(Must verify\) names no command/);
   assert.deepEqual(lintBrief(goodBrief({ 4: 'node --test tests/' }), items), []);
   assert.deepEqual(lintBrief(goodBrief({ 4: '```\n   npm test\n   ```' }), items), []);
-  assert.deepEqual(lintBrief(goodBrief({ 10: 'BOARD: none' }), items, 'refuter'), []);
-  assert.match(lintBrief(goodBrief({ 10: 'BOARD: nothing' }), items).join('\n'), /BOARD line does not match/);
+  assert.deepEqual(lintBrief(goodBrief({ 11: 'BOARD: none' }), items, 'refuter'), []);
+  assert.match(lintBrief(goodBrief({ 11: 'BOARD: nothing' }), items).join('\n'), /BOARD line does not match/);
 });
 
 test('costlog: malformed events are skipped and counted; an end event with no time is not also "no end event"', () => {

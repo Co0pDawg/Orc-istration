@@ -10,6 +10,7 @@ export default {
   gaps: [
     'No global rulebook file: copy the built `project/AGENTS.md` into each project as `AGENTS.md`, or paste it into User Rules.',
     'Exact model ids are unverified: every tier is `inherit` until you set ids in `models.local.json`.',
+    'Low, Mid and High all inherit the session model in the shipped `models.json`, so a per-dispatch tier override changes nothing.',
     'No per-agent tool allowlist: read-only roles get `readonly: true` and the role body.',
     'No hook system in the research: the board update after an agent report is a build-loop step.',
     'No headless recipe: `orc.mjs dispatch` cannot run this tool (no documented headless syntax in the research).',
