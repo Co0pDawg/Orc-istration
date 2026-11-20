@@ -471,7 +471,7 @@ if (isMainModule()) {
     try {
       input = fs.readFileSync(0, 'utf8');
     } catch (e) {
-      warn(`could not read stdin (${e?.code ?? (e instanceof Error ? e.message : String(e))}); allowed`);
+      warn(`could not read stdin (${e instanceof Error ? (e.code ?? e.message) : String(e)}); allowed`);
     }
     const out = input === null ? '' : run(input, process.env, warn);
     if (out) process.stdout.write(`${out}\n`);
