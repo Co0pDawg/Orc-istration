@@ -75,6 +75,8 @@ Six more roles (`review-*`) make up the [review panel](#review-panel) the Full r
 
 **Sprint mode.** For a timeboxed build, such as a live AI-assisted interview exercise, ask for a sprint ("sprint mode", "a 45-minute sprint"). For that one task the orchestrator follows [`orchestration/sprint.md`](orchestration/sprint.md): at most three runnable slices, a walking skeleton by about minute 15, a feature freeze ten minutes before the deadline, one builder resumed per slice, Mid-tier refuters reviewing each slice's commit while the next is built, and one rework round. It skips the board, the standards setup, the review panel and the cost log; it never skips the orchestrator's diff read, one real run of the app, or the PR and safety rules. A sprint as an iteration name ("put this in sprint 45") does not trigger it. Claude Code also gets it as the `sprint` skill where `~/.claude/skills` has it.
 
+**Routine skills (Claude Code).** Three skills wrap the steps every orchestrated task repeats, each pointing at the rule it follows rather than restating it: `board` (open the session and cards, write at each dispatch, report and commit, mark it Done, on either backend), `brief` (fill the marching orders from `orc brief new` and lint them with `orc brief lint` before a dispatch) and `wrap-up` (full test projects once, the diff read, the pre-PR review tier, the cost log drafted with `orc costlog`, including from an artifact board, the handoff note and the board marked Done). Like `sprint`, they are there where `~/.claude/skills` has them. Contributors also get `ship-prompts`, a project skill in `.claude/skills/` that loads only in this repo: sync, golden, tests, check, the tracked-path check, the README and wiki co-change, and the live install.
+
 **The cost log.** Every orchestrated task writes one record: a row per dispatch with agent, model, tokens, minutes, result and a value label (`earned`, `marginal` or `waste`). The format and the review questions are in [`orchestration/README.md`](orchestration/README.md).
 
 ## Evidence
@@ -143,6 +145,8 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `orchestration/README.md` | Cost-log format and review questions |
 | `standards/`, `orchestration/standards.md`, `skills/repo-standards/` | The coding-standards archive (format in `standards/README.md`), the tool-neutral setup procedure, and its Claude Code skill |
 | `orchestration/sprint.md`, `skills/sprint/` | Sprint mode: a timeboxed build (default 45 minutes) that waives the board, standards setup, review panel and cost log for one task, and its Claude Code skill |
+| `skills/board/`, `skills/brief/`, `skills/wrap-up/` | Claude Code skills for the routine steps of an orchestrated task: board writes, marching orders, and the finish |
+| `.claude/skills/ship-prompts/` | Project skill for contributors: regenerate, test and ship a change to this repo |
 | `docs/` | Rulebook incident notes; the tracker contract and how to adopt a repo; outlines for unattended runs and project memory |
 | `settings.example.json` | Claude Code hooks, status line and plugins, and a `permissions.deny` block for secret files |
 | `hooks.node.example.json` | The board-reminder and git-guard hooks on Node (`hooks --node`) |
