@@ -156,7 +156,7 @@ export const HELP = {
     options: {
       '--home <dir>': 'home folder (required; no default)',
       '--apply': 'write the file, after a backup',
-      '--node': 'use hooks.node.example.json (board reminder on Node, no PowerShell)',
+      '--node': 'use hooks.node.example.json (board reminder and git guard on Node, no PowerShell)',
     },
   },
   standards: {
