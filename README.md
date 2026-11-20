@@ -46,7 +46,7 @@ flowchart LR
 | scout | Low | Find files, symbols and call sites. Returns locations only, never file bodies. |
 | researcher | Mid | Read docs, source or the web; every fact cited or marked UNVERIFIED. |
 | builder | High | Implement exactly the spec, run the build and filtered tests, mutation-check one new test. |
-| refuter | High | Try to prove the diff wrong against the spec; rerun tests; ACCEPT or REWORK. Never edits. |
+| refuter | High | Try to prove the diff wrong against the spec and the ticket intent; rerun tests; mutation-check in a throwaway worktree; ACCEPT or REWORK. Never edits the reviewed tree. |
 | debugger | High | Root cause for a failure that is not obvious. Reproduces first. |
 
 The builder keeps web fetch and search for the docs its orders name: in Claude Code a role without every capability gets a tool allowlist and would lose the board tool.
@@ -198,7 +198,7 @@ The Full pre-PR review tier runs the review panel, ported from a production setu
 
 Stack-specific checks (tenant scoping, CSRF, migration co-change, UI test hooks, generated files, a documentation map) come from the reviewed repo's own `REVIEW.md`, or the file its rulebook names; without one the lanes skip those checks. A ticket brief comes from ticket text or a brief file you give. Run logs and metrics land in the reviewed repo's `.orc/` folder (`review/calibration.md`, `review/metrics.md`).
 
-Each verdict in a run log may end `(developer)` or `(agent)`; `calibration` computes precision from the developer's verdicts only and counts agent verdicts apart. Defects a review missed are appended to its log as escaped defects, which give each lane a recall figure. Before a change to a lane, a role or `models.json` is kept, the affected lanes run on the regression corpus (`tests/fixtures/corpus/`, `review/corpus.md`) and `corpus score` checks that nothing expected was missed.
+Each verdict in a run log may end `(developer)` or `(agent)`; `calibration` computes precision from the developer's verdicts only and counts agent verdicts apart (`(agent)` anywhere in the cell marks one). Defects a review missed are appended to its log as escaped defects, which give each lane a recall figure; a row `calibration` cannot read is listed under Parser warnings rather than counted as no escape. `metrics capture` counts the verifier's lead verdicts and its finding-verification verdicts apart and reads the run log's `Verification:` line. Before a change to a lane, a role or `models.json` is kept, the affected lanes run on the regression corpus (`tests/fixtures/corpus/`, `review/corpus.md`) and `corpus score` checks that nothing expected was missed.
 
 In Claude Code, `/pre-pr-review [branch] [base] [scope keywords] [lite|full]`, `/review-verdict` and `/calibration-report` are generated into `commands/`. They find this checkout through the `ORC_HOME` environment variable, else the rulebook's "Setup checkout (this machine)" line, else `~/.claude`. Other tools follow `review/PROCEDURE.md` by hand.
 
@@ -217,18 +217,20 @@ A workflow reads every repo-specific fact (tracker, base branch, branch naming, 
 
 ## The git guard
 
-`tools/guard.ps1` (and its Node port `tools/guard.mjs`, wired by `hooks --node`) is a Claude Code PreToolUse hook on the Bash and PowerShell tools. It enforces the rulebook's hard git rules in the harness instead of only in prose. It reads the command text before it runs, follows `cd`, `Set-Location`, `git -C <dir>`, chained commands (`&&`, `;`, `|`), line continuations and shell keywords or wrappers in front of git (`then`, `do`, `!`, `{`, `time`, `env`, `command`, `exec`, `nohup`), skips comments, heredoc bodies (also inside `"$( )"`) and PowerShell here-strings, and asks git for the current branch and whether the folder is a linked worktree.
+`tools/guard.ps1` (and its Node port `tools/guard.mjs`, wired by `hooks --node`) is a Claude Code PreToolUse hook on the Bash and PowerShell tools. It enforces the rulebook's hard git rules in the harness instead of only in prose. It reads the command text before it runs, follows `cd`, `Set-Location`, `git -C <dir>`, chained commands (`&&`, `;`, `|`), line continuations and shell keywords or wrappers in front of git (`then`, `do`, `!`, `{`, `time`, `env`, `command`, `exec`, `nohup`), Bash backtick substitution, and in the PowerShell tool an assignment in front of git (`$r = git ...`) and the first command inside a script block (`try {`, `ForEach-Object {`, `if (...) {`, `& {`), skips comments, heredoc bodies (also inside `"$( )"`) and PowerShell here-strings, and asks git for the current branch and whether the folder is a linked worktree.
 
 It blocks (the reason goes back to the agent):
 
 - `git commit` while the current branch is protected;
 - `git push` to a protected branch: an explicit refspec (`origin main`, `HEAD:main`), `--all` when a protected branch exists locally, `--mirror`, or a push with no refspec while on one (`--tags` alone pushes only tags and is allowed);
 - `git stash` other than `list` and `show` in a linked worktree, because every worktree shares one stash stack;
-- for the read-only roles (`scout`, `researcher`, `refuter`, `review-*`, named by the hook's `agent_type`): `git commit`, `push`, `merge`, `rebase`, `reset`, `clean`, `stash`, `rm`, `mv`, `checkout`, `switch` and `restore`. They keep `git worktree add|remove`, `git apply`, `git diff`, `log`, `show` and `status`, so a refuter can still try mutations in a throwaway worktree.
+- for the read-only roles (`scout`, `researcher`, `refuter`, `review-*`, named by the hook's `agent_type`): `git commit`, `push`, `merge`, `rebase`, `reset`, `clean`, `stash`, `rm`, `mv`, `checkout`, `switch`, `restore`, `pull`, `cherry-pick`, `revert` and `am`. They keep `git worktree add|remove`, `git apply`, `git diff`, `log`, `show` and `status`, so a refuter can still try mutations in a throwaway worktree.
 
 It asks you first (the reason shows in the prompt): any force-push (`--force`, `-f`, `--force-with-lease`, `+refspec`), and `git add -A`, `git add --all` or `git add .`. In a headless run (`claude -p`, `orc dispatch`) nobody can answer, so an ask acts as a deny.
 
-Protected branches are `main`, `develop` and `master`; set `ORC_PROTECTED_BRANCHES` to a comma list (such as `main,release`) to replace them. The hook is installed for the user, so it applies in every repository: in one where you do commit on `main`, set `ORC_PROTECTED_BRANCHES` under `env` in that project's `.claude/settings.json` to a name no branch has (such as `none`); an empty value keeps the defaults. The guard fails open: bad input, a missing field or a git that does not answer lets the command run, with one `guard:` line on stderr. Every Bash or PowerShell call pays the hook's start-up: about half a second for the PowerShell variant and about a tenth of a second for the Node variant (averaged over ten runs on one Windows machine), so `--node` is the lighter choice.
+Protected branches are `main`, `develop` and `master`; set `ORC_PROTECTED_BRANCHES` to a comma list (such as `main,release`) to replace them. The hook is installed for the user, so it applies in every repository: in one where you do commit on `main`, set `ORC_PROTECTED_BRANCHES` under `env` in that project's `.claude/settings.json` to a name no branch has (such as `none`); an empty value keeps the defaults. The guard fails open: bad input, a missing field, a folder it cannot find or a git that does not answer (or answers with an error, such as a repository it calls dubious) lets the command run, with one `guard:` line on stderr. One case fails closed: when git cannot list the local branches, `git push --all` is denied as if every protected branch existed, with a `guard:` line naming the failure. Every Bash or PowerShell call pays the hook's start-up: about half a second for the PowerShell variant and about a tenth of a second for the Node variant (averaged over ten runs on one Windows machine), so `--node` is the lighter choice.
+
+`settings.example.json` runs `guard.ps1` with `-ExecutionPolicy Bypass`: under a Restricted or AllSigned policy the script would not start, Claude Code treats that as a non-blocking hook error, and every command would run unguarded. A `settings.json` that already holds the earlier guard line (without the flag) gets the new line beside it from `hooks --apply`; delete the old one. `install --tool claude-code` copies the hook scripts (`guard.ps1`, `guard.mjs`, `board-reminder.ps1`, `board-reminder.mjs`) into `<home>/.claude/tools/`, where the example hooks look for them, and `status` compares them like the generated files; a differing copy made by hand before is kept (`--force` replaces it, with a backup). `hooks` prints a `WARN hook script not found` line for each script it wires that is not there.
 
 It is a seat belt, not a sandbox. Its command parser is a best-effort reading of shell syntax, so an unusual quoting form can still slip past it or be blocked in error; the push rule is the backstop. It cannot catch:
 
@@ -238,6 +240,7 @@ It is a seat belt, not a sandbox. Its command parser is a best-effort reading of
 - a push whose remote configuration maps a feature branch onto a protected one;
 - switching to a protected branch and committing in the same command (`git switch main && git commit`): the branch is read before the command runs;
 - a push destination built by command substitution (`git push origin $(git branch --show-current)`);
+- a PowerShell keyword glued to its brace (`try{git commit -m x}`), and a backtick substitution nested inside another;
 - `git merge`, `pull`, `cherry-pick`, `revert` and `am`, which also create commits on the current branch: only `git commit` is checked;
 - a repository picked with `GIT_DIR` or `--git-dir` (the guard asks git about the working folder, not that repository);
 - a file write by a read-only role through the shell (a redirect or a script): the guard checks git commands only.

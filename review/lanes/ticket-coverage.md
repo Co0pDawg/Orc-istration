@@ -38,7 +38,7 @@ Give every row of the Spec items table exactly one status, and add rows for edge
 
 Before marking anything **Not implemented**, search for it: search the branch for the names, routes, labels or columns the item implies, and read the files the diff touches around it. A requirement met by a file outside the diff (a setting that already existed, a shared partial) is **Already on base** or **Implemented** with that file as evidence. Treat a claim of dropped or redesigned work as a claim, not a fact: back it with a ticket comment, a later item or the code before you use **Obsolete by redesign**.
 
-Read every comment in the brief. Comments often record a redesign that made part of a ticket obsolete, and a later comment outranks the original acceptance criteria.
+Read every comment in the brief. Comments often record a redesign that made part of a ticket obsolete, and a later comment outranks the original acceptance criteria when the developer or the ticket's owner made or confirmed it (`review/shared-rules.md`, **Ticket brief**).
 
 **An item delivered in another repository** (help content in a docs site, a change in a sibling service) is **Static check inconclusive** with that repository as the reason. When neither the diff nor the PR description names the change that delivers it, report one `question:` covering all such items: the reviewer cannot tell whether the ticket is being closed with that work still undone.
 

@@ -13,7 +13,7 @@ Full reference: `orchestration/README.md` in the setup checkout. Agent definitio
 | scout | Low | Find files/symbols/call sites. Locations only. |
 | researcher | Mid | Read docs/source/web, report cited facts. |
 | builder | High | Implement exactly the spec; build + filtered tests. |
-| refuter | High | Adversarial review of diff vs spec. Never edits. |
+| refuter | High | Adversarial review of diff vs spec and intent. Never edits the reviewed tree. |
 | debugger | High | Root cause for non-obvious failures. |
 
 Reports are capped at 40 lines; anything longer goes to a scratch file and the report gives its path.

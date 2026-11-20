@@ -80,14 +80,14 @@ rules themselves live in the core rulebook (`AGENTS.md`) and the optional profil
 ## Re-testing rules
 A rule stays because its evidence holds, not because it is written down. On a model change in `models.json`, or every 10 cost logs, whichever comes first:
 - List the rules whose evidence is a single incident (the entries tagged `[1 incident]` or `[1 run]` above, and any untagged entry that names one occasion).
-- Re-test each against the regression corpus (`review/corpus.md`): run the case the rule guards with the rule removed from the brief or role, on the current models.
+- Re-test each with the rule removed, on the current models. A review rule (a lane, a review role, the explorer contract or the shared rules) is re-tested against the regression corpus (`review/corpus.md`): run the case the rule guards. The corpus holds review-panel cases only, so an orchestration rule (briefs, the build loop, the board, the workflows) is re-tested against the cost logs instead: read the Loop signal and Escaped defects lines of the logs written while it was out.
 - Keep the rule when the failure comes back; drop it, or move it to the examples below, when it does not. Note the date and result on the entry.
 - Tags give the evidence count the entry already states: `[1 incident]`, `[1 run]`, `[n runs]`, `[n PRs]`. An entry with no stated count carries no tag.
 - A new entry records its date and evidence count; older entries carry a date only where one was known.
 
 ## Examples and rationale moved later (original wording, by rule)
-- Data precondition, examples of the rows to name: (which senders populate a customer-id column, which users have two locations). Why: the loop verifies the spec; this line is what makes the spec verify the requirement.
-- Board line, why the full path matters: otherwise the agent may look the card up wrong and skip every board write.
+A reason the rulebook carries again is dropped from this list (its board, inline-work, batching, handoff, live-app and data-precondition reasons are back in `AGENTS.md`).
+- Data precondition, examples of the rows to name: (which senders populate a customer-id column, which users have two locations).
 - Never `dotnet test` a solution with a UI project: AcmeApp's UI-test project waits on an app forever.
 - Cross-cutting rule, example: "a missing weight reads as 0".
 - Pre-PR tier, why: the refuter already reran the work and proved each test can fail, so a full panel on top of it mostly duplicates effort on test-only diffs.
@@ -101,13 +101,7 @@ A rule stays because its evidence holds, not because it is written down. On a mo
 - SQL command batch, why: the in-memory provider hides statement order and FK enforcement.
 - Ticket decisions, example deferral: "ads deferred: needs a nonce-based CSP and a consent banner".
 - Cost log, why: the Loop signal lets the tier rule be tuned from evidence; the context sizes let a review compare orchestrator spend against subagent spend.
-- Inline work, why: dispatch overhead costs more than the work.
-- Board address file, why untracked: so the public repo carries no personal link; a new machine creates its own after publishing its board.
-- Board for every orchestrated task, why: so the user can watch progress from any device.
 - Rate-limit guard, why: a rate-limited dispatch costs the launch and the wait and returns nothing.
-- Batch related fixes, why: so large files are read once.
-- Handoff doc, why: so the next session reads the file instead of rebuilding context.
-- Live-app verification builder, why: so it never shares build output with a code builder.
 - No `git stash` in a worktree, why: every worktree shares one stash stack.
 - Never pipe an app-starting step, why: the app inherits the pipe and the capture waits for it forever.
 - Showcase retakes, why grep the views: a shared image needs a new file name and view edits.

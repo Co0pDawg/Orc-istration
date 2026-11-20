@@ -82,6 +82,7 @@ The repo is designed to be checked out as `~/.claude`, but you can develop in a 
 - `tests/manifest.test.mjs`: install manifest, re-install, `uninstall`, `status`, symlink and junction refusals.
 - `tests/tooling.test.mjs`: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks`, the board reminder, models validation, `golden`, `help`, the generated marker.
 - `tests/standards.test.mjs`: `standards list`, `show`, `detect` and `apply`, and the archive validation in `check`.
+- `tests/guard.test.mjs`: the git guard, `tools/guard.mjs` and `tools/guard.ps1` through one table of PreToolUse payloads in real temporary repos (both hooks must give the same decision), the read-only role list against `roles/*.md`, fail-open lines, and the example-file wiring.
 - `tests/review-tools.test.mjs`: `calibration`, `corpus` and `metrics`, over the run-log fixtures in `tests/fixtures/reviews/` and the corpus cases in `tests/fixtures/corpus/` (format: `review/corpus.md`).
 
 ## Keep the README and wiki current

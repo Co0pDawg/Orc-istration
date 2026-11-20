@@ -75,7 +75,7 @@ the tool's session scratch folder, or `.orc/tmp/` in the reviewed repo when the 
 1. A header: branch, base, and where the text came from.
 2. A **Spec items** table (`| Id | Item | Source |`), one row per checkable requirement: `S1`..`Sn` from the
    acceptance criteria, then from the description, then requirements later comments add (a later comment outranks the
-   criteria it changes; say so in the row). Requirements agreed after the ticket was written (a plan's decisions)
+   criteria it changes when the developer or the ticket's owner made or confirmed it; say so in the row). Requirements agreed after the ticket was written (a plan's decisions)
    get `R1`..`Rn`. Each How to Test step in a PR description gets a `PR-HT<n>` row. Mark an item from a parent ticket
    as `goal` or `context` in its Source cell when it is not this branch's work.
 3. The source text verbatim: description, acceptance criteria, repro steps, comments, PR description and threads.

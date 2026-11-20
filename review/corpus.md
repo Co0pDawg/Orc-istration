@@ -16,7 +16,7 @@ A change that touches every lane (the contract, the shared rules, a model) runs 
 
 A case is a folder `tests/fixtures/corpus/<id>/` in the setup checkout, where `<id>` is lower-case words joined by hyphens. It holds three files:
 
-- `case.md`: a `# <title>` heading, a `Lanes: <lane>, <lane>` line naming the lanes it exercises, then what it tests and what a lane has to do to catch it.
+- `case.md`: a `# <title>` heading, a `Lanes: <lane>, <lane>` line naming the lanes it exercises, then what it tests and what a lane has to do to catch it. `corpus list` warns about a case missing either line, since no lane change would select it.
 - `diff.patch`: the change under review, as `git diff` output. Keep it small and self-contained, with invented code: no project, product, company or person names, since the corpus is public.
 - `expected.md`: the defects a correct run reports, as a table:
 
@@ -32,7 +32,7 @@ A new case comes from an escaped defect or a hard-won confirmed finding (`calibr
 
 ## Procedure
 
-1. **Set up the diff.** In a scratch repo, commit an empty base, branch, apply the case's `diff.patch` (`git apply`) and commit it. Push both branches to a local bare repo added as `origin`, since the procedure diffs against `origin/<BASE>`. The branch and its base are `TARGET` and `BASE` for the run.
+1. **Set up the diff.** Create the scratch repo with `git init -b base`, so the base branch is not one the git guard protects (`main`, `develop`, `master`; README, "The git guard"), and commit an empty base on it. Branch, apply the case's `diff.patch` (`git apply`) and commit it. Push both branches to a local bare repo added as `origin`, since the procedure diffs against `origin/<BASE>`. The branch and `base` are `TARGET` and `BASE` for the run.
 2. **Run the lanes.** Run `review/PROCEDURE.md` on that branch with the case's lanes as scope filters, no ticket brief, and the tiers the change under test uses. Keep its Step 4 report as a file.
 3. **Score.** `node tools/orc.mjs corpus score --case <id> --report <report file>`. It prints one line per expected row, `FOUND` (with the lanes that found it, and `(other lane)` when none is the expected lane) or `MISSED`, then each `EXTRA` finding no expected row matched. It exits 1 when anything expected is missed.
 4. **Judge.** A missed expected finding blocks the change until it is explained: fix the change, or show why the case's expectation was wrong and fix the case in the same change. Read the extras: an extra that is a real defect belongs in `expected.md`; one that is wrong is a precision problem for the calibration report.
@@ -40,7 +40,8 @@ A new case comes from an escaped defect or a hard-won confirmed finding (`calibr
 ## Scoring rules
 
 - Only bullets under the report's **Must fix**, **Review before submitting** and **Suggestions and nits** headings are findings. Questions, Runtime checks (which repeat findings) and Refuted by verification are not.
-- A finding is scored only by a `path:line` (or `path:a-b`) location on its bullet line, with the path as the diff names it (`src/jobs/exportJob.js:15`). A finding with no location, or with a bare file name, matches nothing. Bullets may start `- [lane]` or `* [lane]`, at the start of the line; an indented bullet is a sub-item (an evidence or fix line), not a finding, and is skipped.
+- A finding is scored only by a `path:line` (or `path:a-b`) location on its bullet line, with the path as the diff names it (`src/jobs/exportJob.js:15`). A finding with no location, or with a bare file name, matches nothing, and so does a path with no file extension (`Makefile:10`): a case's files need one.
+- A report with none of those three headings (`###` level, as in `PROCEDURE.md` Step 4) is refused with an error naming the format, rather than scored as every row missed. Bullets may start `- [lane]` or `* [lane]`, at the start of the line; an indented bullet is a sub-item (an evidence or fix line), not a finding, and is skipped.
 - A finding matches an expected row when one of its locations names the same file, with `\` and a leading `./` normalized, and its first line falls inside one of the row's ranges. A range counts by its first line only, so `file:1-999` does not match every row.
 - The lane is shown but need not match: the panel caught the defect either way, and the merge rule in `PROCEDURE.md` Step 4 can move a finding to another lane's tag.
 - An expected row counts once, however many findings match it. A finding that matches no row is extra.

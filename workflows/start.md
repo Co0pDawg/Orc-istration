@@ -158,7 +158,7 @@ Pick the tier by the rulebook's "Pre-PR review tiers" (`node <checkout>/tools/or
 
 Runs when the repo's settings have `Run the app` (not `none`) and either the change is user-visible or the Step 12 report's **Runtime checks** section has rows. In lite mode it still runs when there are runtime checks.
 
-Follow the rulebook's live-app rule: its own builder, worktree and database copy. Draft the How-to-test steps here (Step 16 reuses them), then run each runtime check's steps and the How-to-test steps, and write each result (pass, fail, not run, with what was seen) into the run log's **Runtime checks** table. A failed check goes back through Step 10, then reruns once after its fix, as in Step 11. With `Run the app: none`, run nothing and list every runtime check as not run in the summary.
+Follow the rulebook's live-app rule: its own builder, worktree and database copy. Draft the How-to-test steps here (Step 16 reuses them), then run each runtime check's steps and the How-to-test steps, and write each result (pass, fail, not run, with what was seen) into the review run log's **Runtime checks** table (`review/calibration.md`), not this workflow's run log. A failed check confirms its finding, with `(agent)` as its source since this step's builder ran it (`review/calibration.md`, In-session capture), and goes back through Step 10, then reruns once after its fix, as in Step 11. With `Run the app: none`, run nothing and list every runtime check as not run in the summary.
 
 Whether this step ran or not, then edit the checklist a last time: every task checked (or why not), and what was verified (build, tests, live app when Step 14 ran, dark mode, phone width).
 

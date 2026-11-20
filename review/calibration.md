@@ -57,6 +57,7 @@ Searched: <secondary-artifacts' Searched: line, verbatim>   <!-- only when secon
 - **Found by** is who or what found it: `teammate`, `live run`, `production`, or a short name for another source.
 - **Why missed** is the rule or angle the lane lacked, written as a general rule; it is the recall payload, as a false-positive reason is the precision payload.
 - Number the rows from 1 within the table. The same pipe rule applies.
+- `calibration` reads a row only under this exact header, with a whole-number `#` and every cell. A row it cannot read is dropped and listed under **Parser warnings** in its report (how many and why), as is an `## Escaped defects` section with no rows.
 
 **Carry-forward.** Before writing, look for earlier logs of the same branch (`.orc/reviews/*<branch-slug>*.md`). When a new finding matches a row in the most recent earlier log (same file and substantially the same finding), copy that row's verdict instead of `_pending_`. A re-run must not reopen findings the developer already resolved. Only new findings start `_pending_`.
 
@@ -78,7 +79,7 @@ Each finding resolves to exactly one of four values:
 - A `false-positive` or `wont-fix` needs a reason. Write it as the rule you wish the lane had known, not a paraphrase of the finding. If the developer gave none, ask before writing.
 - Anything else in the cell is non-canonical. `calibration` counts it as unverdicted and lists it under "Non-canonical verdicts" until someone normalizes it.
 
-**Verdict source.** A verdict may end with who gave it: `(developer)` or `(agent)`. `(agent)` marks a verdict the orchestrator or a verifier reached without the developer saying so: a fix a workflow applied on its own (`confirmed — fixed in session (agent)`), or a verifier refutation (`false-positive — refuted by verifier: <evidence> (agent)`). A verdict with no suffix is the developer's, so older logs read unchanged. `calibration` counts a `confirmed`, `false-positive` or `wont-fix` verdict ending `(agent)` only under Agent verdicts: it is left out of precision, recall and the triaged count the trigger uses. When the developer confirms or overrules an agent verdict, replace it with theirs.
+**Verdict source.** A verdict may end with who gave it: `(developer)` or `(agent)`. Write it at the end; `calibration` reads `(agent)` anywhere in the cell as the agent's, so a note added after it does not turn it into the developer's. `(agent)` marks a verdict the orchestrator or a verifier reached without the developer saying so: a fix a workflow applied on its own (`confirmed — fixed in session (agent)`), or a verifier refutation (`false-positive — refuted by verifier: <evidence> (agent)`). A verdict with no suffix is the developer's, so older logs read unchanged. `calibration` counts a `confirmed`, `false-positive` or `wont-fix` verdict carrying `(agent)` only under Agent verdicts: it is left out of precision, recall and the triaged count the trigger uses. When the developer confirms or overrules an agent verdict, replace it with theirs.
 
 ### In-session capture
 
