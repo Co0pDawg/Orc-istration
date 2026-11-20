@@ -45,7 +45,9 @@ function Get-GuardProperty {
 # quotes joins the lines. Bash: backslash escapes outside quotes and some characters inside double quotes
 # (backslash-newline joins there too); heredoc bodies are skipped; $( inside double quotes is read unquoted up to its
 # ); $(( )) is one word; a backtick substitution, quoted or not, is read like $( ). PowerShell: backtick escapes;
-# backslash is literal (Windows paths); here-strings (@' '@, @" "@) are one word; <# #> is a comment.
+# backslash is literal (Windows paths); here-strings (@' '@, @" "@) are one word; <# #> is a comment; an unquoted { or
+# } ends the command before it, so the first command inside try {, ForEach-Object {, if (...) {, & { or }else{ is
+# judged on its own, while ${name} and @{ } stay words.
 function Split-GuardCommand {
     [CmdletBinding()]
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Text, [bool]$PowerShell)
@@ -57,11 +59,13 @@ function Split-GuardCommand {
     $subst = New-Object -TypeName 'System.Collections.Generic.List[int]'
     # An open Bash backtick substitution: $null, or whether it opened inside double quotes.
     $backtick = $null
+    # PowerShell: open ${ and @{ braces, whose } belongs to the word.
+    $braces = 0
     $inWord = $false
     $quote = ''
     $esc = if ($PowerShell) { '`' } else { '\' }
     # Characters that need a decision in each state; runs of other characters are copied in one step.
-    $plainStop = [char[]]@(' ', "`t", "`n", "`r", "'", '"', '&', '|', ';', '(', ')', '<', '>', '#', '@', '$', '`', $esc)
+    $plainStop = [char[]]@(' ', "`t", "`n", "`r", "'", '"', '&', '|', ';', '(', ')', '<', '>', '#', '@', '$', '`', '{', '}', $esc)
     $doubleStop = [char[]]@('"', '$', '`', $esc)
     $n = $Text.Length
     $i = 0
@@ -195,6 +199,25 @@ function Split-GuardCommand {
         } elseif ($c -eq '&' -and ($prev -eq '>' -or $prev -eq '<' -or $next -eq '>')) {
             # A redirection (2>&1, &>file), not a separator.
             [void]$word.Append($c); $inWord = $true
+        } elseif ($PowerShell -and $c -eq '{') {
+            $w = $word.ToString()
+            if ($w.EndsWith('$') -or $w.EndsWith('@')) {
+                [void]$word.Append($c); $braces++; $inWord = $true
+            } else {
+                if ($inWord) { [void]$words.Add($w) }
+                [void]$word.Clear(); $inWord = $false
+                if ($words.Count) { [void]$segments.Add([string[]]$words.ToArray()) }
+                $words.Clear()
+            }
+        } elseif ($PowerShell -and $c -eq '}') {
+            if ($braces -gt 0) {
+                [void]$word.Append($c); $braces--; $inWord = $true
+            } else {
+                if ($inWord) { [void]$words.Add($word.ToString()) }
+                [void]$word.Clear(); $inWord = $false
+                if ($words.Count) { [void]$segments.Add([string[]]$words.ToArray()) }
+                $words.Clear()
+            }
         } elseif ($c -eq '`' -and -not $PowerShell) {
             # A Bash backtick substitution opens or closes like $( and ).
             if ($inWord) { [void]$words.Add($word.ToString()) }
@@ -281,47 +304,30 @@ function Remove-GuardPrefix {
     return , ([string[]]$Words[$k..($Words.Count - 1)])
 }
 
-# PowerShell tool only: a standalone { or } word (a word may also start with {, or end with } when it holds no {, so
-# ${env:X} stays whole) ends one command and starts the next, so the first command inside try {, ForEach-Object {,
-# if (...) { or & { is judged on its own.
-function Split-GuardBlock {
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Words)
-    $pieces = New-Object -TypeName System.Collections.ArrayList
-    $current = New-Object -TypeName System.Collections.ArrayList
-    foreach ($w in $Words) {
-        $x = $w
-        if ($x.Length -gt 1 -and $x.StartsWith('{')) {
-            if ($current.Count) { [void]$pieces.Add([string[]]$current.ToArray()) }
-            $current.Clear()
-            $x = $x.Substring(1)
-        }
-        $closes = $x.Length -gt 1 -and $x.EndsWith('}') -and -not $x.Contains('{')
-        if ($closes) { $x = $x.Substring(0, $x.Length - 1) }
-        if ($x -ceq '{' -or $x -ceq '}') {
-            if ($current.Count) { [void]$pieces.Add([string[]]$current.ToArray()) }
-            $current.Clear()
-        } else { [void]$current.Add($x) }
-        if ($closes) {
-            if ($current.Count) { [void]$pieces.Add([string[]]$current.ToArray()) }
-            $current.Clear()
-        }
-    }
-    if ($current.Count) { [void]$pieces.Add([string[]]$current.ToArray()) }
-    return , $pieces
-}
-
-# PowerShell tool only: drops an assignment in front of the command ($r = git ..., $r += git ..., $r=git ...).
+# PowerShell tool only: drops assignments in front of the command: $r = git ..., $r += ..., $r=git ..., a typed, braced
+# or property target ([string]$r, ${r}, $r.x, $r[0]), a comma list ($a, $b = ...) and a chain ($a = $b = ...).
+$script:GuardTarget = '(?:\[[^\]]+\])*\$(?:\{[^}]+\}|[A-Za-z0-9_:]+)(?:\.[A-Za-z0-9_]+|\[[^\]]*\])*'
 function Remove-GuardAssignment {
     [CmdletBinding()]
     param([Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Words)
-    if ($Words.Count -gt 1 -and $Words[0] -cmatch '^\$[A-Za-z0-9_:]+$' -and $Words[1] -cmatch '^[-+*/]?=$') {
-        return , (Remove-GuardPrefix -Words ([string[]]@($Words | Select-Object -Skip 2)))
+    $t = $script:GuardTarget
+    $targets = '^' + $t + '(?:,' + $t + ')*$'
+    $listed = '^(?:' + $t + ')?(?:,' + $t + ')*,$'
+    $glued = '^' + $t + '(?:,' + $t + ')*[-+*/]?=(?!=)(.+)$'
+    $w = $Words
+    while ($true) {
+        $i = 0
+        while ($i -lt $w.Count -and $w[$i] -cmatch $listed) { $i++ }
+        if ($i + 1 -lt $w.Count -and $w[$i] -cmatch $targets -and $w[$i + 1] -cmatch '^[-+*/]?=$') {
+            $w = Remove-GuardPrefix -Words ([string[]]@($w | Select-Object -Skip ($i + 2)))
+            continue
+        }
+        if ($i -lt $w.Count -and $w[$i] -cmatch $glued) {
+            $w = [string[]](@($Matches[1]) + @($w | Select-Object -Skip ($i + 1)))
+            continue
+        }
+        return , ([string[]]$w)
     }
-    if ($Words.Count -and $Words[0] -cmatch '^\$[A-Za-z0-9_:]+=(.+)$') {
-        return , ([string[]](@($Matches[1]) + @($Words | Select-Object -Skip 1)))
-    }
-    return , $Words
 }
 
 # Git Bash writes C: as /c; ~ is the home directory.
@@ -532,43 +538,39 @@ function Get-GuardDecision {
             if ($seg -eq '(') { $subshells.Push($cwd) } elseif ($subshells.Count) { $cwd = $subshells.Pop() }
             continue
         }
-        $pieces = New-Object -TypeName System.Collections.ArrayList
-        if ($powerShellTool) { $pieces = Split-GuardBlock -Words $seg } else { [void]$pieces.Add($seg) }
-        foreach ($piece in $pieces) {
-            $words = Remove-GuardPrefix -Words $piece
-            if ($powerShellTool) { $words = Remove-GuardAssignment -Words $words }
-            if (-not $words.Count) { continue }
-            if ($cdCommands -contains $words[0].ToLowerInvariant()) {
-                $target = @($words | Select-Object -Skip 1 | Where-Object { $_ -notmatch '^-(path|literalpath)$' } | Select-Object -First 1)
-                if ($target.Count -and $target[0] -ne '-') { $cwd = Resolve-GuardDirectory -Base $cwd -Dir $target[0] }
-                continue
-            }
-            $exe = $words[0].Replace('\', '/')
-            if ($exe.Substring($exe.LastIndexOf('/') + 1) -notmatch '^git(\.exe)?$') { continue }
-            $dir = $cwd
-            $i = 1
-            while ($i -lt $words.Count -and $words[$i].StartsWith('-')) {
-                $o = $words[$i]
-                if ($o -ceq '-C') {
-                    $i++
-                    $target = if ($i -lt $words.Count) { $words[$i] } else { '.' }
-                    $dir = Resolve-GuardDirectory -Base $dir -Dir $target
-                } elseif ('-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env' -ccontains $o) { $i++ }
-                $i++
-            }
-            if ($i -ge $words.Count) { continue }
-            $sub = $words[$i]
-            # Drop redirections: a bare operator also takes its target.
-            $gitArgs = New-Object -TypeName System.Collections.ArrayList
-            for ($j = $i + 1; $j -lt $words.Count; $j++) {
-                if ($words[$j] -match '^(\d|\*|&)?>>?|^<') {
-                    if ($Matches[0] -ceq $words[$j]) { $j++ }
-                } else { [void]$gitArgs.Add($words[$j]) }
-            }
-            $verdict = Test-GuardGit -Sub $sub -GitArgs ([string[]]$gitArgs.ToArray()) -Cwd $dir -Protected $protected -Role $role
-            if ($verdict -and $verdict.Decision -eq 'deny') { return $verdict }
-            if ($verdict -and -not $ask) { $ask = $verdict }
+        $words = Remove-GuardPrefix -Words $seg
+        if ($powerShellTool) { $words = Remove-GuardAssignment -Words $words }
+        if (-not $words.Count) { continue }
+        if ($cdCommands -contains $words[0].ToLowerInvariant()) {
+            $target = @($words | Select-Object -Skip 1 | Where-Object { $_ -notmatch '^-(path|literalpath)$' } | Select-Object -First 1)
+            if ($target.Count -and $target[0] -ne '-') { $cwd = Resolve-GuardDirectory -Base $cwd -Dir $target[0] }
+            continue
         }
+        $exe = $words[0].Replace('\', '/')
+        if ($exe.Substring($exe.LastIndexOf('/') + 1) -notmatch '^git(\.exe)?$') { continue }
+        $dir = $cwd
+        $i = 1
+        while ($i -lt $words.Count -and $words[$i].StartsWith('-')) {
+            $o = $words[$i]
+            if ($o -ceq '-C') {
+                $i++
+                $target = if ($i -lt $words.Count) { $words[$i] } else { '.' }
+                $dir = Resolve-GuardDirectory -Base $dir -Dir $target
+            } elseif ('-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env' -ccontains $o) { $i++ }
+            $i++
+        }
+        if ($i -ge $words.Count) { continue }
+        $sub = $words[$i]
+        # Drop redirections: a bare operator also takes its target.
+        $gitArgs = New-Object -TypeName System.Collections.ArrayList
+        for ($j = $i + 1; $j -lt $words.Count; $j++) {
+            if ($words[$j] -match '^(\d|\*|&)?>>?|^<') {
+                if ($Matches[0] -ceq $words[$j]) { $j++ }
+            } else { [void]$gitArgs.Add($words[$j]) }
+        }
+        $verdict = Test-GuardGit -Sub $sub -GitArgs ([string[]]$gitArgs.ToArray()) -Cwd $dir -Protected $protected -Role $role
+        if ($verdict -and $verdict.Decision -eq 'deny') { return $verdict }
+        if ($verdict -and -not $ask) { $ask = $verdict }
     }
     return $ask
 }

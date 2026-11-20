@@ -29,7 +29,9 @@ export function protectedBranches(env) {
 // outside quotes joins the lines. Bash: backslash escapes outside quotes and some characters inside double quotes
 // (backslash-newline joins there too); heredoc bodies are skipped; `$(` inside double quotes is read unquoted up to
 // its `)`; `$(( ))` is one word; a backtick substitution, quoted or not, is read like `$( )`. PowerShell: backtick
-// escapes; backslash is literal (Windows paths); here-strings (@' '@, @" "@) are one word; `<# #>` is a comment.
+// escapes; backslash is literal (Windows paths); here-strings (@' '@, @" "@) are one word; `<# #>` is a comment; an
+// unquoted `{` or `}` ends the command before it, so the first command inside `try {`, `ForEach-Object {`,
+// `if (...) {`, `& {` or `}else{` is judged on its own, while `${name}` and `@{ }` stay words.
 export function splitCommand(text, powershell) {
   const n = text.length;
   const segments = [];
@@ -42,6 +44,8 @@ export function splitCommand(text, powershell) {
   const subst = [];
   // An open Bash backtick substitution: null, or whether it opened inside double quotes.
   let backtick = null;
+  // PowerShell: open `${` and `@{` braces, whose `}` belongs to the word.
+  let braces = 0;
   const esc = powershell ? '`' : '\\';
   const endWord = () => {
     if (inWord) words.push(word);
@@ -163,6 +167,18 @@ export function splitCommand(text, powershell) {
       // A redirection (2>&1, &>file), not a separator.
       word += c;
       inWord = true;
+    } else if (powershell && c === '{') {
+      if (word.endsWith('$') || word.endsWith('@')) {
+        word += c;
+        braces++;
+        inWord = true;
+      } else endSegment();
+    } else if (powershell && c === '}') {
+      if (braces) {
+        word += c;
+        braces--;
+        inWord = true;
+      } else endSegment();
     } else if (c === '`' && !powershell) {
       // A Bash backtick substitution opens or closes like `$(` and `)`.
       endSegment();
@@ -357,31 +373,26 @@ function stripPrefixes(seg) {
   return w;
 }
 
-// PowerShell only: a standalone `{` or `}` word (a word may also start with `{`, or end with `}` when it holds no
-// `{`, so `${env:X}` stays whole) ends one command and starts the next, so the first command inside `try {`,
-// `ForEach-Object {`, `if (...) {` or `& {` is judged on its own.
-function blockPieces(words) {
-  const pieces = [[]];
-  for (const w of words) {
-    let x = w;
-    if (x.length > 1 && x.startsWith('{')) {
-      pieces.push([]);
-      x = x.slice(1);
-    }
-    const closes = x.length > 1 && x.endsWith('}') && !x.includes('{');
-    if (closes) x = x.slice(0, -1);
-    if (x === '{' || x === '}') pieces.push([]);
-    else pieces[pieces.length - 1].push(x);
-    if (closes) pieces.push([]);
-  }
-  return pieces.filter((p) => p.length);
-}
-
-// PowerShell only: drops an assignment in front of the command (`$r = git ...`, `$r += git ...`, `$r=git ...`).
+// PowerShell only: drops assignments in front of the command: `$r = git ...`, `$r += ...`, `$r=git ...`, a typed,
+// braced or property target (`[string]$r`, `${r}`, `$r.x`, `$r[0]`), a comma list (`$a, $b = ...`) and a chain
+// (`$a = $b = ...`).
+const TARGET = String.raw`(?:\[[^\]]+\])*\$(?:\{[^}]+\}|[A-Za-z0-9_:]+)(?:\.[A-Za-z0-9_]+|\[[^\]]*\])*`;
+const TARGETS = new RegExp(`^${TARGET}(?:,${TARGET})*$`);
+const LISTED = new RegExp(`^(?:${TARGET})?(?:,${TARGET})*,$`);
+const GLUED = new RegExp(`^${TARGET}(?:,${TARGET})*[-+*/]?=(?!=)(.+)$`);
 function dropAssignment(words) {
-  if (words.length > 1 && /^\$[A-Za-z0-9_:]+$/.test(words[0]) && /^[-+*/]?=$/.test(words[1])) return stripPrefixes(words.slice(2));
-  const m = /^\$[A-Za-z0-9_:]+=(.+)$/.exec(words[0] ?? '');
-  return m ? [m[1], ...words.slice(1)] : words;
+  let w = words;
+  for (;;) {
+    let i = 0;
+    while (i < w.length && LISTED.test(w[i])) i++;
+    if (i + 1 < w.length && TARGETS.test(w[i]) && /^[-+*/]?=$/.test(w[i + 1])) {
+      w = stripPrefixes(w.slice(i + 2));
+      continue;
+    }
+    const m = i < w.length ? GLUED.exec(w[i]) : null;
+    if (!m) return w;
+    w = [m[1], ...w.slice(i + 1)];
+  }
 }
 
 // Returns {decision, reason} for the strongest rule hit (deny before ask), or null to allow.
@@ -407,37 +418,35 @@ export function decide(hook, env, warn = () => {}) {
       if (subshells.length) cwd = subshells.pop();
       continue;
     }
-    for (const piece of ps ? blockPieces(seg) : [seg]) {
-      const words = ps ? dropAssignment(stripPrefixes(piece)) : stripPrefixes(piece);
-      if (!words.length) continue;
-      const head = words[0].toLowerCase();
-      if (CD_COMMANDS.includes(head)) {
-        const target = words.slice(1).filter((w) => !/^-(path|literalpath)$/i.test(w))[0];
-        if (target && target !== '-') cwd = resolveDir(cwd, target);
-        continue;
-      }
-      if (!isGit(words[0])) continue;
-      let dir = cwd;
-      let i = 1;
-      while (i < words.length && words[i].startsWith('-')) {
-        const o = words[i];
-        if (o === '-C') dir = resolveDir(dir, words[++i] ?? '.');
-        else if (['-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env'].includes(o)) i++;
-        i++;
-      }
-      const sub = words[i];
-      if (!sub) continue;
-      // Drop redirections: a bare operator also takes its target.
-      const args = [];
-      for (let j = i + 1; j < words.length; j++) {
-        const m = /^(\d|\*|&)?>>?|^</.exec(words[j]);
-        if (!m) args.push(words[j]);
-        else if (m[0] === words[j]) j++;
-      }
-      const verdict = judgeGit(sub, args, dir, ctx);
-      if (verdict?.decision === 'deny') return verdict;
-      if (verdict && !ask) ask = verdict;
+    const words = ps ? dropAssignment(stripPrefixes(seg)) : stripPrefixes(seg);
+    if (!words.length) continue;
+    const head = words[0].toLowerCase();
+    if (CD_COMMANDS.includes(head)) {
+      const target = words.slice(1).filter((w) => !/^-(path|literalpath)$/i.test(w))[0];
+      if (target && target !== '-') cwd = resolveDir(cwd, target);
+      continue;
     }
+    if (!isGit(words[0])) continue;
+    let dir = cwd;
+    let i = 1;
+    while (i < words.length && words[i].startsWith('-')) {
+      const o = words[i];
+      if (o === '-C') dir = resolveDir(dir, words[++i] ?? '.');
+      else if (['-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env'].includes(o)) i++;
+      i++;
+    }
+    const sub = words[i];
+    if (!sub) continue;
+    // Drop redirections: a bare operator also takes its target.
+    const args = [];
+    for (let j = i + 1; j < words.length; j++) {
+      const m = /^(\d|\*|&)?>>?|^</.exec(words[j]);
+      if (!m) args.push(words[j]);
+      else if (m[0] === words[j]) j++;
+    }
+    const verdict = judgeGit(sub, args, dir, ctx);
+    if (verdict?.decision === 'deny') return verdict;
+    if (verdict && !ask) ask = verdict;
   }
   return ask;
 }
