@@ -164,7 +164,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -NonInteractive -File \"C:\\Users\\<you>\\.claude\\tools\\guard.ps1\"",
+            "command": "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"C:\\Users\\<you>\\.claude\\tools\\guard.ps1\"",
             "timeout": 10
           }
         ]

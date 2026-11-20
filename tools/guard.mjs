@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Node port of guard.ps1: a PreToolUse hook on Bash|PowerShell that enforces the rulebook's hard git rules.
 // Deny: commit on a protected branch, push to a protected branch, `git stash` (other than list/show) in a linked
-// worktree, and write commands from read-only roles (scout, researcher, refuter, review-*). Ask: force-push and
-// `git add -A|--all|.`. Protected branches: main, develop, master, or ORC_PROTECTED_BRANCHES (comma list).
+// worktree, and commands that change a checkout from read-only roles (scout, researcher, refuter, review-*). Ask:
+// force-push and `git add -A|--all|.`. Protected branches: main, develop, master, or ORC_PROTECTED_BRANCHES (comma list).
 // It reads the command text only, so it is a seat belt, not a sandbox. Any failure exits 0 (fail open).
 // Usage: node guard.mjs  (PreToolUse hook JSON on stdin)
 import { spawnSync } from 'node:child_process';
@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 const DEFAULT_PROTECTED = ['main', 'develop', 'master'];
 const READ_ONLY_ROLES = ['scout', 'researcher', 'refuter'];
-const READ_ONLY_DENIED = ['commit', 'push', 'merge', 'rebase', 'reset', 'clean', 'stash', 'rm', 'mv', 'checkout', 'switch', 'restore'];
+const READ_ONLY_DENIED = ['commit', 'push', 'merge', 'rebase', 'reset', 'clean', 'stash', 'rm', 'mv', 'checkout', 'switch', 'restore', 'pull', 'cherry-pick', 'revert', 'am'];
 const CD_COMMANDS = ['cd', 'set-location', 'sl', 'chdir', 'pushd', 'push-location'];
 const PREFIX_WORDS = ['then', 'do', 'else', 'elif', 'if', 'while', 'until', '!', '{', '}'];
 const WRAPPERS = ['time', 'env', 'command', 'exec', 'nohup'];
@@ -28,8 +28,8 @@ export function protectedBranches(env) {
 // Both: a `#` that starts a word outside quotes is a comment to the end of the line; an escape before a newline
 // outside quotes joins the lines. Bash: backslash escapes outside quotes and some characters inside double quotes
 // (backslash-newline joins there too); heredoc bodies are skipped; `$(` inside double quotes is read unquoted up to
-// its `)`; `$(( ))` is one word. PowerShell: backtick escapes; backslash is literal (Windows paths); here-strings
-// (@' '@, @" "@) are one word; `<# #>` is a comment.
+// its `)`; `$(( ))` is one word; a backtick substitution, quoted or not, is read like `$( )`. PowerShell: backtick
+// escapes; backslash is literal (Windows paths); here-strings (@' '@, @" "@) are one word; `<# #>` is a comment.
 export function splitCommand(text, powershell) {
   const n = text.length;
   const segments = [];
@@ -40,6 +40,8 @@ export function splitCommand(text, powershell) {
   let heredocs = [];
   // One entry per open `$(` inside double quotes: its count of nested open parentheses.
   const subst = [];
+  // An open Bash backtick substitution: null, or whether it opened inside double quotes.
+  let backtick = null;
   const esc = powershell ? '`' : '\\';
   const endWord = () => {
     if (inWord) words.push(word);
@@ -138,6 +140,12 @@ export function splitCommand(text, powershell) {
         i += newlineAfter(i + 1);
       } else if (c === esc && i + 1 < n && (powershell || '"\\$`\n'.includes(text[i + 1]))) {
         word += text[++i];
+      } else if (c === '`' && !powershell && !backtick) {
+        // Backtick substitution inside double quotes: read it unquoted until the closing backtick.
+        backtick = { quoted: true };
+        quote = '';
+        endSegment();
+        segments.push('(');
       } else if (c === '"') quote = '';
       else word += c;
       continue;
@@ -155,6 +163,20 @@ export function splitCommand(text, powershell) {
       // A redirection (2>&1, &>file), not a separator.
       word += c;
       inWord = true;
+    } else if (c === '`' && !powershell) {
+      // A Bash backtick substitution opens or closes like `$(` and `)`.
+      endSegment();
+      if (backtick) {
+        segments.push(')');
+        if (backtick.quoted) {
+          quote = '"';
+          inWord = true;
+        }
+        backtick = null;
+      } else {
+        segments.push('(');
+        backtick = { quoted: false };
+      }
     } else if ('&|;()\n\r'.includes(c)) {
       endSegment();
       if (!powershell && c === '(') {
@@ -213,6 +235,8 @@ function runGit(cwd, args) {
   return r;
 }
 
+const firstLine = (t) => String(t ?? '').trim().split(/\r?\n/)[0];
+
 const norm = (p) => {
   const s = p.trim().replace(/\\/g, '/').replace(/\/+$/, '');
   return process.platform === 'win32' ? s.toLowerCase() : s;
@@ -227,6 +251,8 @@ function makeProbe(warn) {
     try {
       if (!fs.existsSync(cwd)) throw new Error(`no directory ${cwd}`);
       const b = runGit(cwd, ['symbolic-ref', '--short', '-q', 'HEAD']);
+      // Exit 1 is a detached HEAD. Any other failure is git refusing the repo (dubious ownership, a broken .git).
+      if (b.status !== 0 && b.status !== 1) throw new Error(`git could not read the branch in ${cwd} (exit ${b.status}: ${firstLine(b.stderr)}); judged as no branch`);
       const branch = b.status === 0 ? b.stdout.trim() || null : null;
       const d = runGit(cwd, ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir']);
       const [gitDir, common] = d.status === 0 ? d.stdout.split(/\r?\n/) : [];
@@ -239,13 +265,15 @@ function makeProbe(warn) {
   };
 }
 
-// Local branch names for `push --all`; every protected name when git cannot list them.
+// Local branch names for `push --all`; every protected name (so the push is denied) when git cannot list them.
 function localBranches(cwd, protectedList, warn) {
+  const assumed = 'push --all is judged as reaching every protected branch';
   try {
     const r = runGit(cwd, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']);
     if (r.status === 0) return r.stdout.split(/\r?\n/).filter(Boolean);
+    warn(`git could not list the branches in ${cwd} (exit ${r.status}: ${firstLine(r.stderr)}); ${assumed}`);
   } catch (e) {
-    warn(e instanceof Error ? e.message : String(e));
+    warn(`${e instanceof Error ? e.message : String(e)}; ${assumed}`);
   }
   return [...protectedList];
 }
@@ -329,6 +357,33 @@ function stripPrefixes(seg) {
   return w;
 }
 
+// PowerShell only: a standalone `{` or `}` word (a word may also start with `{`, or end with `}` when it holds no
+// `{`, so `${env:X}` stays whole) ends one command and starts the next, so the first command inside `try {`,
+// `ForEach-Object {`, `if (...) {` or `& {` is judged on its own.
+function blockPieces(words) {
+  const pieces = [[]];
+  for (const w of words) {
+    let x = w;
+    if (x.length > 1 && x.startsWith('{')) {
+      pieces.push([]);
+      x = x.slice(1);
+    }
+    const closes = x.length > 1 && x.endsWith('}') && !x.includes('{');
+    if (closes) x = x.slice(0, -1);
+    if (x === '{' || x === '}') pieces.push([]);
+    else pieces[pieces.length - 1].push(x);
+    if (closes) pieces.push([]);
+  }
+  return pieces.filter((p) => p.length);
+}
+
+// PowerShell only: drops an assignment in front of the command (`$r = git ...`, `$r += git ...`, `$r=git ...`).
+function dropAssignment(words) {
+  if (words.length > 1 && /^\$[A-Za-z0-9_:]+$/.test(words[0]) && /^[-+*/]?=$/.test(words[1])) return stripPrefixes(words.slice(2));
+  const m = /^\$[A-Za-z0-9_:]+=(.+)$/.exec(words[0] ?? '');
+  return m ? [m[1], ...words.slice(1)] : words;
+}
+
 // Returns {decision, reason} for the strongest rule hit (deny before ask), or null to allow.
 export function decide(hook, env, warn = () => {}) {
   const command = hook?.tool_input?.command;
@@ -339,10 +394,11 @@ export function decide(hook, env, warn = () => {}) {
   if (!/git/i.test(command)) return null;
   const startDir = typeof hook.cwd === 'string' && hook.cwd ? hook.cwd : process.cwd();
   const ctx = { probe: makeProbe(warn), protectedList: protectedBranches(env), role: readOnlyRole(hook.agent_type), warn };
+  const ps = hook.tool_name === 'PowerShell';
   let cwd = startDir;
   const subshells = [];
   let ask = null;
-  for (const seg of splitCommand(command, hook.tool_name === 'PowerShell')) {
+  for (const seg of splitCommand(command, ps)) {
     if (seg === '(') {
       subshells.push(cwd);
       continue;
@@ -351,35 +407,37 @@ export function decide(hook, env, warn = () => {}) {
       if (subshells.length) cwd = subshells.pop();
       continue;
     }
-    const words = stripPrefixes(seg);
-    if (!words.length) continue;
-    const head = words[0].toLowerCase();
-    if (CD_COMMANDS.includes(head)) {
-      const target = words.slice(1).filter((w) => !/^-(path|literalpath)$/i.test(w))[0];
-      if (target && target !== '-') cwd = resolveDir(cwd, target);
-      continue;
+    for (const piece of ps ? blockPieces(seg) : [seg]) {
+      const words = ps ? dropAssignment(stripPrefixes(piece)) : stripPrefixes(piece);
+      if (!words.length) continue;
+      const head = words[0].toLowerCase();
+      if (CD_COMMANDS.includes(head)) {
+        const target = words.slice(1).filter((w) => !/^-(path|literalpath)$/i.test(w))[0];
+        if (target && target !== '-') cwd = resolveDir(cwd, target);
+        continue;
+      }
+      if (!isGit(words[0])) continue;
+      let dir = cwd;
+      let i = 1;
+      while (i < words.length && words[i].startsWith('-')) {
+        const o = words[i];
+        if (o === '-C') dir = resolveDir(dir, words[++i] ?? '.');
+        else if (['-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env'].includes(o)) i++;
+        i++;
+      }
+      const sub = words[i];
+      if (!sub) continue;
+      // Drop redirections: a bare operator also takes its target.
+      const args = [];
+      for (let j = i + 1; j < words.length; j++) {
+        const m = /^(\d|\*|&)?>>?|^</.exec(words[j]);
+        if (!m) args.push(words[j]);
+        else if (m[0] === words[j]) j++;
+      }
+      const verdict = judgeGit(sub, args, dir, ctx);
+      if (verdict?.decision === 'deny') return verdict;
+      if (verdict && !ask) ask = verdict;
     }
-    if (!isGit(words[0])) continue;
-    let dir = cwd;
-    let i = 1;
-    while (i < words.length && words[i].startsWith('-')) {
-      const o = words[i];
-      if (o === '-C') dir = resolveDir(dir, words[++i] ?? '.');
-      else if (['-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env'].includes(o)) i++;
-      i++;
-    }
-    const sub = words[i];
-    if (!sub) continue;
-    // Drop redirections: a bare operator also takes its target.
-    const args = [];
-    for (let j = i + 1; j < words.length; j++) {
-      const m = /^(\d|\*|&)?>>?|^</.exec(words[j]);
-      if (!m) args.push(words[j]);
-      else if (m[0] === words[j]) j++;
-    }
-    const verdict = judgeGit(sub, args, dir, ctx);
-    if (verdict?.decision === 'deny') return verdict;
-    if (verdict && !ask) ask = verdict;
   }
   return ask;
 }
@@ -409,13 +467,13 @@ if (isMainModule()) {
     process.stderr.write(`guard: ${m}\n`);
   };
   try {
-    let input = '';
+    let input = null;
     try {
       input = fs.readFileSync(0, 'utf8');
-    } catch {
-      input = '';
+    } catch (e) {
+      warn(`could not read stdin (${e?.code ?? (e instanceof Error ? e.message : String(e))}); allowed`);
     }
-    const out = run(input, process.env, warn);
+    const out = input === null ? '' : run(input, process.env, warn);
     if (out) process.stdout.write(`${out}\n`);
   } catch (e) {
     warn(`${e instanceof Error ? e.message : String(e)}; allowed`);

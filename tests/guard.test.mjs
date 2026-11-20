@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { loadRoles } from '../tools/orc.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MJS = path.join(REPO, 'tools', 'guard.mjs');
@@ -42,7 +43,15 @@ function makeRepos() {
   fs.writeFileSync(path.join(trunk, 'file.txt'), 'x\n');
   git(trunk, 'add', 'file.txt');
   git(trunk, 'commit', '-q', '-m', 'seed');
-  return { root, main, wt, develop, accented, trunk };
+  // Braces in a folder name: a PowerShell block split must keep the word whole.
+  const braces = path.join(root, 'br{x}');
+  fs.mkdirSync(braces);
+  git(braces, 'init', '-q', '-b', 'main');
+  // A .git file pointing nowhere: git answers with exit 128 instead of a branch.
+  const broken = path.join(root, 'broken');
+  fs.mkdirSync(broken);
+  fs.writeFileSync(path.join(broken, '.git'), `gitdir: ${path.join(root, 'nowhere')}\n`);
+  return { root, main, wt, develop, accented, trunk, braces, broken };
 }
 
 const R = makeRepos();
@@ -143,6 +152,74 @@ const CASES = [
   { name: 'a shift inside $(( )) is not a heredoc', cwd: 'main', cmd: 'echo $((1<<2))\ngit commit -m x', expect: 'deny', reason: /commit on main/ },
   // A folder git cannot answer for does not abort the rest of the command.
   { name: 'missing -C folder, then push to main', cwd: 'main', cmd: 'git -C missing commit -m x; git push origin main', expect: 'deny', reason: /push to main/ },
+  // A cd or -C target Windows PowerShell 5.1 cannot resolve as a path: both hooks keep judging, with the same answer.
+  { name: 'PowerShell: Set-Location $env:X, then commit (no such folder)', tool: 'PowerShell', cwd: 'main', cmd: 'Set-Location $env:USERPROFILE\\x; git commit -m x', expect: 'allow' },
+  { name: 'PowerShell: Set-Location $env:X, then push to main', tool: 'PowerShell', cwd: 'wt', cmd: 'Set-Location $env:USERPROFILE\\x; git push origin main', expect: 'deny', reason: /push to main/ },
+  { name: 'PowerShell: git -C $env:X push to main', tool: 'PowerShell', cwd: 'wt', cmd: 'git -C $env:TEMP push origin main', expect: 'deny', reason: /push to main/ },
+  { name: 'cd "${X:-.}", then push to main', cwd: 'wt', cmd: 'cd "${X:-.}" && git push origin main', expect: 'deny', reason: /push to main/ },
+  { name: 'cd into a wildcard, then push to main', cwd: 'wt', cmd: 'cd "a*b?" && git push origin main', expect: 'deny', reason: /push to main/ },
+  { name: 'cd into a name with < and |, then push to main', cwd: 'wt', cmd: 'cd "a<b|c" && git push origin main', expect: 'deny', reason: /push to main/ },
+  { name: 'cd into a 300-character path, then push to main', cwd: 'wt', cmd: `cd "${'d'.repeat(300)}" && git push origin main`, expect: 'deny', reason: /push to main/ },
+  { name: 'refuter: Set-Location $env:X, then reset', tool: 'PowerShell', cwd: 'wt', agent: 'refuter', cmd: 'Set-Location $env:TEMP\\x; git reset --hard', expect: 'deny', reason: /read-only-role: refuter may not run git reset/ },
+  { name: 'PowerShell: add -A, then Set-Location $env:X keeps the ask', tool: 'PowerShell', cwd: 'wt', cmd: 'git add -A; Set-Location $env:TEMP\\x', expect: 'ask', reason: /broad-add/ },
+  // PowerShell assignments and script blocks, and Bash backtick substitution.
+  { name: 'PowerShell: $r = git push to main', tool: 'PowerShell', cwd: 'wt', cmd: '$r = git push origin main', expect: 'deny', reason: /push to main/ },
+  { name: 'PowerShell: $r=git commit on main', tool: 'PowerShell', cwd: 'main', cmd: '$r=git commit -m x', expect: 'deny', reason: /commit on main/ },
+  { name: 'PowerShell: $r += git push to main', tool: 'PowerShell', cwd: 'wt', cmd: '$r += git push origin main', expect: 'deny', reason: /push to main/ },
+  { name: 'PowerShell: $r = git log on main', tool: 'PowerShell', cwd: 'main', cmd: '$r = git log -1', expect: 'allow' },
+  { name: 'PowerShell: try { git commit } on main', tool: 'PowerShell', cwd: 'main', cmd: 'try { git commit -m x } catch { }', expect: 'deny', reason: /commit on main/ },
+  { name: 'PowerShell: try { git commit } on a feature branch', tool: 'PowerShell', cwd: 'wt', cmd: 'try { git commit -m x } catch { }', expect: 'allow' },
+  { name: 'PowerShell: push to main in the catch block', tool: 'PowerShell', cwd: 'wt', cmd: 'try { git status } catch { git push origin main }', expect: 'deny', reason: /push to main/ },
+  { name: 'PowerShell: ForEach-Object { git push to main }', tool: 'PowerShell', cwd: 'wt', cmd: '1 | ForEach-Object { git push origin main }', expect: 'deny', reason: /push to main/ },
+  { name: 'PowerShell: ForEach-Object { git push origin } on main: the } is no refspec', tool: 'PowerShell', cwd: 'main', cmd: '1 | ForEach-Object { git push origin }', expect: 'deny', reason: /push to main/ },
+  { name: 'PowerShell: % {git push to main} with glued braces', tool: 'PowerShell', cwd: 'wt', cmd: '1 | % {git push origin main}', expect: 'deny', reason: /push to main/ },
+  { name: 'PowerShell: if (...) { git commit } on main', tool: 'PowerShell', cwd: 'main', cmd: 'if (Test-Path x) { git commit -m x }', expect: 'deny', reason: /commit on main/ },
+  { name: 'PowerShell: & { git commit } on main', tool: 'PowerShell', cwd: 'main', cmd: '& { git commit -m x }', expect: 'deny', reason: /commit on main/ },
+  { name: 'PowerShell: a hash literal holding git text', tool: 'PowerShell', cwd: 'wt', cmd: "$h = @{ a = 'git push origin main' }", expect: 'allow' },
+  { name: 'PowerShell: a folder name with braces stays one word', tool: 'PowerShell', cwd: 'wt', cmd: () => `Set-Location '${R.braces}'; git commit -m x`, expect: 'deny', reason: /commit on main/ },
+  { name: 'backtick substitution: push to main', cwd: 'wt', cmd: 'echo `git push origin main`', expect: 'deny', reason: /push to main/ },
+  { name: 'backtick substitution after an assignment: commit on main', cwd: 'main', cmd: 'x=`git commit -m y`', expect: 'deny', reason: /commit on main/ },
+  { name: 'backtick substitution inside double quotes: push to main', cwd: 'wt', cmd: 'echo "now `git push origin main` done"', expect: 'deny', reason: /push to main/ },
+  { name: 'backtick substitution closes back into its quotes, then commit', cwd: 'main', cmd: 'echo "a `git log -1` b; c" && git commit -m x', expect: 'deny', reason: /commit on main/ },
+  { name: 'backticks inside single quotes are text', cwd: 'wt', cmd: "echo '`git push origin main`'", expect: 'allow' },
+  { name: 'escaped backticks are text', cwd: 'wt', cmd: 'echo \\`git push origin main\\`', expect: 'allow' },
+  // Every subcommand read-only roles may not run, across the read-only roles; a builder may run them all.
+  { name: 'scout may not push', cwd: 'wt', agent: 'scout', cmd: 'git push origin feature', expect: 'deny', reason: /read-only-role: scout may not run git push/ },
+  { name: 'researcher may not merge', cwd: 'wt', agent: 'researcher', cmd: 'git merge main', expect: 'deny', reason: /read-only-role: researcher may not run git merge/ },
+  { name: 'plugin:refuter may not rebase', cwd: 'wt', agent: 'orc:refuter', cmd: 'git rebase main', expect: 'deny', reason: /read-only-role: refuter may not run git rebase/ },
+  { name: 'review-verifier may not reset', cwd: 'wt', agent: 'review-verifier', cmd: 'git reset --hard', expect: 'deny', reason: /read-only-role: review-verifier may not run git reset/ },
+  { name: 'scout may not clean', cwd: 'wt', agent: 'scout', cmd: 'git clean -fd', expect: 'deny', reason: /read-only-role: scout may not run git clean/ },
+  { name: 'researcher may not stash in the main checkout', cwd: 'main', agent: 'researcher', cmd: 'git stash', expect: 'deny', reason: /read-only-role: researcher may not run git stash/ },
+  { name: 'refuter may not rm', cwd: 'wt', agent: 'refuter', cmd: 'git rm file.txt', expect: 'deny', reason: /read-only-role: refuter may not run git rm/ },
+  { name: 'review-docs-explorer may not mv', cwd: 'wt', agent: 'review-docs-explorer', cmd: 'git mv file.txt f2.txt', expect: 'deny', reason: /read-only-role: review-docs-explorer may not run git mv/ },
+  { name: 'scout may not switch', cwd: 'wt', agent: 'scout', cmd: 'git switch -c tmp', expect: 'deny', reason: /read-only-role: scout may not run git switch/ },
+  { name: 'researcher may not restore', cwd: 'wt', agent: 'researcher', cmd: 'git restore file.txt', expect: 'deny', reason: /read-only-role: researcher may not run git restore/ },
+  { name: 'refuter may not pull', cwd: 'wt', agent: 'refuter', cmd: 'git pull --rebase', expect: 'deny', reason: /read-only-role: refuter may not run git pull/ },
+  { name: 'scout may not cherry-pick', cwd: 'wt', agent: 'scout', cmd: 'git cherry-pick abc123', expect: 'deny', reason: /read-only-role: scout may not run git cherry-pick/ },
+  { name: 'review-failure-explorer may not revert', cwd: 'wt', agent: 'review-failure-explorer', cmd: 'git revert HEAD', expect: 'deny', reason: /read-only-role: review-failure-explorer may not run git revert/ },
+  { name: 'researcher may not am', cwd: 'wt', agent: 'researcher', cmd: 'git am fix.patch', expect: 'deny', reason: /read-only-role: researcher may not run git am/ },
+  { name: 'builder may run every subcommand read-only roles may not', cwd: 'wt', agent: 'builder', cmd: 'git merge x; git rebase x; git reset --hard; git clean -fd; git rm f; git mv f g; git checkout f; git switch x; git restore f; git pull; git cherry-pick a; git revert a; git am p', expect: 'allow' },
+  // Push destinations named through HEAD, @, src:dst and a deleting :dst.
+  { name: 'push origin HEAD while on main', cwd: 'main', cmd: 'git push origin HEAD', expect: 'deny', reason: /push to main/ },
+  { name: 'push origin @ while on main', cwd: 'main', cmd: 'git push origin @', expect: 'deny', reason: /push to main/ },
+  { name: 'push origin feature:main', cwd: 'wt', cmd: 'git push origin feature:main', expect: 'deny', reason: /push to main/ },
+  { name: 'push origin :main deletes main', cwd: 'wt', cmd: 'git push origin :main', expect: 'deny', reason: /push to main/ },
+  // Git global options with a value are skipped before the subcommand.
+  { name: 'git -c name=value commit on main', cwd: 'main', cmd: 'git -c user.name=x commit -m x', expect: 'deny', reason: /commit on main/ },
+  { name: 'git --git-dir .git commit on main', cwd: 'main', cmd: 'git --git-dir .git commit -m x', expect: 'deny', reason: /commit on main/ },
+  { name: 'git --work-tree . push to main', cwd: 'wt', cmd: 'git --work-tree . push origin main', expect: 'deny', reason: /push to main/ },
+  { name: 'git --namespace ns commit on main', cwd: 'main', cmd: 'git --namespace ns commit -m x', expect: 'deny', reason: /commit on main/ },
+  { name: 'git --config-env name=ENV commit on main', cwd: 'main', cmd: 'git --config-env user.name=X commit -m x', expect: 'deny', reason: /commit on main/ },
+  // Redirections are not refspecs.
+  { name: 'bare push > out.txt on main', cwd: 'main', cmd: 'git push > out.txt', expect: 'deny', reason: /push to main/ },
+  { name: 'bare push 2> err.txt on main', cwd: 'main', cmd: 'git push 2> err.txt', expect: 'deny', reason: /push to main/ },
+  { name: 'push origin >> log.txt on main', cwd: 'main', cmd: 'git push origin >> log.txt', expect: 'deny', reason: /push to main/ },
+  // Git Bash /c/... and ~ directory targets (HOME and USERPROFILE point at the temp root).
+  { name: 'cd into a Git Bash /c/ path, then commit on main', cwd: 'wt', platform: 'win32', cmd: () => `cd "${fwd(R.main).replace(/^([A-Za-z]):/, (m, d) => `/${d.toLowerCase()}`)}" && git commit -m x`, expect: 'deny', reason: /commit on main/ },
+  { name: 'cd ~/repo, then commit on main', cwd: 'wt', cmd: 'cd ~/repo && git commit -m x', env: () => ({ HOME: R.root, USERPROFILE: R.root }), expect: 'deny', reason: /commit on main/ },
+  { name: 'git -C ~/repo commit on main', cwd: 'wt', cmd: 'git -C ~/repo commit -m x', env: () => ({ HOME: R.root, USERPROFILE: R.root }), expect: 'deny', reason: /commit on main/ },
+  // A deny after an ask in one command wins.
+  { name: 'add -A, then commit on main', cwd: 'main', cmd: 'git add -A && git commit -m x', expect: 'deny', reason: /commit on main/ },
 ];
 
 function payload(c) {
@@ -162,7 +239,7 @@ function payload(c) {
 function envFor(c) {
   const env = { ...process.env };
   delete env.ORC_PROTECTED_BRANCHES;
-  return { ...env, ...(c.env ?? {}) };
+  return { ...env, ...((typeof c.env === 'function' ? c.env() : c.env) ?? {}) };
 }
 
 function check(runner, c) {
@@ -192,7 +269,26 @@ const RUNNERS = [
 
 for (const [label, runner, skip] of RUNNERS) {
   test(`${label}: deny, ask and allow over the payload table`, { skip }, () => {
-    for (const c of CASES) check(runner, c);
+    // Every row runs, so one failure does not hide the next.
+    const failures = [];
+    for (const c of CASES.filter((x) => !x.platform || x.platform === process.platform)) {
+      try {
+        check(runner, c);
+      } catch (e) {
+        failures.push(e.message.split('\n')[0]);
+      }
+    }
+    assert.deepEqual(failures, []);
+  });
+
+  test(`${label}: denies every role marked access: read-only in roles/*.md, and only those`, { skip }, () => {
+    const roles = loadRoles(REPO);
+    assert.ok(roles.some((r) => r.access === 'read-only') && roles.some((r) => r.access !== 'read-only'), 'roles of both kinds');
+    for (const r of roles) {
+      const c = { name: `role ${r.name}`, cwd: 'wt', agent: r.name, cmd: 'git commit -m x' };
+      if (r.access === 'read-only') check(runner, { ...c, expect: 'deny', reason: new RegExp(`read-only-role: ${r.name} may not run git commit`) });
+      else check(runner, { ...c, expect: 'allow' });
+    }
   });
 
   test(`${label}: fails open with one stderr line`, { skip }, () => {
@@ -212,6 +308,16 @@ for (const [label, runner, skip] of RUNNERS) {
     assert.equal(gone.status, 0);
     assert.equal(gone.stdout.trim(), '');
     assert.match(gone.stderr.trim(), /^guard: no directory /);
+    // git answers with an error (exit 128) instead of a branch: allowed, and the failure is named.
+    const refused = runner(JSON.stringify({ tool_name: 'Bash', cwd: R.broken, tool_input: { command: 'git commit -m x' } }), env);
+    assert.equal(refused.status, 0);
+    assert.equal(refused.stdout.trim(), '');
+    assert.match(refused.stderr.trim(), /^guard: git could not read the branch in .*\(exit 128: .+\); judged as no branch$/);
+    // git cannot list the branches for push --all: denied as reaching every protected branch, and the failure is named.
+    const all = runner(JSON.stringify({ tool_name: 'Bash', cwd: R.broken, tool_input: { command: 'git push --all' } }), env);
+    assert.equal(all.status, 0);
+    assert.equal(JSON.parse(all.stdout).hookSpecificOutput.permissionDecision, 'deny');
+    assert.match(all.stderr.trim(), /^guard: git could not list the branches in .*\(exit 128: .+\); push --all is judged as reaching every protected branch$/);
   });
 }
 
@@ -224,6 +330,9 @@ test('both example files wire the guard on PreToolUse for Bash and PowerShell; s
     assert.equal(groups.length, 1, file);
     assert.equal(groups[0].matcher, 'Bash|PowerShell', file);
   }
+  // The shipped PowerShell line runs the script under any execution policy, as the tests here do.
+  const ps = JSON.parse(fs.readFileSync(path.join(REPO, 'settings.example.json'), 'utf8')).hooks.PreToolUse.flatMap((g) => g.hooks).find((h) => /guard\.ps1/.test(h.command));
+  assert.match(ps.command, /^powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "/);
   const example = JSON.parse(fs.readFileSync(path.join(REPO, 'settings.example.json'), 'utf8'));
   assert.deepEqual(example.permissions.deny, ['Read(.env)', 'Read(.env.*)', 'Read(**/.credentials.json)', 'Read(~/.claude/.credentials.json)']);
 });
