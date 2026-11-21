@@ -821,7 +821,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
           const current = readSettings(settingsTarget);
           settingsStep = { ...current, rec, cleaned: removeKitSettings(current.settings, rec) };
         } catch (e) {
-          bad.push(`${settingsTarget}: cannot remove the sprint kit's entries (${e instanceof SyntaxError ? `not valid JSON: ${e.message}` : e.message})`);
+          const msg = e instanceof Error ? e.message : String(e);
+          bad.push(`${settingsTarget}: cannot remove the sprint kit's entries (${e instanceof SyntaxError ? `not valid JSON: ${msg}` : msg})`);
         }
       }
     }
@@ -955,7 +956,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         const p = planKitSettings(settings, { example: kitHookExample(repo), allow: presetRules(chosen.stacks ?? []), home });
         missing = [...p.hooks.map((h) => `${h.event}${h.matcher ? ` [${h.matcher}]` : ''}: ${h.command}`), ...p.allow.map((r) => `permissions.allow: ${r}`)];
       } catch (e) {
-        missing = [`unreadable (${e.message})`];
+        missing = [`unreadable (${e instanceof Error ? e.message : String(e)})`];
       }
       for (const m of missing) io.out(`missing in settings.json: ${m}`);
       if (missing.length) clean = false;

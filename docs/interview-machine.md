@@ -71,7 +71,7 @@ Each replaced file is first copied to `<file>.orc-backup-<time>`, and `settings.
 node tools/orc.mjs status --tool claude-code --home "<home>"
 ```
 
-It must end with `status claude-code: all same` and exit 0, including the line `same: ... settings.json (sprint kit entries present)`.
+On a clean machine it ends with `status claude-code: all same` and exits 0, including the line `same: ... settings.json (sprint kit entries present)`. An `extra: ... (not installed by orc)` line is an agent of the owner's own in `<home>/.claude/agents`: that is fine, and it makes the last line read `out of date` and the exit code 1. Only a `missing`, `differs`, `edited since install`, `stale` or `missing in settings.json` line means the install is not right; run step 4 again, and tell the user if it persists.
 
 Then check that Claude Code sees the kit. A session that started before the install may not list the new agents and skill, so ask the user to open a fresh Claude Code session in the exercise folder. In it, confirm that:
 
