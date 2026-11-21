@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { parse, normalizeEol, isGenerated } from './lib/frontmatter.mjs';
 import { parseRole } from './lib/roles.mjs';
 import { sha256, diskHash, loadManifest, writeManifest, safeRel, escapes } from './lib/manifest.mjs';
@@ -15,7 +16,8 @@ import { calibrationReport, DEFAULT_MIN_PRECISION } from './lib/calibration.mjs'
 import { listCases, scoreReport } from './lib/corpus.mjs';
 import { capture, loadRuns, metricsReport, repoTop, DEFAULT_PRICES } from './lib/metrics.mjs';
 import { dispatchPlan, runDispatch, formatCommand, argvProblem, binEnv } from './lib/dispatch.mjs';
-import { mergeHooks, formatLike } from './lib/hooks.mjs';
+import { mergeHooks, formatLike, readSettings, writeSettings } from './lib/hooks.mjs';
+import { KIT_HOOK_SCRIPTS, KIT_SKILLS, KIT_NOTE, KNOWN_STACKS, presetRules, detectStacks, kitHookExample, planKitSettings, removeKitSettings, kitRecordProblem } from './lib/sprintkit.mjs';
 import { decodeText, readText } from './lib/text.mjs';
 import { USAGE, globalHelp, commandHelp } from './lib/help.mjs';
 import { validateArchive, runStandards } from './lib/standards.mjs';
@@ -125,16 +127,59 @@ function installOptions(opt, manifest, io) {
     profiles = rec.profiles;
     reused.push(`profile ${profiles.join(',')}`);
   }
+  // A sprint kit stays a kit on every later install and status; only uninstall removes it.
+  let sprintKit = Boolean(opt['sprint-kit']);
+  if (!sprintKit && rec.sprintKit === true) {
+    sprintKit = true;
+    reused.push('sprint kit');
+  }
+  let stacks = opt.stack ?? null;
+  if (sprintKit && !stacks && Array.isArray(rec.stacks) && rec.stacks.length && rec.stacks.every((s) => KNOWN_STACKS.includes(s))) {
+    stacks = rec.stacks;
+    reused.push(`stack ${stacks.join(',')}`);
+  }
   let board = opt.board ?? null;
   let boardRepo = opt['board-repo'] ?? null;
-  if (opt['no-board']) board = boardRepo = null;
+  if (opt['no-board'] || sprintKit) board = boardRepo = null;
   else if (!opt.board && typeof rec.board === 'string' && (typeof rec.boardRepo === 'string' || isArtifactBoard(rec.board))) {
     board = rec.board;
     boardRepo = rec.boardRepo;
     reused.push(`board ${board}`);
   }
-  if (reused.length) io.out(`using the options recorded at install: ${reused.join('; ')} (pass --no-profile or --no-board to clear)`);
-  return { profiles, board, boardRepo };
+  const clear = rec.sprintKit === true ? (reused.some((r) => r.startsWith('profile')) ? 'pass --no-profile to clear; uninstall removes the sprint kit' : 'uninstall removes the sprint kit') : 'pass --no-profile or --no-board to clear';
+  if (reused.length) io.out(`using the options recorded at install: ${reused.join('; ')} (${clear})`);
+  return { profiles, board, boardRepo, sprintKit, stacks };
+}
+
+// The rulebook lines install and status add after the tool notes: the Board line (or the kit's no-board line), then
+// the Setup checkout line.
+const installNotes = (chosen, toolId) => [...(chosen.sprintKit ? [KIT_NOTE] : boardNotes(chosen, toolId)), ...setupNotes()];
+
+// The files a kit adds beside the build: the sprint skill under <root>/skills/.
+function kitFiles(repo, adapter) {
+  return KIT_SKILLS.map((rel) => ({ path: `${adapter.home.root}/${rel}`, content: read(path.join(repo, ...rel.split('/'))) }));
+}
+
+const SETTINGS_REL = '.claude/settings.json';
+const KIT_NEXT = `start a fresh Claude Code session and check that /sprint and the roster agents are listed; then ask for a sprint (${SETUP}/docs/interview-machine.md).`;
+const KIT_RESTORABLE = 'replace (hand-written; backed up, uninstall restores it)';
+
+// Every path the kit touches or a manifest's kit record names (settings.json, its backup, each restore target and
+// backup) must be a plain path under the tool root that stays inside it on the real file system.
+function kitPathProblems(home, root, kitRec) {
+  const rels = [SETTINGS_REL, ...Object.entries(kitRec?.restore ?? {}).flat(), ...(kitRec?.settings?.backup ? [kitRec.settings.backup] : [])];
+  const out = [];
+  for (const rel of rels) {
+    const t = safeRel(home, rel, root);
+    if (!t || rel.split('/').pop().startsWith('.orc-manifest.')) {
+      out.push(`${rel} (in the manifest) is not a plain path under ${root}`);
+      continue;
+    }
+    const why = escapes(home, root, t);
+    if (why) out.push(why);
+    else if (fs.existsSync(t) && !fs.lstatSync(t).isFile()) out.push(`${t} is not a regular file`);
+  }
+  return out;
 }
 
 export function allowedTools(adapter) {
@@ -207,8 +252,8 @@ async function buildAll(repo, toolId, { local = true, extraNotes = [], profiles 
 
 // The scripts the tool's example hooks run (adapter.hookScripts), as files under its root: install copies them beside
 // the generated files and status compares them, but build, golden and check never emit them.
-function hookScriptFiles(repo, adapter) {
-  return (adapter.hookScripts ?? []).map((rel) => ({ path: `${adapter.home.root}/${rel}`, content: read(path.join(repo, ...rel.split('/'))), hookScript: true }));
+function hookScriptFiles(repo, adapter, { sprintKit = false } = {}) {
+  return (adapter.hookScripts ?? []).filter((rel) => !sprintKit || KIT_HOOK_SCRIPTS.includes(rel)).map((rel) => ({ path: `${adapter.home.root}/${rel}`, content: read(path.join(repo, ...rel.split('/'))), hookScript: true }));
 }
 
 // The build the golden test compares against and the golden command writes: models.json only, no profiles, no extra notes.
@@ -281,7 +326,7 @@ const LIST_OPTIONS = ['profile', 'stack'];
 // Value options that may repeat but are never comma-split (paths).
 const REPEAT_OPTIONS = ['from'];
 
-const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print', 'json'];
+const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print', 'json', 'sprint-kit'];
 
 // Accepts `--key value` and `--key=value`. An unknown option is an error, never a silent boolean: a mistyped
 // `--home=<dir>` once fell through to the real home directory.
@@ -348,7 +393,15 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   const profiles = opt.profile ?? [];
   if (profiles.length && !['build', 'install', 'status'].includes(cmd)) return fail('--profile applies to build, install and status only');
   if ((opt['no-profile'] || opt['no-board']) && !['install', 'status'].includes(cmd)) return fail('--no-profile and --no-board apply to install and status only');
-  if ((opt.stack || opt.from || opt.json) && cmd !== 'standards') return fail('--stack, --from and --json apply to standards only');
+  const kitStack = opt.stack && cmd === 'install' && opt['sprint-kit'];
+  if (((opt.stack && !kitStack) || opt.from || opt.json) && cmd !== 'standards') return fail('--stack, --from and --json apply to standards only (and --stack to install --sprint-kit)');
+  if (opt['sprint-kit'] && !['install', 'status'].includes(cmd)) return fail('--sprint-kit applies to install and status only (uninstall reads the kit from the manifest)');
+  if (opt['sprint-kit'] && opt.tool !== 'claude-code') return fail('--sprint-kit is for --tool claude-code only');
+  if (opt['sprint-kit'] && (opt.board || opt['board-repo'])) return fail('the sprint kit installs no board: drop --board and --board-repo');
+  if (kitStack) {
+    const unknown = opt.stack.filter((s) => !KNOWN_STACKS.includes(s));
+    if (unknown.length) return fail(`unknown stack(s) ${unknown.join(', ')} for the sprint kit; known: ${KNOWN_STACKS.join(', ')}`);
+  }
   if (opt['no-profile'] && opt.profile) return fail('pass --profile or --no-profile, not both');
   if (opt['no-board'] && (opt.board || opt['board-repo'])) return fail('pass --board or --no-board, not both');
   try {
@@ -517,8 +570,20 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     if (early.error) return fail(`${early.error}; remove or fix the manifest by hand`);
     const chosen = installOptions(opt, early.manifest, io);
     if (artifactRefused(chosen.board, toolId)) return fail(ARTIFACT_ONLY_CLAUDE);
-    const extraNotes = [...boardNotes(chosen, toolId), ...setupNotes()];
-    if (!chosen.board) io.err('WARN the board address is not set: pass --board <address> (with --board-repo <path> for a local board) so the rulebook names it');
+    const kit = chosen.sprintKit;
+    if (kit && (opt.board || opt['board-repo'])) return fail('the sprint kit installs no board: drop --board and --board-repo');
+    const extraNotes = installNotes(chosen, toolId);
+    if (!chosen.board && !kit) io.err('WARN the board address is not set: pass --board <address> (with --board-repo <path> for a local board) so the rulebook names it');
+    let stacks = chosen.stacks ?? [];
+    if (kit && !chosen.stacks) {
+      // Detection reads the current folder; the checkout itself (which has a package.json) is never the project.
+      const cwd = path.resolve(io.cwd ? io.cwd() : process.cwd());
+      const isCheckout = fs.existsSync(cwd) && fs.realpathSync.native(cwd) === fs.realpathSync.native(repo);
+      stacks = isCheckout ? [] : detectStacks(cwd);
+      if (isCheckout) io.out(`sprint kit: no stack detected (the current folder is the Orc-istration checkout); pass --stack ${KNOWN_STACKS.join('|')} for a permission preset`);
+      else if (!stacks.length) io.out(`sprint kit: no stack detected in ${cwd}; no permission preset (pass --stack ${KNOWN_STACKS.join('|')})`);
+      else io.out(`sprint kit: stack ${stacks.join(',')} (detected in ${cwd})`);
+    } else if (kit) io.out(`sprint kit: stack ${stacks.join(',')}`);
     let built;
     try {
       [built] = await buildAll(repo, toolId, { extraNotes, profiles: chosen.profiles });
@@ -527,7 +592,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     }
     const { adapter, errors } = built;
     if (errors.length) return fail(errors.join('\n'));
-    const files = [...built.files, ...hookScriptFiles(repo, adapter)];
+    const files = [...built.files, ...hookScriptFiles(repo, adapter, { sprintKit: kit }), ...(kit ? kitFiles(repo, adapter) : [])];
     for (const c of adapter.conflicts ?? []) {
       const other = path.join(home, ...c.path.split('/'));
       if (fs.existsSync(other) && isGenerated(read(other))) {
@@ -553,9 +618,28 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       if (why) unsafe.push(why);
       else if (fs.existsSync(t) && !fs.lstatSync(t).isFile()) unsafe.push(`${t} (in the manifest) is not a regular file`);
     }
+    const priorKit = manifest?.kit;
+    const settingsTarget = path.join(home, ...SETTINGS_REL.split('/'));
+    if (kit) {
+      const problem = kitRecordProblem(priorKit);
+      if (problem) return fail(`${loaded.file}: ${problem}; remove or fix the manifest by hand`);
+      unsafe.push(...kitPathProblems(home, root, priorKit));
+    }
     if (unsafe.length) {
       unsafe.forEach((u) => io.err(`refused: ${u}`));
       return fail('nothing written: unsafe target path(s)');
+    }
+    // The kit's settings.json additions are planned before any write: an unreadable file refuses the whole install.
+    let settingsPlan = null;
+    if (kit) {
+      try {
+        const current = readSettings(settingsTarget);
+        settingsPlan = { ...current, ...planKitSettings(current.settings, { example: kitHookExample(repo), allow: presetRules(stacks), home }) };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const why = e instanceof SyntaxError ? `${settingsTarget} is not valid JSON (${msg})` : (msg.startsWith(settingsTarget) ? msg : `${settingsTarget}: ${msg}`).replace(/; nothing written$/, '');
+        return fail(`refused: ${why}; nothing written (fix or move that file, then run again)`);
+      }
     }
     // Plan every target first: one refused file refuses the whole install, so it is never half applied.
     const plan = files
@@ -573,6 +657,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
           else if (!m && !isGenerated(current)) state = 'REPLACE HAND-WRITTEN';
           // A hook script copied by hand before install shipped them is kept, so it never refuses the whole install.
           if (state === 'REPLACE HAND-WRITTEN' && f.hookScript && !opt.force) state = 'KEEP';
+          // On a borrowed machine the kit replaces the owner's own file after a backup, and uninstall puts it back.
+          if (state === 'REPLACE HAND-WRITTEN' && kit) state = KIT_RESTORABLE;
         }
         return { f, target, exists, state };
       });
@@ -602,6 +688,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       files: {},
       dirs: [...(manifest?.dirs ?? [])],
     };
+    // The first backup of each file the kit replaced is the one uninstall restores; a re-install keeps it.
+    const restore = { ...(priorKit?.restore ?? {}) };
     for (const { f, target, exists, state } of plan) {
       if (state === 'KEEP') {
         io.out(`${opt.apply ? 'kept' : 'would keep'} (hand-copied hook script, differs; --force replaces it, with a backup): ${target}`);
@@ -616,6 +704,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
           let backup = `${target}.orc-backup-${when}`;
           for (let n = 2; fs.existsSync(backup); n++) backup = `${target}.orc-backup-${when}-${n}`;
           fs.copyFileSync(target, backup);
+          if (kit && !recorded[f.path] && !restore[f.path]) restore[f.path] = f.path + backup.slice(target.length);
         }
         const bytes = Buffer.from(f.content, 'utf8');
         fs.writeFileSync(target, bytes);
@@ -634,13 +723,50 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         io.out(`${opt.apply ? 'kept' : 'would keep'} (role removed, edited since install): ${s.target}`);
       }
     }
+    if (kit) {
+      const s = settingsPlan;
+      const prior = priorKit?.settings ?? {};
+      for (const h of s.hooks) io.out(`${opt.apply ? 'added' : 'would add'} to settings.json ${h.event}${h.matcher ? ` [${h.matcher}]` : ''}: ${h.command}`);
+      for (const r of s.allow) io.out(`${opt.apply ? 'added' : 'would add'} to settings.json permissions.allow: ${r}`);
+      const changed = s.hooks.length + s.allow.length > 0;
+      // One backup, before the kit's first change to the file; a file the kit created needs none.
+      const firstChange = changed && s.original !== null && !prior.backup && !prior.fileCreated;
+      let backupRel = prior.backup ?? null;
+      if (!changed) io.out(`settings.json: nothing to add (${settingsTarget})`);
+      else if (s.original !== null && formatLike(s.original, s.settings) !== s.original) {
+        io.err(`WARN ${settingsTarget} is not in plain indented JSON layout; writing it re-indents the existing content (values and order unchanged)`);
+      }
+      if (changed && opt.apply) {
+        let backup = null;
+        if (firstChange) {
+          backup = `${settingsTarget}.orc-backup-${when}`;
+          for (let n = 2; fs.existsSync(backup); n++) backup = `${settingsTarget}.orc-backup-${when}-${n}`;
+          backupRel = SETTINGS_REL + backup.slice(settingsTarget.length);
+        }
+        writeSettings(settingsTarget, s.bom + formatLike(s.original, s.merged), backup);
+        io.out(`${s.original === null ? 'created' : 'updated'} ${settingsTarget}${backup ? ` (backed up: ${backup})` : ''}`);
+      } else if (changed) io.out(`would ${s.original === null ? 'create' : 'update'} ${settingsTarget}${firstChange ? ', after a backup' : ''}`);
+      const uniq = (list, key) => [...new Map(list.map((x) => [key(x), x])).values()];
+      next.options.sprintKit = true;
+      next.options.stacks = stacks;
+      next.kit = {
+        settings: {
+          fileCreated: Boolean(prior.fileCreated) || (changed && s.original === null),
+          backup: backupRel,
+          containers: uniq([...(prior.containers ?? []), ...s.containers], (c) => c),
+          hooks: uniq([...(prior.hooks ?? []), ...s.hooks], (h) => JSON.stringify([h.event, h.matcher ?? null, h.command])),
+          allow: uniq([...(prior.allow ?? []), ...s.allow], (r) => r),
+        },
+        restore,
+      };
+    }
     if (opt.apply) writeManifest(loaded.file, next);
     if (adapter.installNote) io.out(adapter.installNote);
     if (!opt.apply) {
       io.out(`dry run for ${adapter.id}; add --apply to write`);
       if (blocked.length) io.out(`--apply would refuse: ${blocked.length} ${kind} file(s) in the way (use --force to replace them, with backups)`);
     }
-    io.out(`${opt.apply ? 'Next' : 'After --apply, next'}: ${STANDARDS_NEXT}`);
+    io.out(`${opt.apply ? 'Next' : 'After --apply, next'}: ${kit ? KIT_NEXT : STANDARDS_NEXT}`);
     return 0;
   }
 
@@ -681,11 +807,30 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       const why = escapes(home, root, safeRel(home, rel, root));
       if (why) bad.push(why);
     }
+    // A sprint kit: its settings.json entries are removed and the files it replaced are restored, after the deletes.
+    const kitRec = manifest.kit;
+    const settingsTarget = path.join(home, ...SETTINGS_REL.split('/'));
+    let settingsStep = null;
+    if (kitRec !== undefined) {
+      const problem = kitRecordProblem(kitRec);
+      if (problem) bad.push(`${file}: ${problem}`);
+      else bad.push(...kitPathProblems(home, root, kitRec));
+      const rec = kitRec?.settings;
+      if (!problem && rec && ((rec.hooks ?? []).length || (rec.allow ?? []).length) && fs.existsSync(settingsTarget)) {
+        try {
+          const current = readSettings(settingsTarget);
+          settingsStep = { ...current, rec, cleaned: removeKitSettings(current.settings, rec) };
+        } catch (e) {
+          bad.push(`${settingsTarget}: cannot remove the sprint kit's entries (${e instanceof SyntaxError ? `not valid JSON: ${e.message}` : e.message})`);
+        }
+      }
+    }
     if (bad.length) {
       bad.forEach((b) => io.err(`refused: ${b}`));
       return fail('nothing deleted: the manifest names unsafe or invalid paths');
     }
     const kept = {};
+    const gone = new Set();
     for (const { rel, sha, target, edited } of steps) {
       if (edited && !opt.force) {
         kept[rel] = { sha256: sha };
@@ -693,10 +838,53 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         continue;
       }
       if (opt.apply) {
-        if (edited) fs.copyFileSync(target, `${target}.orc-backup-${when}`);
+        if (edited) {
+          // Never over an existing backup: it may be the original a sprint kit restores next.
+          let backup = `${target}.orc-backup-${when}`;
+          for (let n = 2; fs.existsSync(backup); n++) backup = `${target}.orc-backup-${when}-${n}`;
+          fs.copyFileSync(target, backup);
+        }
         fs.rmSync(target);
       }
+      gone.add(rel);
       io.out(`${opt.apply ? 'deleted' : 'would delete'}${edited ? ' (edited, backed up)' : ''}: ${target}`);
+    }
+    const keptRestore = {};
+    for (const [rel, backupRel] of Object.entries(kitRec?.restore ?? {})) {
+      const target = safeRel(home, rel, root);
+      const backup = safeRel(home, backupRel, root);
+      if (kept[rel]) {
+        keptRestore[rel] = backupRel;
+        io.out(`${opt.apply ? 'not restored' : 'would not restore'} (the installed file is kept): ${target}; the original is ${backup}`);
+      } else if (!fs.existsSync(backup)) io.err(`WARN cannot restore ${target}: its backup ${backup} is gone`);
+      else if (fs.existsSync(target) && !gone.has(rel)) io.err(`WARN not restored: ${target} exists; the original is ${backup}`);
+      else {
+        if (opt.apply) fs.renameSync(backup, target);
+        io.out(`${opt.apply ? 'restored' : 'would restore'} ${target} from ${backup}`);
+      }
+    }
+    if (settingsStep) {
+      const { original, bom, rec, cleaned } = settingsStep;
+      for (const h of rec.hooks ?? []) io.out(`${opt.apply ? 'removed' : 'would remove'} from settings.json ${h.event}${h.matcher ? ` [${h.matcher}]` : ''}: ${h.command}`);
+      for (const r of rec.allow ?? []) io.out(`${opt.apply ? 'removed' : 'would remove'} from settings.json permissions.allow: ${r}`);
+      const backup = rec.backup ? safeRel(home, rec.backup, root) : null;
+      let before = null;
+      try {
+        if (backup && fs.existsSync(backup)) before = readSettings(backup).settings;
+      } catch {
+        before = null;
+      }
+      if (rec.fileCreated && !Object.keys(cleaned).length) {
+        if (opt.apply) fs.rmSync(settingsTarget);
+        io.out(`${opt.apply ? 'deleted' : 'would delete'} (created by the sprint kit, now empty): ${settingsTarget}`);
+      } else if (before && isDeepStrictEqual(cleaned, before)) {
+        // Nothing else changed since install: the backup's bytes go back, layout and BOM included.
+        if (opt.apply) fs.renameSync(backup, settingsTarget);
+        io.out(`${opt.apply ? 'restored' : 'would restore'} ${settingsTarget} from ${backup}`);
+      } else {
+        if (opt.apply) writeSettings(settingsTarget, bom + formatLike(original, cleaned));
+        io.out(`${opt.apply ? 'updated' : 'would update'} ${settingsTarget} (changed since install, so only the kit's entries are removed${backup ? `; the original stays at ${backup}` : ''})`);
+      }
     }
     if (opt.apply) {
       const keep = Object.keys(kept).length > 0;
@@ -712,7 +900,9 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       if (keep) {
         // The kept files stay listed, so `uninstall --apply --force` can still remove them.
         const dirs = manifest.dirs.filter((rel) => fs.existsSync(safeRel(home, rel, adapter.home.root)));
-        writeManifest(file, { ...manifest, files: kept, dirs });
+        const rest = { ...manifest, files: kept, dirs };
+        if (kitRec !== undefined) rest.kit = { restore: keptRestore };
+        writeManifest(file, rest);
         io.out(`kept manifest listing ${Object.keys(kept).length} kept file(s): ${file}`);
       } else io.out(`removed manifest: ${file}`);
     } else io.out(`dry run for ${adapter.id}; add --apply to delete`);
@@ -732,13 +922,14 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     if (artifactRefused(chosen.board, toolId)) return fail(ARTIFACT_ONLY_CLAUDE);
     let built;
     try {
-      [built] = await buildAll(repo, toolId, { extraNotes: [...boardNotes(chosen, toolId), ...setupNotes()], profiles: chosen.profiles });
+      [built] = await buildAll(repo, toolId, { extraNotes: installNotes(chosen, toolId), profiles: chosen.profiles });
     } catch (e) {
       return fail(e.message);
     }
     const { adapter, errors } = built;
     if (errors.length) return fail(errors.join('\n'));
-    const installed = [...built.files, ...hookScriptFiles(repo, adapter)].filter((f) => f.install !== false);
+    const kit = chosen.sprintKit;
+    const installed = [...built.files, ...hookScriptFiles(repo, adapter, { sprintKit: kit }), ...(kit ? kitFiles(repo, adapter) : [])].filter((f) => f.install !== false);
     const recorded = loaded.manifest?.files ?? null;
     const ours = new Set();
     let clean = true;
@@ -754,6 +945,21 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       }
       if (state !== 'same') clean = false;
       io.out(`${state}: ${target}`);
+    }
+    // A kit's settings.json must still hold the guard hook and the preset for the recorded stacks.
+    if (kit) {
+      const target = path.join(home, ...SETTINGS_REL.split('/'));
+      let missing;
+      try {
+        const { settings } = readSettings(target);
+        const p = planKitSettings(settings, { example: kitHookExample(repo), allow: presetRules(chosen.stacks ?? []), home });
+        missing = [...p.hooks.map((h) => `${h.event}${h.matcher ? ` [${h.matcher}]` : ''}: ${h.command}`), ...p.allow.map((r) => `permissions.allow: ${r}`)];
+      } catch (e) {
+        missing = [`unreadable (${e.message})`];
+      }
+      for (const m of missing) io.out(`missing in settings.json: ${m}`);
+      if (missing.length) clean = false;
+      else io.out(`same: ${target} (sprint kit entries present)`);
     }
     for (const rel of Object.keys(recorded ?? {})) {
       const target = safeRel(home, rel, adapter.home.root);
@@ -969,17 +1175,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const target = path.join(home, '.claude', 'settings.json');
     const unsafe = escapes(home, '.claude', target);
     if (unsafe) return fail(`hooks: ${unsafe}; nothing written`);
-    let original = null;
-    let bom = '';
-    let settings = {};
     try {
-      if (fs.existsSync(target)) {
-        const raw = fs.readFileSync(target, 'utf8');
-        bom = raw.charCodeAt(0) === 0xfeff ? raw[0] : '';
-        original = raw.slice(bom.length);
-        settings = JSON.parse(original);
-        if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return fail(`hooks: ${target} is not a JSON object at the top level; nothing written`);
-      }
+      const { original, bom, settings } = readSettings(target);
       const { merged, added } = mergeHooks(settings, JSON.parse(read(source)), home);
       if (!added.length) {
         io.out(`nothing to add: every hook in ${path.basename(source)} is already in ${target}`);
@@ -1001,28 +1198,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         io.out(`dry run: ${original === null ? 'would create' : 'would update'} ${target}; add --apply to write`);
         return 0;
       }
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      // Write the new content beside the target first: when that fails, no backup is left behind.
-      const tmp = `${target}.orc-tmp-${process.pid}`;
-      fs.writeFileSync(tmp, bom + formatLike(original, merged));
-      let backup = null;
-      if (original !== null) {
-        backup = `${target}.orc-backup-${stamp(io.now ? io.now() : new Date())}`;
-        try {
-          fs.copyFileSync(target, backup);
-        } catch (e) {
-          fs.rmSync(tmp, { force: true });
-          throw e;
-        }
-      }
-      try {
-        fs.renameSync(tmp, target);
-      } catch (e) {
-        // The target could not be replaced (read-only, locked): leave no temp file and no stray backup.
-        fs.rmSync(tmp, { force: true });
-        if (backup) fs.rmSync(backup, { force: true });
-        throw e;
-      }
+      const backup = original === null ? null : `${target}.orc-backup-${stamp(io.now ? io.now() : new Date())}`;
+      writeSettings(target, bom + formatLike(original, merged), backup);
       if (backup) io.out(`backed up: ${backup}`);
       io.out(`${original === null ? 'created' : 'updated'} ${target}`);
       return 0;
