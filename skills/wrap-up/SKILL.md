@@ -1,6 +1,6 @@
 ---
 name: wrap-up
-description: Finish an orchestrated task (full test projects once, the diff read, the pre-PR review tier, the cost log, the handoff note, the board marked Done). Use when the last refuter of an orchestrated task is dispatched (so the full tests overlap its pass) through reporting it done and opening the PR; not in sprint mode, which waives most of this.
+description: Finish an orchestrated task (full test projects once, the diff read, the pre-PR review tier, the cost log, the handoff note, the board marked Done). Use when the builder/refuter loop of an orchestrated task is accepted and before reporting it done or opening the PR; not in sprint mode, which waives most of this.
 ---
 
 # Wrap-up
@@ -11,7 +11,7 @@ Resolve `<setup>` in this order: the `ORC_HOME` environment variable, the "Setup
 
 Show this as a visible checklist and tick each step as it finishes.
 
-1. **Full tests.** Run each full test project once, by project name, one at a time, in the background. Start them when the last refuter is dispatched, so they run during its static pass. A green run older than the last edit does not count.
+1. **Full tests.** Run each full test project once, by project name, one at a time, in the background. Run them while a refuter does its static pass if one is still running. A green run older than the last edit does not count.
 2. **Diff read.** Read the whole final diff yourself against the base branch. Confirm any defect an agent reported by reading the code or reproducing it, and say which.
 3. **Review tier.** Run `review-tier --base origin/<base>` in the repo.
    - **Light** only when all three hold: the diff is tests and docs only; the refuter gave ACCEPT after mutation checks; the refuter's brief used the repo's test conventions as its checklist. Then run a docs and comment review only.
@@ -20,7 +20,7 @@ Show this as a visible checklist and tick each step as it finishes.
 4. **Docs co-change.** If the repo has a rule that user-facing changes update its README or wiki in the same change, check that they did.
 5. **Cost log.** Draft it with `costlog --session <session id>`:
    - Local board: add `--board <address> --board-repo <board repo>`.
-   - Artifact board: read the session doc and every card whose `session` is this one, write them to `<scratchpad>/board-export.json` as `{"sessions": {"<session id>": {...}}, "cards": {"<card id>": {...}}}` with bare ids as keys (`t1`, not `cards/t1`, so they match each event's `card`). The session id is bare too (`<YYYY-MM-DD>-<project>-<slug>`, without `sessions/`), both as its key and as `--session`. Pass `--board-export` with that file.
+   - Artifact board: read the session doc and every card whose `session` is this one, write them to `<scratchpad>/board-export.json` as `{"sessions": {"<session id>": {...}}, "cards": {"<card id>": {...}}}` with bare ids as keys (`t1`, not `cards/t1`, so they match each event's `card`), and pass `--board-export` with that file.
    Fill each `TODO` and save it as `log/<date>-<project>-<slug>.md` per `log/TEMPLATE.md`, in the folder that holds `log/TEMPLATE.md`: `~/.claude/orchestration/` (the tool notes' location for local data), else `<setup>/orchestration/`. The orchestrator's context size comes from the status line or `/context`. Target: orchestrator share under 20% of tokens.
 6. **Anomalies.** For anything odd in this task that no rule covers, add one line to `log/anomalies.md` beside the cost logs. Search the file for the same cause first and promote a repeat (`<setup>/orchestration/README.md`, "Anomaly log"). Skip the step when there was nothing.
 7. **Handoff.** Update the task's handoff doc with the decisions, what is done, what is open and the exact next step.
