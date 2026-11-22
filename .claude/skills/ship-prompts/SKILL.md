@@ -18,7 +18,7 @@ Show this as a visible checklist.
    Read the golden diff: every change must be one you meant.
 2. **Tests and caps.** Run `npm test`, then `node tools/orc.mjs check`. Report the antigravity headroom line; the rulebook built from `AGENTS.md` must stay under its byte cap.
 3. **Tracked paths.** `.gitignore` is an allow-list. For each new top-level path, skill folder or command, run `git check-ignore <path>`: no output means it is tracked. Add a `!/` line when it is not. Then `git status --porcelain` shows only the files you meant.
-4. **Review tier.** `node tools/orc.mjs review-tier` says `Full` for any prompt source (`AGENTS.md`, `roles/`, adapter notes, profiles, any `SKILL.md`, standards, `orchestration/*.md`). Prompts are product, not docs.
+4. **Review tier.** `node tools/orc.mjs review-tier` says `Full` for any prompt source (`AGENTS.md`, `roles/`, adapter notes, profiles, any `SKILL.md`, standards, `orchestration/standards.md`, `orchestration/sprint.md`). Prompts are product, not docs.
 5. **README and wiki.** A change to a command, flag, role, workflow, skill, mode, install step, supported tool or limit updates `README.md` (and `docs/cli.md` for commands and flags) in the same change. For the wiki:
    - Clone `https://github.com/Co0pDawg/Orc-istration.wiki.git` into the scratchpad.
    - Before any commit, copy this repo's local identity into the clone: set its `user.name` and `user.email` to the values `git config --local user.name` and `git config --local user.email` print here. The global identity must never reach this public wiki; if this repo has no local identity, stop and ask.
