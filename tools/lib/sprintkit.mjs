@@ -16,16 +16,18 @@ export const KIT_SKILLS = ['skills/sprint/SKILL.md'];
 // orchestrated task, and a borrowed machine has none.
 export const KIT_NOTE = '- **Board:** none on this machine (sprint kit). Skip every board write, the board-reminder markers and the cost log; sprint mode waives them anyway.';
 
-// Permission presets: build, test, run and package-restore commands per stack, plus read-only git. A command with
-// arguments gets the trailing-wildcard form (`Bash(dotnet build *)`, which also matches the bare command); a restore
-// command is exact, so `npm install` never matches `npm install -g <pkg>`. Each rule has a PowerShell twin, because
-// Claude Code on Windows often runs commands through its PowerShell tool. Syntax: https://code.claude.com/docs/en/permissions
+// Permission presets: build, test, run and package-restore commands per stack. A command with arguments gets the
+// trailing-wildcard form (`Bash(dotnet build *)`, which also matches the bare command); a restore command is exact, so
+// `npm install` never matches `npm install -g <pkg>`. Each rule has a PowerShell twin, because Claude Code on Windows
+// often runs commands through its PowerShell tool. No git rules: Claude Code already runs read-only git without a
+// prompt, so a `git log *` rule would only add the forms that write (`git log --output=<file>`). No pip rule: outside a
+// virtual environment `pip install -r requirements.txt` installs into the global Python. Syntax:
+// https://code.claude.com/docs/en/permissions
 const STACKS = {
   dotnet: { prefix: ['dotnet build', 'dotnet test', 'dotnet run'], exact: ['dotnet restore'] },
   node: { prefix: ['npm test', 'npm run', 'npm start'], exact: ['npm install', 'npm ci'] },
-  python: { prefix: ['pytest', 'python -m pytest', 'python -m unittest'], exact: ['pip install -r requirements.txt', 'python -m pip install -r requirements.txt'] },
+  python: { prefix: ['pytest', 'python -m pytest', 'python -m unittest'], exact: [] },
 };
-const GIT_READ = ['git status', 'git diff', 'git log', 'git show'];
 
 export const KNOWN_STACKS = Object.keys(STACKS);
 
@@ -38,7 +40,6 @@ export function presetRules(stacks) {
     for (const c of STACKS[s].prefix) add(c, true);
     for (const c of STACKS[s].exact) add(c, false);
   }
-  if (stacks.length) for (const c of GIT_READ) add(c, true);
   return [...new Set(rules)];
 }
 
@@ -66,6 +67,13 @@ export function kitHookExample(repo) {
 }
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// True when a PreToolUse hook already runs tools/guard.ps1 or tools/guard.mjs.
+export function hasGuard(settings) {
+  const groups = settings?.hooks?.PreToolUse;
+  if (!Array.isArray(groups)) return false;
+  return groups.some((g) => Array.isArray(g?.hooks) && g.hooks.some((h) => typeof h?.command === 'string' && /[\\/]tools[\\/]guard\.(?:ps1|mjs)\b/.test(h.command)));
+}
 const getPath = (obj, dotted) => dotted.split('.').reduce((o, k) => (isObject(o) && Object.hasOwn(o, k) ? o[k] : undefined), obj);
 
 // Plans the kit's additions to a parsed settings.json. Adds only what is missing; never removes, reorders or rewrites.
@@ -74,7 +82,9 @@ export function planKitSettings(settings, { example, allow, home }) {
   if (getPath(settings, 'permissions') !== undefined && !isObject(settings.permissions)) throw new Error('permissions in settings.json is not an object');
   if (getPath(settings, 'permissions.allow') !== undefined && !Array.isArray(settings.permissions.allow)) throw new Error('permissions.allow in settings.json is not an array');
   if (getPath(settings, 'hooks') !== undefined && !isObject(settings.hooks)) throw new Error('hooks in settings.json is not an object');
-  const { merged, added } = mergeHooks(settings, example, home);
+  // A git guard already wired (the PowerShell or the Node variant, from any path) is not doubled, and the kit records
+  // nothing for it, so uninstall leaves it.
+  const { merged, added } = mergeHooks(settings, hasGuard(settings) ? {} : example, home);
   const addedAllow = [];
   const have = new Set(Array.isArray(settings.permissions?.allow) ? settings.permissions.allow : []);
   for (const rule of allow) {

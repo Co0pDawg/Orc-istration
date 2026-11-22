@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { main } from '../tools/orc.mjs';
-import { presetRules, detectStacks, removeKitSettings, planKitSettings, kitHookExample, KIT_NOTE } from '../tools/lib/sprintkit.mjs';
+import { presetRules, detectStacks, removeKitSettings, planKitSettings, kitHookExample, hasGuard, KIT_NOTE } from '../tools/lib/sprintkit.mjs';
+import { normalizeEol } from '../tools/lib/frontmatter.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tempDir = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `orc-${name}-`));
@@ -36,14 +37,19 @@ const settingsOf = (home) => JSON.parse(fs.readFileSync(path.join(home, '.claude
 const manifestOf = (home) => JSON.parse(fs.readFileSync(path.join(home, '.claude', '.orc-manifest.claude-code.json'), 'utf8'));
 const guardCommand = (home) => `node "${home.replace(/\\/g, '/')}/.claude/tools/guard.mjs"`;
 
-// A populated home in the real shape of settings.example.json: its keys and hooks, plus two allow entries of the
-// owner's (one is also in the dotnet preset), and a hand-written CLAUDE.md.
-function populatedHome() {
+// Every file under dir with its bytes, to show a refused run left the home exactly as it was.
+const snapshot = (dir) => Object.fromEntries(tree(dir).map((f) => [f, fs.readFileSync(path.join(dir, f)).toString('base64')]));
+
+// A populated home in the real shape of settings.example.json: its keys and hooks (with its PowerShell git guard, or
+// without it when guard is false), plus two allow entries of the owner's (one is also in the dotnet preset), and a
+// hand-written CLAUDE.md.
+function populatedHome({ guard = true } = {}) {
   const home = tempDir('kit-populated');
   const claude = path.join(home, '.claude');
   fs.mkdirSync(claude);
   const settings = JSON.parse(fs.readFileSync(path.join(REPO, 'settings.example.json'), 'utf8'));
-  settings.permissions.allow = ['Read(./docs/**)', 'Bash(git status *)'];
+  settings.permissions.allow = ['Read(./docs/**)', 'Bash(dotnet build *)'];
+  if (!guard) settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter((g) => !g.hooks.some((h) => /guard\.ps1/.test(h.command)));
   const text = `${JSON.stringify(settings, null, 2)}\n`;
   fs.writeFileSync(path.join(claude, 'settings.json'), text);
   fs.writeFileSync(path.join(claude, 'CLAUDE.md'), '# My own rules\n\nBe brief.\n');
@@ -82,7 +88,7 @@ test('sprint kit: a home with no .claude gets the roster, the skill, the guard a
   assert.deepEqual(fs.readdirSync(home), [], 'nothing left behind');
 });
 
-test('sprint kit: an existing settings.json and CLAUDE.md are merged and backed up, re-apply is idempotent, uninstall restores both', async () => {
+test('sprint kit: an existing settings.json (with the PowerShell guard) and CLAUDE.md are merged and backed up, re-apply is idempotent, uninstall restores both', async () => {
   const { home, claude, settings, text } = populatedHome();
   const originalRules = fs.readFileSync(path.join(claude, 'CLAUDE.md'), 'utf8');
   const dry = await kit(home, '--stack', 'dotnet');
@@ -96,13 +102,15 @@ test('sprint kit: an existing settings.json and CLAUDE.md are merged and backed 
   // Every existing key, hook and entry survives in place; the kit only appends.
   assert.deepEqual(Object.keys(after), Object.keys(settings));
   for (const k of Object.keys(settings).filter((x) => !['hooks', 'permissions'].includes(x))) assert.deepEqual(after[k], settings[k], k);
-  for (const [event, groups] of Object.entries(settings.hooks)) assert.deepEqual(after.hooks[event].slice(0, groups.length), groups, event);
-  assert.deepEqual(after.hooks.PreToolUse.at(-1).hooks[0].command, guardCommand(home));
+  // The owner's PowerShell guard is already wired: no second (Node) guard, and nothing recorded for it.
+  assert.deepEqual(after.hooks, settings.hooks, 'hooks untouched');
+  assert.deepEqual(manifestOf(home).kit.settings.hooks, []);
+  assert.doesNotMatch(r.out, /added to settings\.json PreToolUse/);
   assert.deepEqual(after.permissions.deny, settings.permissions.deny);
-  assert.deepEqual(after.permissions.allow.slice(0, 2), ['Read(./docs/**)', 'Bash(git status *)']);
-  assert.equal(after.permissions.allow.filter((a) => a === 'Bash(git status *)').length, 1, 'no duplicate of the owner\'s entry');
+  assert.deepEqual(after.permissions.allow.slice(0, 2), ['Read(./docs/**)', 'Bash(dotnet build *)']);
+  assert.equal(after.permissions.allow.filter((a) => a === 'Bash(dotnet build *)').length, 1, 'no duplicate of the owner\'s entry');
   for (const rule of presetRules(['dotnet'])) assert.ok(after.permissions.allow.includes(rule), rule);
-  assert.ok(!manifestOf(home).kit.settings.allow.includes('Bash(git status *)'), 'an entry the owner had is not recorded as the kit\'s');
+  assert.ok(!manifestOf(home).kit.settings.allow.includes('Bash(dotnet build *)'), 'an entry the owner had is not recorded as the kit\'s');
   assert.equal(fs.readFileSync(path.join(claude, 'settings.json.orc-backup-20261121-093000'), 'utf8'), text, 'the backup holds the original bytes');
   assert.equal(fs.readFileSync(path.join(claude, 'CLAUDE.md.orc-backup-20261121-093000'), 'utf8'), originalRules);
   assert.match(fs.readFileSync(path.join(claude, 'CLAUDE.md'), 'utf8'), /generated by orc\.mjs/);
@@ -147,9 +155,10 @@ test('sprint kit: an invalid settings.json refuses the install and writes nothin
 });
 
 test('sprint kit: changes made after install survive uninstall; an edited rulebook is kept and not restored over', async () => {
-  const { home, claude, text } = populatedHome();
+  const { home, claude, text } = populatedHome({ guard: false });
   assert.equal((await kit(home, '--stack', 'python', '--apply')).code, 0);
   const s = settingsOf(home);
+  assert.equal(s.hooks.PreToolUse.at(-1).hooks[0].command, guardCommand(home), 'with no guard wired, the kit adds the Node one');
   s.permissions.allow.push('Bash(make *)');
   fs.writeFileSync(path.join(claude, 'settings.json'), `${JSON.stringify(s, null, 2)}\n`);
   fs.appendFileSync(path.join(claude, 'CLAUDE.md'), 'a note from the sprint\n');
@@ -207,11 +216,39 @@ test('sprint kit: option gates', async () => {
   assert.deepEqual(fs.readdirSync(home), []);
 });
 
+test('sprint kit: refused over a full install (dry run too), home byte-identical; a plain install over a kit stays a kit', async () => {
+  const home = tempDir('kit-over-full');
+  assert.equal((await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board'])).code, 0);
+  assert.equal((await run(['hooks', '--home', home, '--apply'])).code, 0);
+  const before = snapshot(home);
+  for (const extra of [[], ['--apply']]) {
+    const r = await kit(home, '--stack', 'node', ...extra);
+    assert.equal(r.code, 1, extra.join(' ') || 'dry run');
+    assert.match(r.err, /refused: .*\.orc-manifest\.claude-code\.json records a full orc install, not a sprint kit; nothing written\. The full install already has the roster agents/);
+    assert.match(r.err, /For \/sprint, copy .*skills\/sprint to .*skills[\\/]sprint by hand; to switch to a sprint kit, run uninstall/);
+    assert.deepEqual(snapshot(home), before, 'nothing written');
+  }
+  // The reverse: a plain install over a kit reuses the recorded kit, so it neither deletes nor rewires anything.
+  const k = tempDir('full-over-kit');
+  assert.equal((await kit(k, '--stack', 'node', '--apply')).code, 0);
+  const kitBefore = snapshot(k);
+  const dry = await run(['install', '--tool', 'claude-code', '--home', k]);
+  assert.equal(dry.code, 0, dry.err);
+  assert.match(dry.out, /using the options recorded at install: sprint kit; stack node/);
+  assert.doesNotMatch(dry.out, /would (delete|create|replace|add)/);
+  const ap = await run(['install', '--tool', 'claude-code', '--home', k, '--apply']);
+  assert.equal(ap.code, 0, ap.err);
+  const after = snapshot(k);
+  const mf = '.claude/.orc-manifest.claude-code.json';
+  assert.deepEqual({ ...after, [mf]: null }, { ...kitBefore, [mf]: null }, 'only the manifest timestamp changes');
+});
+
 test('sprint kit: the onboarding doc and the starter prompt name the same command and each other', () => {
-  const doc = fs.readFileSync(path.join(REPO, 'docs', 'interview-machine.md'), 'utf8');
-  const prompts = fs.readFileSync(path.join(REPO, 'docs', 'example-prompts.md'), 'utf8');
-  for (const text of [doc, prompts]) assert.match(text, /node tools\/orc\.mjs install --tool claude-code --sprint-kit --stack \S+ --home/);
-  assert.match(doc, /node tools\/orc\.mjs uninstall --tool claude-code --home "<home>" --apply/);
+  // Through normalizeEol: a Windows checkout (text=auto) has CRLF line endings.
+  const doc = normalizeEol(fs.readFileSync(path.join(REPO, 'docs', 'interview-machine.md'), 'utf8'));
+  const prompts = normalizeEol(fs.readFileSync(path.join(REPO, 'docs', 'example-prompts.md'), 'utf8'));
+  for (const text of [doc, prompts]) assert.match(text, /node "<clone>\/tools\/orc\.mjs" install --tool claude-code --sprint-kit (--stack \S+ )?--home "<home>"/);
+  assert.match(doc, /node "<clone>\/tools\/orc\.mjs" uninstall --tool claude-code --home "<home>" --apply/);
   assert.match(doc, /\(example-prompts\.md#starter-prompt-interview-machine\)/);
   assert.match(prompts, /## Starter prompt: interview machine\n[\s\S]*follow `docs\/interview-machine\.md`/);
   for (const heading of ['Prerequisites', 'Dry run', 'Apply', 'Verify', 'Start the sprint', 'Clean up afterwards', 'The no-Node path']) assert.match(doc, new RegExp(`^## (\\d\\. )?${heading}`, 'm'), heading);
@@ -225,13 +262,23 @@ test('sprint kit: presets hold no delete, push or global install; removal takes 
       assert.match(r, /^(Bash|PowerShell)\([^()]+\)$/, r);
       assert.doesNotMatch(r, /\b(rm|del|push|reset|clean|-g|--global|uninstall)\b/, r);
       if (/install/.test(r)) assert.doesNotMatch(r, /\*/, `${r}: a restore rule is exact`);
+      // Read-only git already runs without a prompt; a git rule would only approve the forms that write.
+      assert.doesNotMatch(r, /^(Bash|PowerShell)\(git\b/, r);
+      assert.doesNotMatch(r, /\bpip\b/, `${r}: pip outside a venv installs globally`);
     }
   }
-  assert.deepEqual(presetRules([]), [], 'no stack, no preset (not even git)');
+  assert.deepEqual(presetRules([]), [], 'no stack, no preset');
   const home = tempDir('kit-unit');
   const mine = { permissions: { allow: ['Bash(git log *)'] }, hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'echo mine' }] }] } };
   const plan = planKitSettings(mine, { example: kitHookExample(REPO), allow: presetRules(['node']), home });
   assert.ok(!plan.allow.includes('Bash(git log *)'));
   assert.deepEqual(plan.containers, [], 'every container already existed');
   assert.deepEqual(removeKitSettings(plan.merged, plan), mine);
+  // Either guard variant, at any path, counts as already wired.
+  for (const command of ['node "D:/elsewhere/.claude/tools/guard.mjs"', 'powershell -NoProfile -File "C:\\x\\.claude\\tools\\guard.ps1"']) {
+    const s = { hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command }] }] } };
+    assert.ok(hasGuard(s), command);
+    assert.deepEqual(planKitSettings(s, { example: kitHookExample(REPO), allow: [], home }).hooks, [], command);
+  }
+  assert.ok(!hasGuard(mine));
 });

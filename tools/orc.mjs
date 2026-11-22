@@ -572,6 +572,14 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     if (artifactRefused(chosen.board, toolId)) return fail(ARTIFACT_ONLY_CLAUDE);
     const kit = chosen.sprintKit;
     if (kit && (opt.board || opt['board-repo'])) return fail('the sprint kit installs no board: drop --board and --board-repo');
+    // A kit over a full install would delete that install's hook scripts while its settings.json still runs them, and
+    // its uninstall would remove the whole earlier install. (The reverse cannot happen: a recorded kit stays a kit.)
+    if (kit && early.manifest && early.manifest.options?.sprintKit !== true) {
+      return fail(
+        `refused: ${early.file} records a full orc install, not a sprint kit; nothing written. The full install already has the roster agents and the hook scripts (hooks --node --apply wires the guard). ` +
+          `For /sprint, copy ${SETUP}/skills/sprint to ${path.join(home, '.claude', 'skills', 'sprint')} by hand; to switch to a sprint kit, run uninstall --tool claude-code --home <dir> --apply first.`,
+      );
+    }
     const extraNotes = installNotes(chosen, toolId);
     if (!chosen.board && !kit) io.err('WARN the board address is not set: pass --board <address> (with --board-repo <path> for a local board) so the rulebook names it');
     let stacks = chosen.stacks ?? [];

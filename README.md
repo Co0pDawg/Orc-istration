@@ -101,7 +101,7 @@ Details per tool: [Supported Tools](https://github.com/Co0pDawg/Orc-istration/wi
 
 Requires Node 22 or later. No dependencies.
 
-**Claude Code.** Either check this repo out as `~/.claude` (see "Restore on a new machine"), or develop in a separate clone and install from it with `node tools/orc.mjs install --tool claude-code --home <your home>` (a dry run; add `--apply`), as [CONTRIBUTING.md](CONTRIBUTING.md#development-clone-vs-the-live-setup) describes. On a borrowed machine for a timed build, install the sprint kit instead: `node tools/orc.mjs install --tool claude-code --sprint-kit --stack dotnet|node|python --home <your home>` (a dry run; add `--apply`), as [`docs/interview-machine.md`](docs/interview-machine.md) describes. After editing `AGENTS.md`, `roles/` or `adapters/`:
+**Claude Code.** Either check this repo out as `~/.claude` (see "Restore on a new machine"), or develop in a separate clone and install from it with `node tools/orc.mjs install --tool claude-code --home <your home>` (a dry run; add `--apply`), as [CONTRIBUTING.md](CONTRIBUTING.md#development-clone-vs-the-live-setup) describes. On a borrowed machine for a timed build, install the sprint kit instead: `node tools/orc.mjs install --tool claude-code --sprint-kit --stack dotnet|node|python --home <your home>` (a dry run; add `--apply`; the preset pre-approves the stack's build, test, run and package-restore commands, and no git commands), as [`docs/interview-machine.md`](docs/interview-machine.md) describes. After editing `AGENTS.md`, `roles/` or `adapters/`:
 
 ```
 node tools/orc.mjs sync      # regenerates CLAUDE.md, agents/*.md and the generated commands/*.md

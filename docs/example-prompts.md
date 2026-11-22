@@ -20,7 +20,7 @@ What the orchestrator asked before speccing (one several-question prompt): which
 
 ## Starter prompt: interview machine
 
-The prompt to paste into Claude Code on a machine that has only an editor and the Claude app. Claude follows [`interview-machine.md`](interview-machine.md): it checks the prerequisites, clones the repo, runs `node tools/orc.mjs install --tool claude-code --sprint-kit --stack <stack> --home <home>` as a dry run and then with `--apply`, and verifies with `status`. Without Node it takes the doc's no-Node path instead.
+The prompt to paste into Claude Code on a machine that has only an editor and the Claude app. Claude follows [`interview-machine.md`](interview-machine.md): it checks the prerequisites, clones the repo to `<clone>`, runs `node "<clone>/tools/orc.mjs" install --tool claude-code --sprint-kit --home "<home>"` from the exercise folder (so it detects the stack; or with `--stack`) as a dry run and then with `--apply`, and verifies with `status`. Without Node it takes the doc's no-Node path instead.
 
 > Set up from https://github.com/Co0pDawg/Orc-istration: clone it outside `~/.claude`, follow `docs/interview-machine.md`, and tell me in one line when the sprint kit is installed and verified. Back up anything you replace and do not touch anything outside my user profile.
 >
