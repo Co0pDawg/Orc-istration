@@ -13,7 +13,7 @@ Sprint mode overrides the lite modes (`Orc orchestration: lite`, `Orc review: li
 ## Start (minute 0 to 5)
 
 1. Note the start time and the deadline (12-hour clock). Every status line to the user carries the elapsed time, for example `[12/45 min]`.
-2. Restate the goal in one sentence and the demo you will show at the end. Ask at most one question, and only if the goal is ambiguous; otherwise pick sensible defaults and say which.
+2. Restate the goal in one sentence and the demo you will show at the end. Ask at most one question, and only if the goal is ambiguous; otherwise pick sensible defaults and say which. The sprint delivers a package, not only a build: the working app plus whatever polish the clock allows (see "Leftover time" below).
 3. Write the plan as at most 3 vertical slices, each runnable on its own. Slice 1 is the thinnest end-to-end path (a walking skeleton). Show it as the visible checklist.
 4. Create a branch (never `main` or `develop`).
 
@@ -22,10 +22,29 @@ Sprint mode overrides the lite modes (`Orc orchestration: lite`, `Orc review: li
 | By | State |
 |---|---|
 | ~15 min | Slice 1 runs end to end and is committed |
-| T-10 | Feature freeze: no new slices, only fixes to what exists |
+| Core done | The last slice is committed: note the time ("core complete at 12 min") and start the polish ladder |
+| T-10 | Feature freeze: no new slices or rungs, only fixes to what exists |
 | T-5 | Final diff read done, app run once, committed |
 
-If a slice is not done at its mark, cut its scope rather than move the mark. At T-10, an unfinished slice is reverted or left behind a clear "not done" note, never shipped half-wired.
+If a slice is not done at its mark, cut its scope rather than move the mark. At T-10, an unfinished slice or rung is reverted or left behind a clear "not done" note, never shipped half-wired.
+
+## Leftover time: the polish ladder
+
+Finishing the slices early is not the end of the sprint: the clock is the budget, and the time left goes into making the work presentable. Climb the ladder in order, one commit per rung with a subject naming it, so stopping at any rung leaves a demoable, committed state. Skip a rung that does not fit the project.
+
+1. **Review fixes.** Fix the refuters' logged should-fixes, each with a test.
+2. **Edge-case tests.** The bad inputs and boundaries the refuters probed by hand become tests.
+3. **API and usage docs.** The stack's usual form: OpenAPI or Swagger for a web API, `--help` text for a command-line tool, a `.http` file or a curl demo script.
+4. **A small UI or mockup**, when it shows the work better: one page served by the app that drives the main flow. Say in the report that it goes beyond the brief.
+5. **README.** What it does, how to run and test it, the design decisions and trade-offs, and what would come next.
+6. **Sprint report** (`SPRINT.md` or the README's last section): a timeline from `git log` (slice and rung commits with times), when the core was complete, the tests, the refuters' verdicts, what was cut, and a plain statement of how AI was used and who drove.
+
+Rules for the ladder:
+
+- Polish never changes behaviour the brief defines unless a test covers the change.
+- Each rung gets the same treatment as a slice: a commit, and a refuter when it changes code (rungs 1 to 4). Docs-only rungs get the orchestrator's read.
+- Builders for separate rungs (tests, a UI page, docs) own separate files, so this is where parallel builders in their own worktrees can pay off.
+- The freeze and the T-5 mark still hold. Stop climbing at T-10.
 
 ## The loop, shrunk
 
@@ -33,7 +52,7 @@ If a slice is not done at its mark, cut its scope rather than move the mark. At 
 - **Builder.** One builder for the sprint, resumed for each slice so it keeps context (the tool notes say how to resume). Brief: Goal, Scope, May change, Must verify, Do not. Skip Known/Data/Board unless they matter. Builders run the smoke test for their slice only.
 - **One writer at a time.** The orchestrator edits only while no builder is running.
 - **Pipelining.** While the builder works on slice N+1, a refuter reviews slice N statically from its commit (`git show <slice-N sha>`), never from the working tree the builder is editing. Its targeted test runs after the builder stops, or in a checkout the orchestrator makes with `git worktree add <path> <sha>` and passes to the refuter.
-- **Refuter.** Mid tier (in Claude Code, `model: "sonnet"`), static read plus the slice's targeted test, report capped at 15 lines, must-fixes only (anything that breaks the demo, loses data, or is a security hole). Should-fixes and nits are logged, not actioned.
+- **Refuter.** Mid tier (in Claude Code, `model: "sonnet"`), static read plus the slice's targeted test, report capped at 15 lines, must-fixes only (anything that breaks the demo, loses data, or is a security hole). Should-fixes and nits are logged, not actioned during the slices; they are the first rung of the polish ladder.
 - **Rework.** At most one REWORK round per slice. A REWORK for slice N is queued and sent to the builder when it finishes N+1. Anything left after that round the orchestrator fixes inline (with no builder running) or cuts.
 - **Parallel builders.** Only with clean file ownership and their own worktrees (the tool notes cover worktree isolation). Usually not worth the setup inside 45 minutes.
 - **Tests.** Smoke and happy-path tests that prove the demo. No full-suite runs until the end, and then only if the suite takes under 2 minutes.
@@ -66,7 +85,9 @@ Each of these is a standing rule that sprint mode turns off for this task only:
 
 ## Finish (T-5)
 
-Report in under 10 lines: what works (the demo steps), what was cut, known defects (the logged should-fixes), the branch and the last commit, and total elapsed time.
+The sprint ends at T-5, not when the slices land; a sprint that is recorded somewhere (such as a practice log) is recorded as finished then.
+
+Report in under 10 lines: what works (the demo steps), the polish rungs done, what was cut, known defects (the should-fixes not fixed), the branch and the last commit, when the core was complete and the total elapsed time. Point to the package: the README, the sprint report and any UI.
 
 ## Before the clock starts (optional prep)
 
