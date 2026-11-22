@@ -54,7 +54,10 @@ It writes nothing. Read the output:
 
 - `sprint kit: stack ...` names the stack it found; `no stack detected` means no preset (pass `--stack`).
 - `would create` / `would replace ...` for each file; `would replace (hand-written; backed up, uninstall restores it)` marks a file of the owner's, such as an existing `CLAUDE.md`.
-- `would add to settings.json ...` for the guard hook and each preset entry; existing entries are kept, and a guard the owner already has is not added twice.
+- `would unchanged: ... (already there and not installed by orc ...)` marks an identical copy the owner already has (such as a hand-copied `SKILL.md`); it stays theirs, and uninstall leaves it.
+- `would keep (hand-copied hook script, differs; --force replaces it, with a backup)` means the owner has an older `guard.mjs`. It is kept, so `status` will say `differs` for it; run the install with `--force` added to replace it (a backup is kept and uninstall restores it).
+- `would add to settings.json ...` for the guard hook and each preset entry; existing entries are kept, and a working guard the owner already has is not added twice.
+- `WARN ... which is not on disk, so it guards nothing` names an old guard hook whose script is gone; the kit adds its own guard and leaves that entry alone. Mention it to the user.
 - `refused: ... settings.json is not valid JSON` means the owner's `settings.json` is broken. Stop and tell the user; do not edit it.
 - `refused: ... records a full orc install, not a sprint kit` means this machine already has Orc-istration installed. Stop and tell the user: the roster is already there, and the message says how to add `/sprint`.
 - `--apply would refuse` means a file installed earlier by orc was edited by hand. Stop and tell the user.
@@ -75,7 +78,7 @@ Each replaced file is first copied to `<file>.orc-backup-<time>`, and `settings.
 node "<clone>/tools/orc.mjs" status --tool claude-code --home "<home>"
 ```
 
-On a clean machine it ends with `status claude-code: all same` and exits 0, including the line `same: ... settings.json (sprint kit entries present)`. An `extra: ... (not installed by orc)` line is an agent of the owner's own in `<home>/.claude/agents`: that is fine, and it makes the last line read `out of date` and the exit code 1. Only a `missing`, `differs`, `edited since install`, `stale` or `missing in settings.json` line means the install is not right; run step 4 again, and tell the user if it persists.
+On a clean machine it ends with `status claude-code: all same` and exits 0, including the line `same: ... settings.json (sprint kit entries present)`. An `extra: ... (not installed by orc)` line is an agent of the owner's own in `<home>/.claude/agents`: that is fine, and it makes the last line read `out of date` and the exit code 1. A `differs` line for `tools/guard.mjs` after a `kept (hand-copied hook script, differs ...)` line in step 4 is the owner's older copy: fine, or run step 4 with `--force` to replace it with a backup. Otherwise a `missing`, `differs`, `edited since install`, `stale` or `missing in settings.json` line means the install is not right; run step 4 again, and tell the user if it persists.
 
 Then check that Claude Code sees the kit. A session that started before the install may not list the new agents and skill, so ask the user to open a fresh Claude Code session in the exercise folder. In it, confirm that:
 
@@ -97,9 +100,10 @@ node "<clone>/tools/orc.mjs" uninstall --tool claude-code --home "<home>" --appl
 ```
 
 - It deletes the files the kit installed, removes the kit's `settings.json` entries (the owner's own entries, and any added since, stay), and moves each backed-up file back into place, such as the owner's `CLAUDE.md`. When `settings.json` has not changed since the install, its backup is moved back byte for byte, so no backup is left behind.
-- When the owner's `settings.json` changed during the sprint, only the kit's entries are removed and its backup stays, named in the output: show it to the user, who can delete it once satisfied.
+- When the owner's `settings.json` changed during the sprint, only the kit's entries are removed and its backup stays: show it to the user, who can delete it once satisfied.
 - A kit file edited during the sprint is kept and its original is not restored over it; the output names both. `uninstall --apply --force` deletes the edited copy after a backup and then restores the original.
-- Any other `.orc-backup-` file left in `<home>/.claude` after the uninstall (for example from a re-install after an update) is a copy of a kit file; delete it with the user's yes.
+- A `WARN` line means something could not be undone as planned (a backup gone, a file in the way); show it to the user.
+- The output ends with a `left: <path> (<why>)` line for every `.orc-backup-` file it leaves. Delete only the ones it calls a copy of a kit file (`safe to delete`), with the user's yes. Show every other one to the user as possibly theirs (`it may be the owner's`, the original of a kept file, the settings backup) and leave it unless they say otherwise.
 
 Then delete `<clone>`, from a shell whose folder is not inside it. The exercise folder and its commits belong to the interviewer; leave them.
 

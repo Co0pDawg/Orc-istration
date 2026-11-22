@@ -21,7 +21,7 @@ Edit the sources. Never hand-edit a generated file; regenerate it.
 | `review/` | The review panel: procedure, explorer contract, lane checklists, calibration, regression corpus and metrics formats |
 | `workflows/*.md`, `templates/` | The portable workflows (`/start`, `/draft-pr` and others) and the target-repo rulebook template |
 | `orchestration/standards.md`, `orchestration/sprint.md` | The standards setup procedure and sprint mode |
-| `skills/*/SKILL.md` | Claude Code skills (copied into `~/.claude/skills` by hand) |
+| `skills/*/SKILL.md` | Claude Code skills (copied into `~/.claude/skills` by hand; `install --sprint-kit` copies `skills/sprint`) |
 | `commands/*.md` (hand-written ones) | Claude Code commands for the workflows; the review-panel commands are generated (below) |
 
 | Generated (do not edit) | Written by |

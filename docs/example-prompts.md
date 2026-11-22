@@ -26,4 +26,4 @@ The prompt to paste into Claude Code on a machine that has only an editor and th
 >
 > Then start a 45-minute sprint in `<path to the exercise folder>`. The task: `<paste the interviewer's task>`.
 
-Replace the two placeholders. Give the minutes if the interviewer sets a different clock ("a 60-minute sprint"). If Claude asks for a fresh session after the install (step 5 of the doc), open one in the exercise folder and paste the second paragraph there. Afterwards, ask Claude to clean up as the doc's last step says: `uninstall --apply`, then delete the clone.
+Replace the two placeholders. Give the minutes if the interviewer sets a different clock ("a 60-minute sprint"). If Claude asks for a fresh session after the install (step 5 of the doc), open one in the exercise folder and paste the second paragraph there. Afterwards, ask Claude to clean up as the doc's last step says: `uninstall --apply` (it deletes only the backups the output names as kit copies and shows you any other), then delete the clone.
