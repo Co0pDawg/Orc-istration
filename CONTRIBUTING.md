@@ -22,6 +22,7 @@ Edit the sources. Never hand-edit a generated file; regenerate it.
 | `workflows/*.md`, `templates/` | The portable workflows (`/start`, `/draft-pr` and others) and the target-repo rulebook template |
 | `orchestration/standards.md`, `orchestration/sprint.md` | The standards setup procedure and sprint mode |
 | `skills/*/SKILL.md` | Claude Code skills (copied into `~/.claude/skills` by hand) |
+| `.claude/skills/*/SKILL.md` | Project skills for developing this repo, such as `ship-prompts` (loaded only in a session opened here; `.claude/settings.json` stays untracked) |
 | `commands/*.md` (hand-written ones) | Claude Code commands for the workflows; the review-panel commands are generated (below) |
 
 | Generated (do not edit) | Written by |
@@ -42,6 +43,8 @@ git diff tests/golden        # review: is every change one you meant?
 npm test
 node tools/orc.mjs check     # watch the antigravity headroom line
 ```
+
+In Claude Code, the `ship-prompts` project skill walks this loop plus the tracked-path check, the README and wiki co-change and the live install.
 
 `node tools/orc.mjs help` lists every command; `help <command>` lists its options. The full reference is `docs/cli.md`.
 
