@@ -307,7 +307,10 @@ test('sprint kit: presets hold no delete, push or global install; removal takes 
     'ls /x/tools/guard.mjs', 'cat C:\\x\\.claude\\tools\\guard.ps1', `false && ${guard}`, 'node "D:/x/.claude/tools/myguard.mjs"', 'echo guard',
     'echo C:/nodejs/node.exe "C:/x/.claude/tools/guard.mjs"', 'pwsh -c echo C:/x/tools/guard.ps1', 'node -e "" C:/x/tools/guard.mjs',
     'C:/Program Files/nodejs/node.exe "C:/x/.claude/tools/guard.mjs"', 'powershell -Command "& C:/x/tools/guard.ps1"', 'node --eval=1 C:/x/tools/guard.mjs',
-    'node C:/x/tools/guard.ps1', 'pwsh -File C:/x/tools/guard.mjs', `node ; ${guard}`]) {
+    'node C:/x/tools/guard.ps1', 'pwsh -File C:/x/tools/guard.mjs', `node ; ${guard}`,
+    // Anything after the script could discard the guard's printed denial.
+    `${guard} > /dev/null 2>&1`, `${guard}>/dev/null`, `${guard} | cat`, `${guard} &`, `${guard} ; exit 0`, `${guard}\nexit 0`, `${guard} extra`,
+    'pwsh -NoProfile -File C:/x/.claude/tools/guard.ps1 | out-null', 'pwsh -File "C:/x/.claude/tools/guard.ps1" ; exit 0', 'pwsh -File']) {
     assert.ok(!hasGuard(wired(command), there), command);
   }
   assert.ok(!hasGuard(wired(guard, 'Read'), there), 'a matcher that never fires on Bash');
@@ -462,6 +465,11 @@ test('sprint kit: uninstall refuses a tampered kit record and writes nothing', a
     (k) => { k.settings.hooks = { PreToolUse: 'x' }; },
     (k) => { k.settings.containers = ['evil']; },
     (k, home) => { k.settings.backup = path.join(home, '.claude', 'settings.json.orc-backup-x'); },
+    (k) => { k.copies = ['../x']; },
+    (k, home) => { k.copies = [path.join(home, 'x')]; },
+    (k) => { k.copies = ['.claude/agents/../../x']; },
+    (k) => { k.copies = '.claude/CLAUDE.md.orc-backup-x'; },
+    (k) => { k.copies = [7]; },
   ];
   for (const [i, tamper] of tampers.entries()) {
     const { home } = populatedHome({ guard: false });
@@ -474,6 +482,7 @@ test('sprint kit: uninstall refuses a tampered kit record and writes nothing', a
     const un = await uninstall(home, '--apply');
     assert.equal(un.code, 1, `tamper ${i}`);
     assert.match(un.err, /refused: /, `tamper ${i}`);
+    if (!Array.isArray(mf.kit.copies ?? []) || (mf.kit.copies ?? []).some((v) => typeof v !== 'string')) assert.match(un.err, /kit\.copies is not a list of paths/, `tamper ${i}`);
     assert.deepEqual(snapshot(home), before, `tamper ${i}: nothing written`);
   }
 });
@@ -497,8 +506,10 @@ test('sprint kit: status reports missing settings entries and unreadable setting
   assert.equal(bad.code, 1);
   assert.match(bad.out, /missing in settings\.json: unreadable/);
   fs.writeFileSync(path.join(claude, 'settings.json'), good);
-  const fix = await kit(home, '--stack', 'dotnet,node', '--apply');
+  // A re-apply naming only the latest stack puts the earlier stack's rule back too, as status asked.
+  const fix = await kit(home, '--stack', 'node', '--apply');
   assert.equal(fix.code, 0, fix.err);
+  assert.match(fix.out, /added to settings\.json permissions\.allow: Bash\(dotnet test \*\)/);
   assert.equal((await status(home)).code, 0);
   assert.equal(tree(claude).filter((f) => f.startsWith('settings.json.orc-backup-')).length, 1, 'still the one backup from before the first change');
 });
@@ -559,4 +570,19 @@ test('sprint kit: uninstall dry run, a gone backup, a gone settings.json and a r
   const unD = await uninstall(d.home, '--apply');
   assert.equal(unD.code, 0, unD.err);
   assert.match(unD.out, /^left: .*AGENTS\.md\.orc-backup-20200101-000000 \(not made by this kit \(it may be the owner's\); left alone\)/m);
+});
+
+test('sprint kit: an uninstall that stops after the settings.json step is finished by a rerun, with nothing redone', async () => {
+  const { home, claude } = populatedHome({ guard: false });
+  const start = snapshot(home);
+  assert.equal((await kit(home, '--stack', 'node', '--apply')).code, 0);
+  // Stop at the first file delete, which comes after the settings.json step.
+  const io = { out: (s) => { if (/^deleted: /.test(s)) throw new Error('stopped'); }, err: () => {}, stdin: () => '', now, cwd: () => claude };
+  await assert.rejects(main(['uninstall', '--tool', 'claude-code', '--home', home, '--apply'], io), /stopped/);
+  assert.equal(fs.readFileSync(path.join(claude, 'settings.json'), 'utf8'), start['.claude/settings.json'] && Buffer.from(start['.claude/settings.json'], 'base64').toString('utf8'), 'settings.json is already back');
+  assert.equal(manifestOf(home).kit.settings, undefined, 'the finished settings step is no longer recorded');
+  const again = await uninstall(home, '--apply');
+  assert.equal(again.code, 0, again.err);
+  assert.equal(again.err, '', 'no warning about a settings backup that is already restored');
+  assert.deepEqual(snapshot(home), start);
 });

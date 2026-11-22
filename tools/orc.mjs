@@ -689,7 +689,9 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       const guardExists = (p) => fs.existsSync(p) || samePath(p, kitGuard);
       try {
         const current = readSettings(settingsTarget);
-        settingsPlan = { ...current, ...planKitSettings(current.settings, { example, allow: presetRules(stacks), home, guardExists }) };
+        // Every rule the kit added before (an earlier --stack) is put back when missing, as status asks for it.
+        const kitAllow = [...new Set([...presetRules(stacks), ...(priorKit?.settings?.allow ?? []).filter((r) => typeof r === 'string')])];
+        settingsPlan = { ...current, ...planKitSettings(current.settings, { example, allow: kitAllow, home, guardExists }) };
         for (const s of guardStatus(current.settings, { exists: guardExists }).stale) {
           io.err(`WARN ${settingsTarget}: the PreToolUse hook${s.matcher ? ` [${s.matcher}]` : ''} "${s.command}" runs ${s.script}, which is not on disk, so it guards nothing; left as it is (remove it by hand)`);
         }

@@ -82,7 +82,9 @@ const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 // option, and an option that runs code instead (-e, --eval, -p, --print, -i, --interactive, -c, --check) rejects the
 // command. For pwsh and powershell, the script is the word after -File (or -f), and -Command, -c, -EncodedCommand,
 // -e or -ec before it rejects the command. Any shell operator (| & ; # or a word holding one) before the script
-// rejects it. The script must end in tools/guard.mjs (node) or tools/guard.ps1 (PowerShell), with no suffix.
+// rejects it. The script must end in tools/guard.mjs (node) or tools/guard.ps1 (PowerShell), with no suffix, and be
+// the last word: the guard denies by what it prints, so a redirect, pipe or second command after it (`> /dev/null`,
+// `| cat`, `; exit 0`, a new line) could discard the denial.
 // So `echo node .../guard.mjs`, `pwsh -c echo .../guard.ps1`, `node -e "" .../guard.mjs`, `false && node ...` and
 // `node .../guard.mjs.bak` are all rejected.
 export function guardScript(command) {
@@ -100,6 +102,7 @@ export function guardScript(command) {
         if (/^(?:-e|--eval|-p|--print|-i|--interactive|-c|--check)(?:=|$)/.test(w.text)) return null;
         continue;
       }
+      if (w !== words.at(-1)) return null;
       script = w.text;
       break;
     }
@@ -111,7 +114,8 @@ export function guardScript(command) {
     if (w.quoted) continue;
     if (/^-(?:c|command|e|ec|encodedcommand)$/i.test(w.text)) return null;
     if (/^-(?:f|file)$/i.test(w.text)) {
-      script = words[i + 1]?.text ?? null;
+      if (i + 2 !== words.length) return null;
+      script = words[i + 1].text;
       break;
     }
   }
