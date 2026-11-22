@@ -58,6 +58,7 @@
 /skills/*
 !/skills/repo-standards/
 !/skills/sprint/
+!/skills/orc-permissions/
 
 # Coding standards archive (format in standards/README.md)
 !/standards/

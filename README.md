@@ -143,6 +143,7 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `orchestration/README.md` | Cost-log format and review questions |
 | `standards/`, `orchestration/standards.md`, `skills/repo-standards/` | The coding-standards archive (format in `standards/README.md`), the tool-neutral setup procedure, and its Claude Code skill |
 | `orchestration/sprint.md`, `skills/sprint/` | Sprint mode: a timeboxed build (default 45 minutes) that waives the board, standards setup, review panel and cost log for one task, and its Claude Code skill |
+| `skills/orc-permissions/` | Claude Code skill that adds the allow rules an orchestrated task needs (the orc CLI, tests, scratch files, worktrees) to `~/.claude/settings.json`, so agents stop pausing on routine commands; a blanket `rm -rf` rule is opt-in |
 | `docs/` | Rulebook incident notes; the tracker contract and how to adopt a repo; outlines for unattended runs and project memory |
 | `settings.example.json` | Claude Code hooks, status line and plugins, and a `permissions.deny` block for secret files |
 | `hooks.node.example.json` | The board-reminder and git-guard hooks on Node (`hooks --node`) |
