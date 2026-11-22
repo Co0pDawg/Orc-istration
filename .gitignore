@@ -58,6 +58,16 @@
 /skills/*
 !/skills/repo-standards/
 !/skills/sprint/
+!/skills/board/
+!/skills/brief/
+!/skills/wrap-up/
+
+# Project skills for developing this repo (local settings stay untracked)
+!/.claude/
+/.claude/*
+!/.claude/skills/
+/.claude/skills/*
+!/.claude/skills/ship-prompts/
 
 # Coding standards archive (format in standards/README.md)
 !/standards/
