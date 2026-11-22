@@ -2,7 +2,7 @@
 
 Written for Claude Code to follow, step by step, on a machine you do not own: for example an interviewer's laptop with an editor (such as Visual Studio) and the Claude app. The goal is a verified sprint kit in under 5 minutes, before the clock of a timed build starts. The starter prompt is in [`example-prompts.md`](example-prompts.md#starter-prompt-interview-machine).
 
-The sprint kit is the roster agents, the generated rulebook, the `sprint` skill (so `/sprint` works), the git guard hook and a permission preset for the project's stack (its build, test, run and package-restore commands; read-only git already runs without a prompt). It leaves out the board, the cost log, the worklog and peon hooks, plugins, the status line, and model and effort settings. Nothing personal goes on the machine. Everything it writes is under `<home>/.claude`, it backs up what it replaces, and `uninstall` puts it back.
+The sprint kit is the roster agents, the generated rulebook, the `sprint` skill (so `/sprint` works), the git guard hook and a permission preset for the project's stack (its build, test, run and package-restore commands; read-only git already runs without a prompt). Those preset rules run the project's own code and accept any flags, so they are for an exercise you trust, not a safety boundary. It leaves out the board, the cost log, the worklog and peon hooks, plugins, the status line, and model and effort settings. Nothing personal goes on the machine. Everything it writes is under `<home>/.claude`, it backs up what it replaces, and `uninstall` puts it back.
 
 ## Ground rules on a borrowed machine
 

@@ -68,11 +68,18 @@ export function kitHookExample(repo) {
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-// True when a PreToolUse hook already runs tools/guard.ps1 or tools/guard.mjs.
+// A command that starts node, pwsh or powershell (bare or by path) and passes it tools/guard.ps1 or tools/guard.mjs,
+// with no shell operator or comment before the script. A mention (echo, cat), guard.mjs.bak and `false && node ...` fail.
+const GUARD_COMMAND = /^\s*"?(?:[^"|&;#]*[\\/])?(?:node|pwsh|powershell)(?:\.exe)?"?\s[^|&;#]*[\\/]tools[\\/]guard\.(?:ps1|mjs)(?=["'\s]|$)/i;
+// A PreToolUse matcher that fires on Bash: none, empty, `*`, or a pattern naming Bash.
+const coversBash = (matcher) => matcher === undefined || matcher === null || matcher === '' || matcher === '*' || (typeof matcher === 'string' && /\bBash\b/.test(matcher));
+
+// True when a PreToolUse hook that fires on Bash already runs tools/guard.ps1 or tools/guard.mjs. A false yes would
+// leave the machine with no guard, so anything short of a plain invocation counts as no.
 export function hasGuard(settings) {
   const groups = settings?.hooks?.PreToolUse;
   if (!Array.isArray(groups)) return false;
-  return groups.some((g) => Array.isArray(g?.hooks) && g.hooks.some((h) => typeof h?.command === 'string' && /[\\/]tools[\\/]guard\.(?:ps1|mjs)\b/.test(h.command)));
+  return groups.some((g) => coversBash(g?.matcher) && Array.isArray(g?.hooks) && g.hooks.some((h) => typeof h?.command === 'string' && GUARD_COMMAND.test(h.command)));
 }
 const getPath = (obj, dotted) => dotted.split('.').reduce((o, k) => (isObject(o) && Object.hasOwn(o, k) ? o[k] : undefined), obj);
 

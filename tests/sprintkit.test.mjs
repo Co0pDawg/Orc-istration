@@ -281,4 +281,17 @@ test('sprint kit: presets hold no delete, push or global install; removal takes 
     assert.deepEqual(planKitSettings(s, { example: kitHookExample(REPO), allow: [], home }).hooks, [], command);
   }
   assert.ok(!hasGuard(mine));
+  // Anything short of a plain invocation on a Bash matcher is not a guard: the kit then adds its own.
+  const wired = (command, matcher = 'Bash|PowerShell', event = 'PreToolUse') => ({ hooks: { [event]: [{ matcher, hooks: [{ type: 'command', command }] }] } });
+  const guard = 'node "D:/x/.claude/tools/guard.mjs"';
+  for (const command of ['node "D:/x/.claude/tools/guard.mjs.bak"', 'node D:/x/.claude/tools/guard.mjs-x', 'echo "# node D:/x/.claude/tools/guard.mjs"',
+    'ls /x/tools/guard.mjs', 'cat C:\\x\\.claude\\tools\\guard.ps1', `false && ${guard}`, 'node "D:/x/.claude/tools/myguard.mjs"', 'echo guard']) {
+    assert.ok(!hasGuard(wired(command)), command);
+  }
+  assert.ok(!hasGuard(wired(guard, 'Read')), 'a matcher that never fires on Bash');
+  assert.ok(!hasGuard(wired(guard, 'Bash', 'PostToolUse')), 'wrong event');
+  for (const matcher of ['Bash', '*', '', undefined]) assert.ok(hasGuard(wired(guard, matcher)), `matcher ${matcher}`);
+  assert.ok(hasGuard(wired('"C:\\Program Files\\nodejs\\node.exe" "C:\\x\\.claude\\tools\\guard.mjs"')), 'node by quoted path');
+  assert.ok(hasGuard(wired('pwsh -NoProfile -File C:/x/.claude/tools/guard.ps1')), 'unquoted script path');
+  assert.ok(planKitSettings(wired('node "D:/x/.claude/tools/guard.mjs.bak"'), { example: kitHookExample(REPO), allow: [], home }).hooks.length > 0, 'the kit adds its guard beside a look-alike');
 });
