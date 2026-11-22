@@ -79,7 +79,7 @@ Six more roles (`review-*`) make up the [review panel](#review-panel) the Full r
 
 **The cost log.** Every orchestrated task writes one record: a row per dispatch with agent, model, tokens, minutes, result and a value label (`earned`, `marginal` or `waste`). The format and the review questions are in [`orchestration/README.md`](orchestration/README.md).
 
-**The anomaly log.** Something odd that no rule covers, in any session, goes on one line in a local `anomalies.md` beside the cost logs instead of becoming a rule on one sighting. When it repeats it is promoted by kind: a constraint becomes a rule, a scriptable check a guard or tool, a multi-step procedure explained more than twice a skill, a preference a memory. The line format and the promotion table are in [`orchestration/README.md`](orchestration/README.md).
+**The anomaly log.** Something odd that no rule covers, in any session, goes on one line in a local `anomalies.md` beside the cost logs instead of becoming a rule on one sighting. A repeat is promoted by kind: a constraint becomes a rule, a scriptable check a guard or tool, a multi-step procedure explained a third time a skill, a preference a memory. The line format and the promotion table are in [`orchestration/README.md`](orchestration/README.md).
 
 ## Evidence
 

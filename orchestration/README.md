@@ -48,7 +48,7 @@ Run a review every 10 records or so (the same cadence as re-testing single-incid
 7. **Where did builder tokens go?** For each builder, was the spend dominated by the edit, by verification, or by rediscovery of something the spec should have stated? If rediscovery appears, the Known line is underused.
 8. **Spec misses by category** (wrong precedent, missing test guidance, contradicting rules across specs, wrong cwd or worktree, CRLF or tooling, intent the spec dropped). Which one is recurring? That is the next marching-orders line.
 9. **Wastes.** List every `waste` row and its cause. Any cause that appears in two reviews gets a rule.
-10. **Open anomalies.** Read the `open` lines of the anomaly log (below). Promote each one that has repeated, drop each one that is stale, and set the status on both.
+10. **Open anomalies.** Read the `open` lines of the anomaly log (below). Promote each one that has met its row's threshold, drop each one that is stale, and set the status on both.
 
 Write the answers as a dated section under **First review** and log which questions produced a change.
 
@@ -60,19 +60,19 @@ After roughly five records, read the `Value` column per agent type and the Spec 
 
 Scope: something that went wrong or behaved oddly and that no existing rule covers, in any session (orchestrated, inline or sprint). The cost log takes only orchestrated tasks, the review calibration log takes only review-panel findings, and `docs/rulebook-notes.md` takes an incident only once it has a rule. Without a holding place, an oddity is either lost or turned into a rule on one sighting.
 
-`~/.claude/orchestration/log/anomalies.md`: one append-only file beside the cost logs, local and untracked. One line per entry:
+`anomalies.md` in the folder that holds the cost logs (`~/.claude/orchestration/log/` in Claude Code): one append-only file, local and untracked. One line per entry:
 
 `<date> | <project> | <what happened> | <what was expected> | <how it was caught> | <status>`
 
 Status is `open`, `ruled` (name the rule), `tooled` (name the guard, tool or skill), `memory` or `dropped`. Something an existing rule already covers is not an anomaly: it goes in the cost log's Spec misses or Escaped defects.
 
-Before adding a line, search the file for the same cause. A second occurrence is promoted, and what it becomes depends on what repeated:
+Before adding a line, search the file for the same cause. A second occurrence is promoted, and what it becomes depends on what repeated. The one exception is a procedure: it becomes a skill on the third explanation, so a procedure explained twice stays `open`.
 
 | The repeat is | It becomes |
 |---|---|
 | A constraint ("never do X") | A rulebook line, with its incident in `docs/rulebook-notes.md` |
 | Something a script can check | A guard or a tool |
-| A multi-step procedure the user has explained more than twice | A skill |
+| A multi-step procedure the user explains a third time | A skill |
 | A personal preference | A memory or a standing preference |
 
 A single occurrence is promoted at once only when the consequence was severe: lost data or work, or something that left the session (a push, a post, a message). A repeated one-line instruction becomes a rule or a memory, not a skill, because every skill's description loads into every session.

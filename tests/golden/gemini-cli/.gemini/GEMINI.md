@@ -101,7 +101,7 @@ Spec → builder → refuter → orchestrator reads the diff.
 Every orchestrated task writes `orchestration/log/<date>-<project>-<slug>.md` in the setup checkout before reporting done, using `orchestration/log/TEMPLATE.md`. Target: orchestrator share under 20% of tokens. Its Loop signal is the evidence the tier rules are tuned on. `node tools/orc.mjs costlog --session <id>` drafts it from the board.
 
 ## Anomaly log
-Something odd that no rule covers, in any session, goes on one line in `orchestration/log/anomalies.md` in the setup checkout (format and promotion: `orchestration/README.md`), not straight into a rule. When it repeats it is promoted: a constraint becomes a rule, a scriptable check a guard or tool, a multi-step procedure explained more than twice a skill.
+Something odd that no rule covers, in any session, goes on one line in `anomalies.md` beside the cost logs (format and promotion: `orchestration/README.md`), not straight into a rule. A repeat is promoted: a constraint becomes a rule, a scriptable check a guard or tool, a multi-step procedure explained a third time a skill.
 
 ## Standing preferences (the owner's; edit to taste)
 - Concise replies; clock times in 12-hour AM/PM.
