@@ -322,7 +322,8 @@ export function readImports(paths, target = null) {
   return out;
 }
 
-function backupPath(target, when) {
+// A free backup name beside target: <target>.orc-backup-<when>, then -2, -3, ... (install and uninstall use it too).
+export function backupPath(target, when) {
   let backup = `${target}.orc-backup-${when}`;
   for (let n = 2; fs.existsSync(backup); n++) backup = `${target}.orc-backup-${when}-${n}`;
   return backup;

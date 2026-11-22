@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { main } from '../tools/orc.mjs';
-import { presetRules, detectStacks, removeKitSettings, planKitSettings, kitHookExample, hasGuard, KIT_NOTE } from '../tools/lib/sprintkit.mjs';
+import { presetRules, detectStacks, removeKitSettings, planKitSettings, kitHookExample, hasGuard, guardStatus, KIT_NOTES, KNOWN_STACKS as KNOWN } from '../tools/lib/sprintkit.mjs';
 import { normalizeEol } from '../tools/lib/frontmatter.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -49,7 +49,14 @@ function populatedHome({ guard = true } = {}) {
   fs.mkdirSync(claude);
   const settings = JSON.parse(fs.readFileSync(path.join(REPO, 'settings.example.json'), 'utf8'));
   settings.permissions.allow = ['Read(./docs/**)', 'Bash(dotnet build *)'];
-  if (!guard) settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter((g) => !g.hooks.some((h) => /guard\.ps1/.test(h.command)));
+  const isGuard = (g) => g.hooks.some((h) => /guard\.ps1/.test(h.command));
+  if (!guard) settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter((g) => !isGuard(g));
+  else {
+    // The owner's guard script is really there, at the path its hook names.
+    for (const h of settings.hooks.PreToolUse.filter(isGuard).flatMap((g) => g.hooks)) h.command = h.command.replace('C:\\Users\\<you>', home);
+    fs.mkdirSync(path.join(claude, 'tools'));
+    fs.writeFileSync(path.join(claude, 'tools', 'guard.ps1'), '# the owner\'s guard\n');
+  }
   const text = `${JSON.stringify(settings, null, 2)}\n`;
   fs.writeFileSync(path.join(claude, 'settings.json'), text);
   fs.writeFileSync(path.join(claude, 'CLAUDE.md'), '# My own rules\n\nBe brief.\n');
@@ -72,8 +79,14 @@ test('sprint kit: a home with no .claude gets the roster, the skill, the guard a
   assert.deepEqual(files.filter((f) => f.includes('board-reminder')), [], 'no board reminder on the machine');
   assert.equal(fs.readFileSync(path.join(home, '.claude', 'skills', 'sprint', 'SKILL.md'), 'utf8'), fs.readFileSync(path.join(REPO, 'skills', 'sprint', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n'));
   const rulebook = fs.readFileSync(path.join(home, '.claude', 'CLAUDE.md'), 'utf8');
-  assert.ok(rulebook.includes(KIT_NOTE), 'the rulebook says there is no board');
+  for (const line of KIT_NOTES) assert.ok(rulebook.includes(`${line}\n`), line);
+  assert.match(rulebook, /\*\*Board:\*\* none on this machine \(sprint kit\)/);
+  assert.match(rulebook, /only the Node git guard \(`tools\/guard\.mjs`\) is wired; there is no board-reminder hook/);
+  assert.match(rulebook, /No subagent model or effort is set in `settings\.json`, so always name `subagent_type`/);
+  assert.match(rulebook, /Nothing is pushed unless the user says so/);
+  assert.doesNotMatch(rulebook, /@board\.local\.md/, 'no import of a board file the machine does not have');
   assert.doesNotMatch(rulebook, /this machine's board address is/);
+  assert.match(rulebook, /# Claude Code\n\n- \*\*Paths:\*\*/);
   assert.match(rulebook, /Setup checkout \(this machine\)/);
   const settings = settingsOf(home);
   assert.deepEqual(Object.keys(settings).sort(), ['hooks', 'permissions']);
@@ -134,7 +147,8 @@ test('sprint kit: an existing settings.json (with the PowerShell guard) and CLAU
   assert.match(un.out, /restored .*CLAUDE\.md from .*CLAUDE\.md\.orc-backup-/);
   assert.equal(fs.readFileSync(path.join(claude, 'settings.json'), 'utf8'), text, 'settings.json is back byte for byte');
   assert.equal(fs.readFileSync(path.join(claude, 'CLAUDE.md'), 'utf8'), originalRules);
-  assert.deepEqual(tree(claude), ['CLAUDE.md', 'settings.json'], 'no kit file and no backup left');
+  assert.deepEqual(tree(claude), ['CLAUDE.md', 'settings.json', 'tools/guard.ps1'], 'no kit file and no backup left; the owner\'s guard stays');
+  assert.doesNotMatch(un.out, /^left: /m, 'no backup left to explain');
 });
 
 test('sprint kit: an invalid settings.json refuses the install and writes nothing', async () => {
@@ -164,7 +178,9 @@ test('sprint kit: changes made after install survive uninstall; an edited rulebo
   fs.appendFileSync(path.join(claude, 'CLAUDE.md'), 'a note from the sprint\n');
   const un = await uninstall(home, '--apply');
   assert.equal(un.code, 0, un.err);
-  assert.match(un.out, /changed since install, so only the kit's entries are removed; the original stays at .*orc-backup/);
+  assert.match(un.out, /updated .*settings\.json \(settings\.json changed since install, so only the kit's entries are removed\)/);
+  assert.match(un.out, /^left: .*settings\.json\.orc-backup-20261121-093000 \(the settings\.json from before the kit, kept because settings\.json changed since install/m);
+  assert.match(un.out, /^left: .*CLAUDE\.md\.orc-backup-20261121-093000 \(the original of .*CLAUDE\.md, not restored because the installed file is kept/m);
   assert.match(un.out, /not restored \(the installed file is kept\): .*CLAUDE\.md/);
   const left = settingsOf(home);
   const original = JSON.parse(text);
@@ -274,24 +290,273 @@ test('sprint kit: presets hold no delete, push or global install; removal takes 
   assert.ok(!plan.allow.includes('Bash(git log *)'));
   assert.deepEqual(plan.containers, [], 'every container already existed');
   assert.deepEqual(removeKitSettings(plan.merged, plan), mine);
-  // Either guard variant, at any path, counts as already wired.
+  // Either guard variant, at any path, counts as already wired when its script is there.
+  const there = { exists: () => true };
   for (const command of ['node "D:/elsewhere/.claude/tools/guard.mjs"', 'powershell -NoProfile -File "C:\\x\\.claude\\tools\\guard.ps1"']) {
     const s = { hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command }] }] } };
-    assert.ok(hasGuard(s), command);
-    assert.deepEqual(planKitSettings(s, { example: kitHookExample(REPO), allow: [], home }).hooks, [], command);
+    assert.ok(hasGuard(s, there), command);
+    assert.deepEqual(planKitSettings(s, { example: kitHookExample(REPO), allow: [], home, guardExists: () => true }).hooks, [], command);
+    assert.ok(!hasGuard(s), `${command}: its script is not on disk, so it guards nothing`);
+    assert.ok(planKitSettings(s, { example: kitHookExample(REPO), allow: [], home }).hooks.length > 0, `${command}: the kit adds its own guard beside a stale one`);
   }
-  assert.ok(!hasGuard(mine));
-  // Anything short of a plain invocation on a Bash matcher is not a guard: the kit then adds its own.
+  assert.ok(!hasGuard(mine, there));
+  // Anything short of a plain invocation on a matcher covering both shells is not a guard: the kit then adds its own.
   const wired = (command, matcher = 'Bash|PowerShell', event = 'PreToolUse') => ({ hooks: { [event]: [{ matcher, hooks: [{ type: 'command', command }] }] } });
   const guard = 'node "D:/x/.claude/tools/guard.mjs"';
   for (const command of ['node "D:/x/.claude/tools/guard.mjs.bak"', 'node D:/x/.claude/tools/guard.mjs-x', 'echo "# node D:/x/.claude/tools/guard.mjs"',
-    'ls /x/tools/guard.mjs', 'cat C:\\x\\.claude\\tools\\guard.ps1', `false && ${guard}`, 'node "D:/x/.claude/tools/myguard.mjs"', 'echo guard']) {
-    assert.ok(!hasGuard(wired(command)), command);
+    'ls /x/tools/guard.mjs', 'cat C:\\x\\.claude\\tools\\guard.ps1', `false && ${guard}`, 'node "D:/x/.claude/tools/myguard.mjs"', 'echo guard',
+    'echo C:/nodejs/node.exe "C:/x/.claude/tools/guard.mjs"', 'pwsh -c echo C:/x/tools/guard.ps1', 'node -e "" C:/x/tools/guard.mjs',
+    'C:/Program Files/nodejs/node.exe "C:/x/.claude/tools/guard.mjs"', 'powershell -Command "& C:/x/tools/guard.ps1"', 'node --eval=1 C:/x/tools/guard.mjs',
+    'node C:/x/tools/guard.ps1', 'pwsh -File C:/x/tools/guard.mjs', `node ; ${guard}`]) {
+    assert.ok(!hasGuard(wired(command), there), command);
   }
-  assert.ok(!hasGuard(wired(guard, 'Read')), 'a matcher that never fires on Bash');
-  assert.ok(!hasGuard(wired(guard, 'Bash', 'PostToolUse')), 'wrong event');
-  for (const matcher of ['Bash', '*', '', undefined]) assert.ok(hasGuard(wired(guard, matcher)), `matcher ${matcher}`);
-  assert.ok(hasGuard(wired('"C:\\Program Files\\nodejs\\node.exe" "C:\\x\\.claude\\tools\\guard.mjs"')), 'node by quoted path');
-  assert.ok(hasGuard(wired('pwsh -NoProfile -File C:/x/.claude/tools/guard.ps1')), 'unquoted script path');
-  assert.ok(planKitSettings(wired('node "D:/x/.claude/tools/guard.mjs.bak"'), { example: kitHookExample(REPO), allow: [], home }).hooks.length > 0, 'the kit adds its guard beside a look-alike');
+  assert.ok(!hasGuard(wired(guard, 'Read'), there), 'a matcher that never fires on Bash');
+  assert.ok(!hasGuard(wired(guard, 'Bash|PowerShell', 'PostToolUse'), there), 'wrong event');
+  for (const matcher of ['Bash', 'PowerShell', 'Bash|Read']) assert.ok(!hasGuard(wired(guard, matcher), there), `matcher ${matcher} leaves a shell unguarded`);
+  for (const matcher of ['Bash|PowerShell', 'PowerShell|Bash', '*', '', undefined]) assert.ok(hasGuard(wired(guard, matcher), there), `matcher ${matcher}`);
+  assert.ok(hasGuard(wired('"C:\\Program Files\\nodejs\\node.exe" "C:\\x\\.claude\\tools\\guard.mjs"'), there), 'node by quoted path with spaces');
+  assert.ok(hasGuard(wired('pwsh -NoProfile -File C:/x/.claude/tools/guard.ps1'), there), 'unquoted script path');
+  assert.ok(hasGuard(wired('powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "C:\\Users\\x\\.claude\\tools\\guard.ps1"'), there), 'the settings.example.json form');
+  assert.ok(hasGuard(wired(`node --no-warnings ${guard.slice(5)}`), there), 'node options before the script');
+  assert.ok(planKitSettings(wired('node "D:/x/.claude/tools/guard.mjs.bak"'), { example: kitHookExample(REPO), allow: [], home, guardExists: () => true }).hooks.length > 0, 'the kit adds its guard beside a look-alike');
+  // A guard whose script is gone is reported as stale.
+  const st = guardStatus(wired(guard));
+  assert.equal(st.guard, false);
+  assert.deepEqual(st.stale.map((s) => s.script), ['D:/x/.claude/tools/guard.mjs']);
+});
+
+test('sprint kit: preset rules are pinned', () => {
+  const twin = (rules) => rules.flatMap((r) => [`Bash(${r})`, `PowerShell(${r})`]);
+  assert.deepEqual(presetRules(['dotnet']), twin(['dotnet build *', 'dotnet test *', 'dotnet run *', 'dotnet restore']));
+  assert.deepEqual(presetRules(['node']), twin(['npm test *', 'npm run *', 'npm start *', 'npm install', 'npm ci']));
+  assert.deepEqual(presetRules(['python']), twin(['pytest *', 'python -m pytest *', 'python -m unittest *']));
+  for (const exact of ['dotnet restore', 'npm install', 'npm ci']) {
+    for (const r of presetRules(KNOWN)) if (r.includes(`(${exact}`)) assert.doesNotMatch(r, /\*/, r);
+  }
+});
+
+test('sprint kit: stack detection table; a first run with no stack, then --stack node', async () => {
+  const cases = [
+    [['package.json'], ['node']],
+    [['App.sln'], ['dotnet']],
+    [['App.slnx'], ['dotnet']],
+    [['pyproject.toml'], ['python']],
+    [['readme.md'], []],
+  ];
+  for (const [names, want] of cases) {
+    const dir = tempDir('kit-detect-table');
+    for (const n of names) fs.writeFileSync(path.join(dir, n), 'x\n');
+    assert.deepEqual(detectStacks(dir), want, names.join(','));
+  }
+  const home = tempDir('kit-later-stack');
+  const first = await kit(home, '--apply');
+  assert.equal(first.code, 0, first.err);
+  assert.match(first.out, /no stack detected/);
+  assert.equal(settingsOf(home).permissions, undefined, 'no preset yet');
+  const later = await kit(home, '--stack', 'node', '--apply');
+  assert.equal(later.code, 0, later.err);
+  assert.deepEqual(settingsOf(home).permissions.allow, presetRules(['node']));
+  assert.ok(!tree(path.join(home, '.claude')).some((f) => f.includes('.orc-backup-')), 'a file the kit created needs no backup');
+  assert.equal((await status(home)).code, 0);
+  const un = await uninstall(home, '--apply');
+  assert.equal(un.code, 0, un.err);
+  assert.deepEqual(fs.readdirSync(home), []);
+});
+
+test('sprint kit: a plain install\'s rulebook is unchanged (the golden file plus only the Setup checkout line)', async () => {
+  const home = tempDir('plain-rulebook');
+  assert.equal((await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board'])).code, 0);
+  const installed = fs.readFileSync(path.join(home, '.claude', 'CLAUDE.md'), 'utf8');
+  const golden = normalizeEol(fs.readFileSync(path.join(REPO, 'tests', 'golden', 'claude-code', '.claude', 'CLAUDE.md'), 'utf8'));
+  assert.match(installed, /@board\.local\.md/);
+  assert.equal(installed.replace(/^- Setup checkout \(this machine\): .*\n/m, ''), golden);
+});
+
+// The temp file writeSettings writes first; a folder in its place makes that write fail on every platform.
+const blockSettingsWrite = (claude) => {
+  const tmp = path.join(claude, `settings.json.orc-tmp-${process.pid}`);
+  fs.mkdirSync(tmp);
+  return () => fs.rmSync(tmp, { recursive: true });
+};
+
+test('sprint kit: an install that stops part way still records the restore map; uninstall puts the home back', async () => {
+  const { home, claude } = populatedHome({ guard: false });
+  const start = snapshot(home);
+  const unblock = blockSettingsWrite(claude);
+  const r = await kit(home, '--stack', 'node', '--apply');
+  assert.equal(r.code, 1);
+  assert.match(r.err, /install stopped: .*records what was written, so uninstall --apply undoes it/);
+  assert.match(fs.readFileSync(path.join(claude, 'CLAUDE.md'), 'utf8'), /generated by orc\.mjs/, 'the owner\'s file was already replaced');
+  const mf = manifestOf(home);
+  assert.equal(mf.kit.restore['.claude/CLAUDE.md'], '.claude/CLAUDE.md.orc-backup-20261121-093000');
+  assert.equal(mf.kit.settings, undefined, 'settings.json was not written, so nothing is recorded for it');
+  unblock();
+  const un = await uninstall(home, '--apply');
+  assert.equal(un.code, 0, un.err);
+  assert.deepEqual(snapshot(home), start, 'CLAUDE.md and settings.json back byte for byte; no kit file left');
+});
+
+test('sprint kit: uninstall does the settings.json step first, so a failed write leaves the home and manifest as they were', async () => {
+  const { home, claude } = populatedHome({ guard: false });
+  assert.equal((await kit(home, '--stack', 'node', '--apply')).code, 0);
+  const s = settingsOf(home);
+  s.permissions.allow.push('Bash(make *)');
+  fs.writeFileSync(path.join(claude, 'settings.json'), `${JSON.stringify(s, null, 2)}\n`);
+  const unblock = blockSettingsWrite(claude);
+  const before = snapshot(home);
+  const un = await uninstall(home, '--apply');
+  assert.equal(un.code, 1);
+  assert.match(un.err, /nothing deleted: .*settings\.json/);
+  assert.deepEqual(snapshot(home), before, 'no file deleted or restored, manifest unchanged');
+  unblock();
+  assert.equal((await uninstall(home, '--apply')).code, 0);
+});
+
+test('sprint kit: an identical file already in place (a hand-copied skill and wired guard) is the owner\'s; uninstall leaves it', async () => {
+  const home = tempDir('kit-owner-copies');
+  const claude = path.join(home, '.claude');
+  const skill = path.join(claude, 'skills', 'sprint', 'SKILL.md');
+  const guardFile = path.join(claude, 'tools', 'guard.mjs');
+  fs.mkdirSync(path.dirname(skill), { recursive: true });
+  fs.mkdirSync(path.dirname(guardFile), { recursive: true });
+  fs.writeFileSync(skill, normalizeEol(fs.readFileSync(path.join(REPO, 'skills', 'sprint', 'SKILL.md'), 'utf8')));
+  fs.writeFileSync(guardFile, normalizeEol(fs.readFileSync(path.join(REPO, 'tools', 'guard.mjs'), 'utf8')));
+  const settings = { hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: guardCommand(home), timeout: 10 }] }] } };
+  const text = `${JSON.stringify(settings, null, 2)}\n`;
+  fs.writeFileSync(path.join(claude, 'settings.json'), text);
+  const r = await kit(home, '--stack', 'node', '--apply');
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /applied unchanged: .*SKILL\.md \(already there and not installed by orc: not recorded, uninstall leaves it\)/);
+  assert.match(r.out, /applied unchanged: .*guard\.mjs \(already there and not installed by orc/);
+  assert.doesNotMatch(r.out, /added to settings\.json PreToolUse/, 'the owner\'s guard is wired and on disk');
+  const files = Object.keys(manifestOf(home).files);
+  assert.ok(!files.includes('.claude/skills/sprint/SKILL.md') && !files.includes('.claude/tools/guard.mjs'), files.join(','));
+  assert.equal((await status(home)).code, 0, 'status is still clean');
+  const un = await uninstall(home, '--apply');
+  assert.equal(un.code, 0, un.err);
+  assert.ok(fs.existsSync(skill) && fs.existsSync(guardFile), 'the owner\'s copies stay');
+  assert.equal(fs.readFileSync(path.join(claude, 'settings.json'), 'utf8'), text, 'the owner\'s hook stays');
+});
+
+test('sprint kit: a stale guard hook (script gone) is warned about and does not stop the kit adding its own', async () => {
+  // The stale shape the tool itself leaves: a full install with the PowerShell hooks, then its uninstall.
+  const home = tempDir('kit-stale-guard');
+  assert.equal((await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board'])).code, 0);
+  assert.equal((await run(['hooks', '--home', home, '--apply'])).code, 0);
+  assert.equal((await uninstall(home, '--apply')).code, 0);
+  const text = fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8');
+  assert.ok(!fs.existsSync(path.join(home, '.claude', 'tools', 'guard.ps1')));
+  const r = await kit(home, '--stack', 'node', '--apply');
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /WARN .*settings\.json: the PreToolUse hook \[Bash\|PowerShell\] ".*guard\.ps1.*" runs .*guard\.ps1, which is not on disk, so it guards nothing/);
+  assert.match(r.out, /added to settings\.json PreToolUse \[Bash\|PowerShell\]: node ".*\/\.claude\/tools\/guard\.mjs"/);
+  assert.equal((await status(home)).code, 0);
+  assert.equal((await uninstall(home, '--apply')).code, 0);
+  assert.equal(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'), text, 'settings.json back byte for byte');
+});
+
+test('sprint kit: uninstall refuses a tampered kit record and writes nothing', async () => {
+  const tampers = [
+    (k) => { k.restore = { '.claude/CLAUDE.md': '../x' }; },
+    (k) => { k.restore = '.claude/CLAUDE.md'; },
+    (k) => { k.settings.hooks = { PreToolUse: 'x' }; },
+    (k) => { k.settings.containers = ['evil']; },
+    (k, home) => { k.settings.backup = path.join(home, '.claude', 'settings.json.orc-backup-x'); },
+  ];
+  for (const [i, tamper] of tampers.entries()) {
+    const { home } = populatedHome({ guard: false });
+    assert.equal((await kit(home, '--stack', 'node', '--apply')).code, 0);
+    const file = path.join(home, '.claude', '.orc-manifest.claude-code.json');
+    const mf = JSON.parse(fs.readFileSync(file, 'utf8'));
+    tamper(mf.kit, home);
+    fs.writeFileSync(file, `${JSON.stringify(mf, null, 2)}\n`);
+    const before = snapshot(home);
+    const un = await uninstall(home, '--apply');
+    assert.equal(un.code, 1, `tamper ${i}`);
+    assert.match(un.err, /refused: /, `tamper ${i}`);
+    assert.deepEqual(snapshot(home), before, `tamper ${i}: nothing written`);
+  }
+});
+
+test('sprint kit: status reports missing settings entries and unreadable settings; a re-apply repairs with no second backup', async () => {
+  const { home, claude } = populatedHome({ guard: false });
+  assert.equal((await kit(home, '--stack', 'dotnet', '--apply')).code, 0);
+  // A later stack replaces options.stacks; status still checks every rule the kit ever added.
+  assert.equal((await kit(home, '--stack', 'node', '--apply')).code, 0);
+  const s = settingsOf(home);
+  s.hooks.PreToolUse = s.hooks.PreToolUse.filter((g) => !g.hooks.some((h) => /guard\.mjs/.test(h.command)));
+  s.permissions.allow = s.permissions.allow.filter((r) => r !== 'Bash(dotnet test *)');
+  fs.writeFileSync(path.join(claude, 'settings.json'), `${JSON.stringify(s, null, 2)}\n`);
+  const st = await status(home);
+  assert.equal(st.code, 1);
+  assert.match(st.out, /missing in settings\.json: PreToolUse \[Bash\|PowerShell\]: node ".*guard\.mjs"/);
+  assert.match(st.out, /missing in settings\.json: permissions\.allow: Bash\(dotnet test \*\)/);
+  const good = fs.readFileSync(path.join(claude, 'settings.json'), 'utf8');
+  fs.writeFileSync(path.join(claude, 'settings.json'), '{ broken\n');
+  const bad = await status(home);
+  assert.equal(bad.code, 1);
+  assert.match(bad.out, /missing in settings\.json: unreadable/);
+  fs.writeFileSync(path.join(claude, 'settings.json'), good);
+  const fix = await kit(home, '--stack', 'dotnet,node', '--apply');
+  assert.equal(fix.code, 0, fix.err);
+  assert.equal((await status(home)).code, 0);
+  assert.equal(tree(claude).filter((f) => f.startsWith('settings.json.orc-backup-')).length, 1, 'still the one backup from before the first change');
+});
+
+test('sprint kit: uninstall over an invalid settings.json is refused with nothing deleted', async () => {
+  const { home, claude } = populatedHome({ guard: false });
+  assert.equal((await kit(home, '--stack', 'node', '--apply')).code, 0);
+  fs.writeFileSync(path.join(claude, 'settings.json'), '{ "hooks": ');
+  const before = snapshot(home);
+  const un = await uninstall(home, '--apply');
+  assert.equal(un.code, 1);
+  assert.match(un.err, /refused: .*settings\.json: cannot remove the sprint kit's entries \(not valid JSON/);
+  assert.deepEqual(snapshot(home), before);
+});
+
+test('sprint kit: uninstall dry run, a gone backup, a gone settings.json and a restore target in the way', async () => {
+  // Dry run: lists what it would do, writes nothing.
+  const a = populatedHome({ guard: false });
+  assert.equal((await kit(a.home, '--stack', 'node', '--apply')).code, 0);
+  const before = snapshot(a.home);
+  const dry = await uninstall(a.home);
+  assert.equal(dry.code, 0, dry.err);
+  assert.match(dry.out, /would restore .*CLAUDE\.md from .*CLAUDE\.md\.orc-backup-/);
+  assert.match(dry.out, /would remove from settings\.json permissions\.allow: Bash\(npm test \*\)/);
+  assert.match(dry.out, /would restore .*settings\.json from .*settings\.json\.orc-backup-/);
+  assert.deepEqual(snapshot(a.home), before);
+  // The kit's settings backup is gone: the real cause is named, and only the kit's entries are removed.
+  fs.rmSync(path.join(a.claude, 'settings.json.orc-backup-20261121-093000'));
+  fs.rmSync(path.join(a.claude, 'CLAUDE.md.orc-backup-20261121-093000'));
+  const un = await uninstall(a.home, '--apply');
+  assert.equal(un.code, 0, un.err);
+  assert.match(un.err, /WARN the kit's backup .*settings\.json\.orc-backup-20261121-093000 is gone; only the kit's entries are removed/);
+  assert.match(un.err, /WARN cannot restore .*CLAUDE\.md: its backup .* is gone/);
+  assert.equal(fs.readFileSync(path.join(a.claude, 'settings.json'), 'utf8'), a.text, 'same content after removing only the kit\'s entries');
+  // settings.json is gone after install: the owner's original goes back from the kit's backup.
+  const b = populatedHome({ guard: false });
+  assert.equal((await kit(b.home, '--stack', 'node', '--apply')).code, 0);
+  fs.rmSync(path.join(b.claude, 'settings.json'));
+  const unB = await uninstall(b.home, '--apply');
+  assert.equal(unB.code, 0, unB.err);
+  assert.match(unB.out, /restored .*settings\.json from .*orc-backup-20261121-093000 \(settings\.json was gone\)/);
+  assert.equal(fs.readFileSync(path.join(b.claude, 'settings.json'), 'utf8'), b.text);
+  // A restore target that is not the kit's file any more (taken out of the manifest) and is in the way: WARN, kept.
+  const c = populatedHome({ guard: false });
+  assert.equal((await kit(c.home, '--stack', 'node', '--apply')).code, 0);
+  const file = path.join(c.claude, '.orc-manifest.claude-code.json');
+  const mf = JSON.parse(fs.readFileSync(file, 'utf8'));
+  delete mf.files['.claude/CLAUDE.md'];
+  fs.writeFileSync(file, `${JSON.stringify(mf, null, 2)}\n`);
+  const unC = await uninstall(c.home, '--apply');
+  assert.equal(unC.code, 0, unC.err);
+  assert.match(unC.err, /WARN not restored: .*CLAUDE\.md exists; the original is .*CLAUDE\.md\.orc-backup-20261121-093000/);
+  assert.match(unC.out, /^left: .*CLAUDE\.md\.orc-backup-20261121-093000 \(the original of .*CLAUDE\.md, not restored because .* exists\)/m);
+  // A backup the kit did not make is named as possibly the owner's and left alone.
+  const d = populatedHome({ guard: false });
+  fs.writeFileSync(path.join(d.claude, 'AGENTS.md.orc-backup-20200101-000000'), 'someone else\'s\n');
+  assert.equal((await kit(d.home, '--stack', 'node', '--apply')).code, 0);
+  const unD = await uninstall(d.home, '--apply');
+  assert.equal(unD.code, 0, unD.err);
+  assert.match(unD.out, /^left: .*AGENTS\.md\.orc-backup-20200101-000000 \(not made by this kit \(it may be the owner's\); left alone\)/m);
 });

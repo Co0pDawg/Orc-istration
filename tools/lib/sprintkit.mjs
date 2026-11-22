@@ -12,17 +12,25 @@ export const KIT_HOOK_SCRIPTS = ['tools/guard.mjs'];
 // The skill files the kit copies, repo-relative; installed under <home>/.claude/.
 export const KIT_SKILLS = ['skills/sprint/SKILL.md'];
 
-// The rulebook line a kit install adds where the Board line would go: the rulebook core asks for a board on every
-// orchestrated task, and a borrowed machine has none.
-export const KIT_NOTE = '- **Board:** none on this machine (sprint kit). Skip every board write, the board-reminder markers and the cost log; sprint mode waives them anyway.';
+// The rulebook lines a kit install adds where the Board line would go. The rulebook core asks for a board on every
+// orchestrated task, and the tool notes describe the full setup's hooks and settings; a borrowed machine has less.
+export const KIT_NOTES = [
+  '- **Board:** none on this machine (sprint kit). Skip every board write, the board-reminder markers and the cost log; sprint mode waives them anyway.',
+  '- **Sprint kit:** only the Node git guard (`tools/guard.mjs`) is wired; there is no board-reminder hook, so the PowerShell guard and board-reminder lines above do not apply here. No subagent model or effort is set in `settings.json`, so always name `subagent_type` (each roster agent carries its own model). Nothing is pushed unless the user says so: commits stay local.',
+];
+
+// The tool-notes line that imports the machine's board address; a kit build drops it (there is no board.local.md).
+export const BOARD_IMPORT = /^.*@board\.local\.md.*\n(?:\n)?/m;
 
 // Permission presets: build, test, run and package-restore commands per stack. A command with arguments gets the
-// trailing-wildcard form (`Bash(dotnet build *)`, which also matches the bare command); a restore command is exact, so
-// `npm install` never matches `npm install -g <pkg>`. Each rule has a PowerShell twin, because Claude Code on Windows
-// often runs commands through its PowerShell tool. No git rules: Claude Code already runs read-only git without a
-// prompt, so a `git log *` rule would only add the forms that write (`git log --output=<file>`). No pip rule: outside a
-// virtual environment `pip install -r requirements.txt` installs into the global Python. Syntax:
-// https://code.claude.com/docs/en/permissions
+// trailing-wildcard form; the permissions doc says "A `*` at the end, with a space before it, also matches the bare
+// command." (so `Bash(npm test *)` matches `npm test`). A restore command is exact, so `npm install` never matches
+// `npm install -g <pkg>`. Each rule has a PowerShell twin, because Claude Code on Windows often runs commands through
+// its PowerShell tool; the doc says "PowerShell permission rules use the same shape as Bash rules". No git rules:
+// Claude Code already runs read-only git without a prompt, so a `git log *` rule would only add the forms that write
+// (`git log --output=<file>`). No pip rule: outside a virtual environment `pip install -r requirements.txt` installs
+// into the global Python. Source for both quotes: https://code.claude.com/docs/en/permissions (Wildcard patterns;
+// PowerShell rules).
 const STACKS = {
   dotnet: { prefix: ['dotnet build', 'dotnet test', 'dotnet run'], exact: ['dotnet restore'] },
   node: { prefix: ['npm test', 'npm run', 'npm start'], exact: ['npm install', 'npm ci'] },
@@ -68,30 +76,85 @@ export function kitHookExample(repo) {
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-// A command that starts node, pwsh or powershell (bare or by path) and passes it tools/guard.ps1 or tools/guard.mjs,
-// with no shell operator or comment before the script. A mention (echo, cat), guard.mjs.bak and `false && node ...` fail.
-const GUARD_COMMAND = /^\s*"?(?:[^"|&;#]*[\\/])?(?:node|pwsh|powershell)(?:\.exe)?"?\s[^|&;#]*[\\/]tools[\\/]guard\.(?:ps1|mjs)(?=["'\s]|$)/i;
-// A PreToolUse matcher that fires on Bash: none, empty, `*`, or a pattern naming Bash.
-const coversBash = (matcher) => matcher === undefined || matcher === null || matcher === '' || matcher === '*' || (typeof matcher === 'string' && /\bBash\b/.test(matcher));
-
-// True when a PreToolUse hook that fires on Bash already runs tools/guard.ps1 or tools/guard.mjs. A false yes would
-// leave the machine with no guard, so anything short of a plain invocation counts as no.
-export function hasGuard(settings) {
-  const groups = settings?.hooks?.PreToolUse;
-  if (!Array.isArray(groups)) return false;
-  return groups.some((g) => coversBash(g?.matcher) && Array.isArray(g?.hooks) && g.hooks.some((h) => typeof h?.command === 'string' && GUARD_COMMAND.test(h.command)));
+// The script a hook command runs when it is a plain guard invocation, else null. The command splits into words (a
+// double- or single-quoted word may hold spaces; an unquoted one may not). The first word must be the program: node,
+// pwsh or powershell, bare or by path, with or without .exe. For node, the script is the first word that is not an
+// option, and an option that runs code instead (-e, --eval, -p, --print, -i, --interactive, -c, --check) rejects the
+// command. For pwsh and powershell, the script is the word after -File (or -f), and -Command, -c, -EncodedCommand,
+// -e or -ec before it rejects the command. Any shell operator (| & ; # or a word holding one) before the script
+// rejects it. The script must end in tools/guard.mjs (node) or tools/guard.ps1 (PowerShell), with no suffix.
+// So `echo node .../guard.mjs`, `pwsh -c echo .../guard.ps1`, `node -e "" .../guard.mjs`, `false && node ...` and
+// `node .../guard.mjs.bak` are all rejected.
+export function guardScript(command) {
+  if (typeof command !== 'string') return null;
+  const words = [...command.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map((m) => ({ text: m[1] ?? m[2] ?? m[3], quoted: m[3] === undefined }));
+  if (!words.length) return null;
+  const program = path.basename(words[0].text.replace(/\\/g, '/')).toLowerCase().replace(/\.exe$/, '');
+  if (!['node', 'pwsh', 'powershell'].includes(program)) return null;
+  const operator = (w) => !w.quoted && /[|&;#]/.test(w.text);
+  let script = null;
+  if (program === 'node') {
+    for (const w of words.slice(1)) {
+      if (operator(w)) return null;
+      if (!w.quoted && w.text.startsWith('-')) {
+        if (/^(?:-e|--eval|-p|--print|-i|--interactive|-c|--check)(?:=|$)/.test(w.text)) return null;
+        continue;
+      }
+      script = w.text;
+      break;
+    }
+    return script && /[\\/]tools[\\/]guard\.mjs$/.test(script) ? script : null;
+  }
+  for (let i = 1; i < words.length; i++) {
+    const w = words[i];
+    if (operator(w)) return null;
+    if (w.quoted) continue;
+    if (/^-(?:c|command|e|ec|encodedcommand)$/i.test(w.text)) return null;
+    if (/^-(?:f|file)$/i.test(w.text)) {
+      script = words[i + 1]?.text ?? null;
+      break;
+    }
+  }
+  return script && /[\\/]tools[\\/]guard\.ps1$/i.test(script) ? script : null;
 }
+
+// A PreToolUse matcher that fires on both Bash and PowerShell: none, empty, `*`, or a pattern naming both. A guard on
+// a Bash-only matcher leaves the PowerShell tool unguarded, so it does not count.
+const coversShells = (matcher) =>
+  matcher === undefined || matcher === null || matcher === '' || matcher === '*' || (typeof matcher === 'string' && /\bBash\b/.test(matcher) && /\bPowerShell\b/.test(matcher));
+
+// The PreToolUse guard hooks already in settings: {guard: true when one on a matcher covering both shells runs a guard
+// script that exists, stale: [{matcher, command, script}] for guard invocations whose script is not on disk}. `exists`
+// decides whether a script is there (install also counts the guard.mjs it is about to write).
+export function guardStatus(settings, { exists = fs.existsSync } = {}) {
+  const out = { guard: false, stale: [] };
+  const groups = settings?.hooks?.PreToolUse;
+  if (!Array.isArray(groups)) return out;
+  for (const g of groups) {
+    for (const h of Array.isArray(g?.hooks) ? g.hooks : []) {
+      const script = guardScript(h?.command);
+      if (!script) continue;
+      if (!exists(script)) out.stale.push({ matcher: g.matcher ?? null, command: h.command, script });
+      else if (coversShells(g?.matcher)) out.guard = true;
+    }
+  }
+  return out;
+}
+
+// True when a working git guard is already wired (see guardStatus). A false yes would leave the machine with no guard,
+// so anything short of that counts as no.
+export const hasGuard = (settings, opts) => guardStatus(settings, opts).guard;
 const getPath = (obj, dotted) => dotted.split('.').reduce((o, k) => (isObject(o) && Object.hasOwn(o, k) ? o[k] : undefined), obj);
 
 // Plans the kit's additions to a parsed settings.json. Adds only what is missing; never removes, reorders or rewrites.
 // Returns {merged, hooks: [{event, matcher, command}], allow: [rule], containers: [dotted path the kit created]}.
-export function planKitSettings(settings, { example, allow, home }) {
+export function planKitSettings(settings, { example, allow, home, guardExists }) {
   if (getPath(settings, 'permissions') !== undefined && !isObject(settings.permissions)) throw new Error('permissions in settings.json is not an object');
   if (getPath(settings, 'permissions.allow') !== undefined && !Array.isArray(settings.permissions.allow)) throw new Error('permissions.allow in settings.json is not an array');
   if (getPath(settings, 'hooks') !== undefined && !isObject(settings.hooks)) throw new Error('hooks in settings.json is not an object');
-  // A git guard already wired (the PowerShell or the Node variant, from any path) is not doubled, and the kit records
-  // nothing for it, so uninstall leaves it.
-  const { merged, added } = mergeHooks(settings, hasGuard(settings) ? {} : example, home);
+  // A working git guard already wired (see guardStatus) is not doubled, and the kit records nothing for it, so
+  // uninstall leaves it.
+  const { merged, added } = mergeHooks(settings, hasGuard(settings, guardExists ? { exists: guardExists } : {}) ? {} : example, home);
   const addedAllow = [];
   const have = new Set(Array.isArray(settings.permissions?.allow) ? settings.permissions.allow : []);
   for (const rule of allow) {
@@ -156,5 +219,6 @@ export function kitRecordProblem(kit) {
     if (s.backup !== undefined && s.backup !== null && typeof s.backup !== 'string') return 'kit.settings.backup is not a path';
   }
   if (kit.restore !== undefined && (!isObject(kit.restore) || Object.values(kit.restore).some((v) => typeof v !== 'string'))) return 'kit.restore is not a map of paths';
+  if (kit.copies !== undefined && (!Array.isArray(kit.copies) || kit.copies.some((v) => typeof v !== 'string'))) return 'kit.copies is not a list of paths';
   return null;
 }

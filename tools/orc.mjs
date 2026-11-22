@@ -17,10 +17,10 @@ import { listCases, scoreReport } from './lib/corpus.mjs';
 import { capture, loadRuns, metricsReport, repoTop, DEFAULT_PRICES } from './lib/metrics.mjs';
 import { dispatchPlan, runDispatch, formatCommand, argvProblem, binEnv } from './lib/dispatch.mjs';
 import { mergeHooks, formatLike, readSettings, writeSettings } from './lib/hooks.mjs';
-import { KIT_HOOK_SCRIPTS, KIT_SKILLS, KIT_NOTE, KNOWN_STACKS, presetRules, detectStacks, kitHookExample, planKitSettings, removeKitSettings, kitRecordProblem } from './lib/sprintkit.mjs';
+import { KIT_HOOK_SCRIPTS, KIT_SKILLS, KIT_NOTES, BOARD_IMPORT, KNOWN_STACKS, presetRules, detectStacks, kitHookExample, planKitSettings, removeKitSettings, kitRecordProblem, guardStatus } from './lib/sprintkit.mjs';
 import { decodeText, readText } from './lib/text.mjs';
 import { USAGE, globalHelp, commandHelp } from './lib/help.mjs';
-import { validateArchive, runStandards } from './lib/standards.mjs';
+import { validateArchive, runStandards, backupPath } from './lib/standards.mjs';
 
 const DEFAULT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -153,7 +153,7 @@ function installOptions(opt, manifest, io) {
 
 // The rulebook lines install and status add after the tool notes: the Board line (or the kit's no-board line), then
 // the Setup checkout line.
-const installNotes = (chosen, toolId) => [...(chosen.sprintKit ? [KIT_NOTE] : boardNotes(chosen, toolId)), ...setupNotes()];
+const installNotes = (chosen, toolId) => [...(chosen.sprintKit ? KIT_NOTES : boardNotes(chosen, toolId)), ...setupNotes()];
 
 // The files a kit adds beside the build: the sprint skill under <root>/skills/.
 function kitFiles(repo, adapter) {
@@ -161,13 +161,48 @@ function kitFiles(repo, adapter) {
 }
 
 const SETTINGS_REL = '.claude/settings.json';
+// Two absolute paths name the same file (case-insensitive on Windows and macOS).
+const samePath = (a, b) => {
+  const fold = ['win32', 'darwin'].includes(process.platform) ? (p) => path.resolve(p).toLowerCase() : (p) => path.resolve(p);
+  return fold(a) === fold(b);
+};
 const KIT_NEXT = `start a fresh Claude Code session and check that /sprint and the roster agents are listed; then ask for a sprint (${SETUP}/docs/interview-machine.md).`;
 const KIT_RESTORABLE = 'replace (hand-written; backed up, uninstall restores it)';
 
+// How uninstall undoes a kit's settings.json changes, decided before anything is touched. Throws when settings.json
+// cannot be read (uninstall then refuses). Returns {action, rec, backup, warn?, reason?, original, bom, cleaned}:
+// 'delete' (the kit created the file and it is empty again), 'restore' (nothing else changed: the backup goes back),
+// 'restore-missing' (settings.json is gone: the owner's original goes back), 'write' (only the kit's entries are
+// removed; `reason` says why the backup cannot simply go back) or 'none'.
+function planSettingsUndo(rec, target, backup) {
+  let before = null;
+  let backupWhy = null;
+  if (backup && !fs.existsSync(backup)) backupWhy = `the kit's backup ${backup} is gone`;
+  else if (backup) {
+    try {
+      before = readSettings(backup).settings;
+    } catch (e) {
+      backupWhy = `the kit's backup ${backup} cannot be read (${e instanceof Error ? e.message : String(e)})`;
+    }
+  }
+  const base = { rec, backup };
+  if (!fs.existsSync(target)) {
+    if (before) return { ...base, action: 'restore-missing' };
+    return { ...base, action: 'none', warn: `${target} is gone, so there are no kit entries to remove${backupWhy ? `; ${backupWhy}` : ''}` };
+  }
+  const { original, bom, settings } = readSettings(target);
+  const cleaned = removeKitSettings(settings, rec);
+  const plan = { ...base, original, bom, cleaned };
+  if (rec.fileCreated && !Object.keys(cleaned).length) return { ...plan, action: 'delete' };
+  if (before && isDeepStrictEqual(cleaned, before)) return { ...plan, action: 'restore' };
+  const reason = backupWhy ?? (backup ? 'settings.json changed since install' : 'settings.json holds more than the kit created');
+  return { ...plan, action: 'write', reason, warn: backupWhy ? `${backupWhy}; only the kit's entries are removed from ${target}` : undefined };
+}
+
 // Every path the kit touches or a manifest's kit record names (settings.json, its backup, each restore target and
-// backup) must be a plain path under the tool root that stays inside it on the real file system.
+// backup, each recorded copy) must be a plain path under the tool root that stays inside it on the real file system.
 function kitPathProblems(home, root, kitRec) {
-  const rels = [SETTINGS_REL, ...Object.entries(kitRec?.restore ?? {}).flat(), ...(kitRec?.settings?.backup ? [kitRec.settings.backup] : [])];
+  const rels = [SETTINGS_REL, ...Object.entries(kitRec?.restore ?? {}).flat(), ...(kitRec?.settings?.backup ? [kitRec.settings.backup] : []), ...(kitRec?.copies ?? [])];
   const out = [];
   for (const rel of rels) {
     const t = safeRel(home, rel, root);
@@ -239,7 +274,8 @@ export function buildTool(adapter, roles, models, agentsMd, { extraNotes = [], p
   return { files, errors, warnings, rulebook };
 }
 
-async function buildAll(repo, toolId, { local = true, extraNotes = [], profiles = [] } = {}) {
+// `sprintKit` drops the board.local.md import from the tool notes: a kit machine has no board (its KIT_NOTES say so).
+async function buildAll(repo, toolId, { local = true, extraNotes = [], profiles = [], sprintKit = false } = {}) {
   const roles = loadRoles(repo);
   const loaded = loadProfiles(repo, profiles);
   const models = loadModels(repo, { local });
@@ -247,7 +283,9 @@ async function buildAll(repo, toolId, { local = true, extraNotes = [], profiles 
   const adapters = await loadAdapters(repo);
   const picked = !toolId || toolId === 'all' ? adapters : adapters.filter((a) => a.id === toolId);
   if (!picked.length) throw new Error(`unknown tool ${toolId}; known: ${adapters.map((a) => a.id).join(', ')}`);
-  return picked.map((adapter) => ({ adapter, ...buildTool(adapter, roles, models, agentsMd, { extraNotes, profiles: loaded }) }));
+  return picked
+    .map((adapter) => (sprintKit ? { ...adapter, notes: adapter.notes.replace(BOARD_IMPORT, '') } : adapter))
+    .map((adapter) => ({ adapter, ...buildTool(adapter, roles, models, agentsMd, { extraNotes, profiles: loaded }) }));
 }
 
 // The scripts the tool's example hooks run (adapter.hookScripts), as files under its root: install copies them beside
@@ -594,7 +632,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     } else if (kit) io.out(`sprint kit: stack ${stacks.join(',')}`);
     let built;
     try {
-      [built] = await buildAll(repo, toolId, { extraNotes, profiles: chosen.profiles });
+      [built] = await buildAll(repo, toolId, { extraNotes, profiles: chosen.profiles, sprintKit: kit });
     } catch (e) {
       return fail(e.message);
     }
@@ -640,9 +678,21 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     // The kit's settings.json additions are planned before any write: an unreadable file refuses the whole install.
     let settingsPlan = null;
     if (kit) {
+      let example;
+      try {
+        example = kitHookExample(repo);
+      } catch (e) {
+        return fail(`cannot read ${path.join(repo, 'hooks.node.example.json')} (${e instanceof Error ? e.message : String(e)}); nothing written`);
+      }
+      // The guard.mjs the kit is about to write counts as on disk.
+      const kitGuard = path.join(home, ...root.split('/'), ...KIT_HOOK_SCRIPTS[0].split('/'));
+      const guardExists = (p) => fs.existsSync(p) || samePath(p, kitGuard);
       try {
         const current = readSettings(settingsTarget);
-        settingsPlan = { ...current, ...planKitSettings(current.settings, { example: kitHookExample(repo), allow: presetRules(stacks), home }) };
+        settingsPlan = { ...current, ...planKitSettings(current.settings, { example, allow: presetRules(stacks), home, guardExists }) };
+        for (const s of guardStatus(current.settings, { exists: guardExists }).stale) {
+          io.err(`WARN ${settingsTarget}: the PreToolUse hook${s.matcher ? ` [${s.matcher}]` : ''} "${s.command}" runs ${s.script}, which is not on disk, so it guards nothing; left as it is (remove it by hand)`);
+        }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         const why = e instanceof SyntaxError ? `${settingsTarget} is not valid JSON (${msg})` : (msg.startsWith(settingsTarget) ? msg : `${settingsTarget}: ${msg}`).replace(/; nothing written$/, '');
@@ -698,77 +748,88 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     };
     // The first backup of each file the kit replaced is the one uninstall restores; a re-install keeps it.
     const restore = { ...(priorKit?.restore ?? {}) };
-    for (const { f, target, exists, state } of plan) {
-      if (state === 'KEEP') {
-        io.out(`${opt.apply ? 'kept' : 'would keep'} (hand-copied hook script, differs; --force replaces it, with a backup): ${target}`);
-        continue;
-      }
-      if (opt.apply && state !== 'unchanged') {
-        for (let d = path.dirname(target), rel = path.posix.dirname(f.path); !fs.existsSync(d); d = path.dirname(d), rel = path.posix.dirname(rel)) {
-          if (safeRel(home, rel, adapter.home.root) && !next.dirs.includes(rel)) next.dirs.push(rel);
+    const copies = [...(priorKit?.copies ?? [])];
+    const prior = priorKit?.settings ?? {};
+    // The kit's settings record: the prior one until this run's settings.json write succeeds.
+    let settingsRecord = priorKit?.settings;
+    const withKit = (m) => ({ ...m, options: { ...m.options, sprintKit: true, stacks }, kit: { ...(settingsRecord ? { settings: settingsRecord } : {}), restore, copies } });
+    try {
+      for (const { f, target, exists, state } of plan) {
+        if (state === 'KEEP') {
+          io.out(`${opt.apply ? 'kept' : 'would keep'} (hand-copied hook script, differs; --force replaces it, with a backup): ${target}`);
+          continue;
         }
-        fs.mkdirSync(path.dirname(target), { recursive: true });
-        if (exists) {
-          let backup = `${target}.orc-backup-${when}`;
-          for (let n = 2; fs.existsSync(backup); n++) backup = `${target}.orc-backup-${when}-${n}`;
-          fs.copyFileSync(target, backup);
-          if (kit && !recorded[f.path] && !restore[f.path]) restore[f.path] = f.path + backup.slice(target.length);
-        }
-        const bytes = Buffer.from(f.content, 'utf8');
-        fs.writeFileSync(target, bytes);
-        next.files[f.path] = { sha256: sha256(bytes) };
-      } else if (opt.apply) next.files[f.path] = { sha256: diskHash(target) };
-      const sep = refusedStates.includes(state) ? '' : ':';
-      io.out(`${opt.apply ? 'applied' : 'would'} ${state}${sep} ${target}`);
-    }
-    for (const s of stale) {
-      if (s.state === 'gone') continue;
-      if (s.state === 'delete') {
-        if (opt.apply) fs.rmSync(s.target);
-        io.out(`${opt.apply ? 'deleted' : 'would delete'} (role removed): ${s.target}`);
-      } else {
-        if (opt.apply) next.files[s.rel] = { sha256: s.m.sha256 };
-        io.out(`${opt.apply ? 'kept' : 'would keep'} (role removed, edited since install): ${s.target}`);
+        // A file the kit finds already in place, identical and in no manifest, is the owner's: not recorded, so
+        // uninstall leaves it.
+        const ownerCopy = kit && state === 'unchanged' && !recorded[f.path];
+        if (opt.apply && state !== 'unchanged') {
+          for (let d = path.dirname(target), rel = path.posix.dirname(f.path); !fs.existsSync(d); d = path.dirname(d), rel = path.posix.dirname(rel)) {
+            if (safeRel(home, rel, adapter.home.root) && !next.dirs.includes(rel)) next.dirs.push(rel);
+          }
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          if (exists) {
+            const backup = backupPath(target, when);
+            fs.copyFileSync(target, backup);
+            const backupRel = f.path + backup.slice(target.length);
+            // The owner's file gets a restore entry; a backup of the kit's own earlier copy is recorded as a copy.
+            if (kit && !recorded[f.path] && !restore[f.path]) restore[f.path] = backupRel;
+            else if (kit) copies.push(backupRel);
+          }
+          const bytes = Buffer.from(f.content, 'utf8');
+          fs.writeFileSync(target, bytes);
+          next.files[f.path] = { sha256: sha256(bytes) };
+        } else if (opt.apply && !ownerCopy) next.files[f.path] = { sha256: diskHash(target) };
+        const sep = refusedStates.includes(state) ? '' : ':';
+        io.out(`${opt.apply ? 'applied' : 'would'} ${state}${sep} ${target}${ownerCopy ? ' (already there and not installed by orc: not recorded, uninstall leaves it)' : ''}`);
       }
-    }
-    if (kit) {
-      const s = settingsPlan;
-      const prior = priorKit?.settings ?? {};
-      for (const h of s.hooks) io.out(`${opt.apply ? 'added' : 'would add'} to settings.json ${h.event}${h.matcher ? ` [${h.matcher}]` : ''}: ${h.command}`);
-      for (const r of s.allow) io.out(`${opt.apply ? 'added' : 'would add'} to settings.json permissions.allow: ${r}`);
-      const changed = s.hooks.length + s.allow.length > 0;
-      // One backup, before the kit's first change to the file; a file the kit created needs none.
-      const firstChange = changed && s.original !== null && !prior.backup && !prior.fileCreated;
-      let backupRel = prior.backup ?? null;
-      if (!changed) io.out(`settings.json: nothing to add (${settingsTarget})`);
-      else if (s.original !== null && formatLike(s.original, s.settings) !== s.original) {
-        io.err(`WARN ${settingsTarget} is not in plain indented JSON layout; writing it re-indents the existing content (values and order unchanged)`);
-      }
-      if (changed && opt.apply) {
-        let backup = null;
-        if (firstChange) {
-          backup = `${settingsTarget}.orc-backup-${when}`;
-          for (let n = 2; fs.existsSync(backup); n++) backup = `${settingsTarget}.orc-backup-${when}-${n}`;
-          backupRel = SETTINGS_REL + backup.slice(settingsTarget.length);
+      for (const s of stale) {
+        if (s.state === 'gone') continue;
+        if (s.state === 'delete') {
+          if (opt.apply) fs.rmSync(s.target);
+          io.out(`${opt.apply ? 'deleted' : 'would delete'} (role removed): ${s.target}`);
+        } else {
+          if (opt.apply) next.files[s.rel] = { sha256: s.m.sha256 };
+          io.out(`${opt.apply ? 'kept' : 'would keep'} (role removed, edited since install): ${s.target}`);
         }
-        writeSettings(settingsTarget, s.bom + formatLike(s.original, s.merged), backup);
-        io.out(`${s.original === null ? 'created' : 'updated'} ${settingsTarget}${backup ? ` (backed up: ${backup})` : ''}`);
-      } else if (changed) io.out(`would ${s.original === null ? 'create' : 'update'} ${settingsTarget}${firstChange ? ', after a backup' : ''}`);
-      const uniq = (list, key) => [...new Map(list.map((x) => [key(x), x])).values()];
-      next.options.sprintKit = true;
-      next.options.stacks = stacks;
-      next.kit = {
-        settings: {
+      }
+      if (kit) {
+        const s = settingsPlan;
+        for (const h of s.hooks) io.out(`${opt.apply ? 'added' : 'would add'} to settings.json ${h.event}${h.matcher ? ` [${h.matcher}]` : ''}: ${h.command}`);
+        for (const r of s.allow) io.out(`${opt.apply ? 'added' : 'would add'} to settings.json permissions.allow: ${r}`);
+        const changed = s.hooks.length + s.allow.length > 0;
+        // One backup, before the kit's first change to the file; a file the kit created needs none.
+        const firstChange = changed && s.original !== null && !prior.backup && !prior.fileCreated;
+        let backupRel = prior.backup ?? null;
+        if (!changed) io.out(`settings.json: nothing to add (${settingsTarget})`);
+        else if (s.original !== null && formatLike(s.original, s.settings) !== s.original) {
+          io.err(`WARN ${settingsTarget} is not in plain indented JSON layout; writing it re-indents the existing content (values and order unchanged)`);
+        }
+        if (changed && opt.apply) {
+          let backup = null;
+          if (firstChange) {
+            backup = backupPath(settingsTarget, when);
+            backupRel = SETTINGS_REL + backup.slice(settingsTarget.length);
+          }
+          writeSettings(settingsTarget, s.bom + formatLike(s.original, s.merged), backup);
+          io.out(`${s.original === null ? 'created' : 'updated'} ${settingsTarget}${backup ? ` (backed up: ${backup})` : ''}`);
+        } else if (changed) io.out(`would ${s.original === null ? 'create' : 'update'} ${settingsTarget}${firstChange ? ', after a backup' : ''}`);
+        const uniq = (list, key) => [...new Map(list.map((x) => [key(x), x])).values()];
+        settingsRecord = {
           fileCreated: Boolean(prior.fileCreated) || (changed && s.original === null),
           backup: backupRel,
           containers: uniq([...(prior.containers ?? []), ...s.containers], (c) => c),
           hooks: uniq([...(prior.hooks ?? []), ...s.hooks], (h) => JSON.stringify([h.event, h.matcher ?? null, h.command])),
           allow: uniq([...(prior.allow ?? []), ...s.allow], (r) => r),
-        },
-        restore,
-      };
+        };
+      }
+    } catch (e) {
+      if (!(kit && opt.apply)) throw e;
+      // A kit stopped part way still leaves a manifest naming every file written so far and each owner file's
+      // backup, so uninstall can undo it; the settings record is the new one only if settings.json was written.
+      writeManifest(loaded.file, withKit({ ...next, files: { ...recorded, ...next.files } }));
+      return fail(`install stopped: ${e instanceof Error ? e.message : String(e)}; ${loaded.file} records what was written, so uninstall --apply undoes it`);
     }
-    if (opt.apply) writeManifest(loaded.file, next);
+    if (opt.apply) writeManifest(loaded.file, kit ? withKit(next) : next);
     if (adapter.installNote) io.out(adapter.installNote);
     if (!opt.apply) {
       io.out(`dry run for ${adapter.id}; add --apply to write`);
@@ -815,7 +876,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       const why = escapes(home, root, safeRel(home, rel, root));
       if (why) bad.push(why);
     }
-    // A sprint kit: its settings.json entries are removed and the files it replaced are restored, after the deletes.
+    // A sprint kit: its settings.json entries are removed first (a failed write then leaves the home and the manifest
+    // as they were), then the kit's files are deleted and the files it replaced are restored.
     const kitRec = manifest.kit;
     const settingsTarget = path.join(home, ...SETTINGS_REL.split('/'));
     let settingsStep = null;
@@ -824,10 +886,9 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       if (problem) bad.push(`${file}: ${problem}`);
       else bad.push(...kitPathProblems(home, root, kitRec));
       const rec = kitRec?.settings;
-      if (!problem && rec && ((rec.hooks ?? []).length || (rec.allow ?? []).length) && fs.existsSync(settingsTarget)) {
+      if (!problem && rec && ((rec.hooks ?? []).length || (rec.allow ?? []).length)) {
         try {
-          const current = readSettings(settingsTarget);
-          settingsStep = { ...current, rec, cleaned: removeKitSettings(current.settings, rec) };
+          settingsStep = planSettingsUndo(rec, settingsTarget, rec.backup ? safeRel(home, rec.backup, root) : null);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           bad.push(`${settingsTarget}: cannot remove the sprint kit's entries (${e instanceof SyntaxError ? `not valid JSON: ${msg}` : msg})`);
@@ -837,6 +898,33 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     if (bad.length) {
       bad.forEach((b) => io.err(`refused: ${b}`));
       return fail('nothing deleted: the manifest names unsafe or invalid paths');
+    }
+    // Backups this run leaves behind, with why: listed at the end, so none is left unexplained.
+    const left = new Map();
+    if (settingsStep) {
+      const s = settingsStep;
+      const removing = !['restore-missing', 'none'].includes(s.action);
+      for (const h of removing ? (s.rec.hooks ?? []) : []) io.out(`${opt.apply ? 'removed' : 'would remove'} from settings.json ${h.event}${h.matcher ? ` [${h.matcher}]` : ''}: ${h.command}`);
+      for (const r of removing ? (s.rec.allow ?? []) : []) io.out(`${opt.apply ? 'removed' : 'would remove'} from settings.json permissions.allow: ${r}`);
+      if (s.warn) io.err(`WARN ${s.warn}`);
+      try {
+        if (s.action === 'delete') {
+          if (opt.apply) fs.rmSync(settingsTarget);
+          io.out(`${opt.apply ? 'deleted' : 'would delete'} (created by the sprint kit, now empty): ${settingsTarget}`);
+        } else if (s.action === 'restore' || s.action === 'restore-missing') {
+          // The backup's bytes go back, layout and BOM included.
+          if (opt.apply) fs.renameSync(s.backup, settingsTarget);
+          io.out(`${opt.apply ? 'restored' : 'would restore'} ${settingsTarget} from ${s.backup}${s.action === 'restore-missing' ? ' (settings.json was gone)' : ''}`);
+        } else if (s.action === 'write') {
+          if (opt.apply) writeSettings(settingsTarget, s.bom + formatLike(s.original, s.cleaned));
+          io.out(`${opt.apply ? 'updated' : 'would update'} ${settingsTarget} (${s.reason}, so only the kit's entries are removed)`);
+          if (s.backup && fs.existsSync(s.backup)) left.set(s.backup, `the settings.json from before the kit, kept because ${s.reason}; compare, then delete it`);
+        }
+        // The settings step is done: drop it from the manifest, so a rerun after a later failure does not redo it.
+        if (opt.apply) writeManifest(file, { ...manifest, kit: { ...kitRec, settings: undefined } });
+      } catch (e) {
+        return fail(`nothing deleted: ${settingsTarget}: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
     const kept = {};
     const gone = new Set();
@@ -849,9 +937,9 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       if (opt.apply) {
         if (edited) {
           // Never over an existing backup: it may be the original a sprint kit restores next.
-          let backup = `${target}.orc-backup-${when}`;
-          for (let n = 2; fs.existsSync(backup); n++) backup = `${target}.orc-backup-${when}-${n}`;
+          const backup = backupPath(target, when);
           fs.copyFileSync(target, backup);
+          left.set(backup, `a copy of the kit file ${target}, edited since install, made by this uninstall; safe to delete`);
         }
         fs.rmSync(target);
       }
@@ -864,36 +952,32 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       const backup = safeRel(home, backupRel, root);
       if (kept[rel]) {
         keptRestore[rel] = backupRel;
+        left.set(backup, `the original of ${target}, not restored because the installed file is kept; uninstall --apply --force restores it`);
         io.out(`${opt.apply ? 'not restored' : 'would not restore'} (the installed file is kept): ${target}; the original is ${backup}`);
       } else if (!fs.existsSync(backup)) io.err(`WARN cannot restore ${target}: its backup ${backup} is gone`);
-      else if (fs.existsSync(target) && !gone.has(rel)) io.err(`WARN not restored: ${target} exists; the original is ${backup}`);
-      else {
+      else if (fs.existsSync(target) && !gone.has(rel)) {
+        left.set(backup, `the original of ${target}, not restored because ${target} exists`);
+        io.err(`WARN not restored: ${target} exists; the original is ${backup}`);
+      } else {
         if (opt.apply) fs.renameSync(backup, target);
         io.out(`${opt.apply ? 'restored' : 'would restore'} ${target} from ${backup}`);
       }
     }
-    if (settingsStep) {
-      const { original, bom, rec, cleaned } = settingsStep;
-      for (const h of rec.hooks ?? []) io.out(`${opt.apply ? 'removed' : 'would remove'} from settings.json ${h.event}${h.matcher ? ` [${h.matcher}]` : ''}: ${h.command}`);
-      for (const r of rec.allow ?? []) io.out(`${opt.apply ? 'removed' : 'would remove'} from settings.json permissions.allow: ${r}`);
-      const backup = rec.backup ? safeRel(home, rec.backup, root) : null;
-      let before = null;
-      try {
-        if (backup && fs.existsSync(backup)) before = readSettings(backup).settings;
-      } catch {
-        before = null;
+    if (opt.apply && kitRec !== undefined) {
+      // Every other .orc-backup- file beside a file the kit touched: a copy of a kit file a re-install made (recorded
+      // in kit.copies) or not the kit's at all.
+      const touched = [...Object.keys(manifest.files), ...Object.keys(kitRec?.restore ?? {}), SETTINGS_REL];
+      const dirsSeen = new Set(touched.map((rel) => path.dirname(safeRel(home, rel, root))));
+      for (const d of dirsSeen) {
+        if (!fs.existsSync(d)) continue;
+        for (const name of fs.readdirSync(d).filter((n) => n.includes('.orc-backup-')).sort()) {
+          const p = path.join(d, name);
+          if (left.has(p)) continue;
+          const copy = (kitRec?.copies ?? []).some((rel) => samePath(safeRel(home, rel, root), p));
+          left.set(p, copy ? 'a copy of a kit file, made when a re-install replaced it; safe to delete' : 'not made by this kit (it may be the owner\'s); left alone');
+        }
       }
-      if (rec.fileCreated && !Object.keys(cleaned).length) {
-        if (opt.apply) fs.rmSync(settingsTarget);
-        io.out(`${opt.apply ? 'deleted' : 'would delete'} (created by the sprint kit, now empty): ${settingsTarget}`);
-      } else if (before && isDeepStrictEqual(cleaned, before)) {
-        // Nothing else changed since install: the backup's bytes go back, layout and BOM included.
-        if (opt.apply) fs.renameSync(backup, settingsTarget);
-        io.out(`${opt.apply ? 'restored' : 'would restore'} ${settingsTarget} from ${backup}`);
-      } else {
-        if (opt.apply) writeSettings(settingsTarget, bom + formatLike(original, cleaned));
-        io.out(`${opt.apply ? 'updated' : 'would update'} ${settingsTarget} (changed since install, so only the kit's entries are removed${backup ? `; the original stays at ${backup}` : ''})`);
-      }
+      for (const [p, why] of left) io.out(`left: ${p} (${why})`);
     }
     if (opt.apply) {
       const keep = Object.keys(kept).length > 0;
@@ -931,7 +1015,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     if (artifactRefused(chosen.board, toolId)) return fail(ARTIFACT_ONLY_CLAUDE);
     let built;
     try {
-      [built] = await buildAll(repo, toolId, { extraNotes: installNotes(chosen, toolId), profiles: chosen.profiles });
+      [built] = await buildAll(repo, toolId, { extraNotes: installNotes(chosen, toolId), profiles: chosen.profiles, sprintKit: chosen.sprintKit });
     } catch (e) {
       return fail(e.message);
     }
@@ -955,13 +1039,22 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       if (state !== 'same') clean = false;
       io.out(`${state}: ${target}`);
     }
-    // A kit's settings.json must still hold the guard hook and the preset for the recorded stacks.
+    // A kit's settings.json must still hold a working guard, every allow rule the kit ever added (all stacks) and the
+    // preset for the recorded stacks.
     if (kit) {
       const target = path.join(home, ...SETTINGS_REL.split('/'));
       let missing;
+      let example;
+      try {
+        example = kitHookExample(repo);
+      } catch (e) {
+        return fail(`cannot read ${path.join(repo, 'hooks.node.example.json')} (${e instanceof Error ? e.message : String(e)})`);
+      }
+      const recordedAllow = Array.isArray(loaded.manifest?.kit?.settings?.allow) ? loaded.manifest.kit.settings.allow.filter((r) => typeof r === 'string') : [];
       try {
         const { settings } = readSettings(target);
-        const p = planKitSettings(settings, { example: kitHookExample(repo), allow: presetRules(chosen.stacks ?? []), home });
+        const allow = [...new Set([...presetRules(chosen.stacks ?? []), ...recordedAllow])];
+        const p = planKitSettings(settings, { example, allow, home });
         missing = [...p.hooks.map((h) => `${h.event}${h.matcher ? ` [${h.matcher}]` : ''}: ${h.command}`), ...p.allow.map((r) => `permissions.allow: ${r}`)];
       } catch (e) {
         missing = [`unreadable (${e instanceof Error ? e.message : String(e)})`];
