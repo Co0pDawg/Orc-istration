@@ -52,8 +52,11 @@ function populatedHome({ guard = true } = {}) {
   const isGuard = (g) => g.hooks.some((h) => /guard\.ps1/.test(h.command));
   if (!guard) settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter((g) => !isGuard(g));
   else {
-    // The owner's guard script is really there, at the path its hook names.
-    for (const h of settings.hooks.PreToolUse.filter(isGuard).flatMap((g) => g.hooks)) h.command = h.command.replace('C:\\Users\\<you>', home);
+    // The owner's guard script is really there, at the path its hook names. Replace the whole Windows path, not just
+    // its prefix: on Linux the example's backslashes would stay literal and the script would read as missing.
+    const guardPath = path.join(claude, 'tools', 'guard.ps1');
+    for (const h of settings.hooks.PreToolUse.filter(isGuard).flatMap((g) => g.hooks)) h.command = h.command.replace('C:\\Users\\<you>\\.claude\\tools\\guard.ps1', guardPath);
+    assert.ok(settings.hooks.PreToolUse.filter(isGuard).every((g) => g.hooks.every((h) => !/guard\.ps1/.test(h.command) || h.command.includes(guardPath))), 'the fixture points the guard hook at the real file');
     fs.mkdirSync(path.join(claude, 'tools'));
     fs.writeFileSync(path.join(claude, 'tools', 'guard.ps1'), '# the owner\'s guard\n');
   }
