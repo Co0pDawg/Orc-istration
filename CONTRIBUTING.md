@@ -21,7 +21,7 @@ Edit the sources. Never hand-edit a generated file; regenerate it.
 | `review/` | The review panel: procedure, explorer contract, lane checklists, calibration, regression corpus and metrics formats |
 | `workflows/*.md`, `templates/` | The portable workflows (`/start`, `/draft-pr` and others) and the target-repo rulebook template |
 | `orchestration/standards.md`, `orchestration/sprint.md` | The standards setup procedure and sprint mode |
-| `skills/*/SKILL.md` | Claude Code skills (copied into `~/.claude/skills` by hand) |
+| `skills/*/SKILL.md` | Claude Code skills (copied into `~/.claude/skills` by hand; `install --sprint-kit` copies `skills/sprint`) |
 | `.claude/skills/*/SKILL.md` | Project skills for developing this repo, such as `ship-prompts` (loaded only in a session opened here; `.claude/settings.json` stays untracked) |
 | `commands/*.md` (hand-written ones) | Claude Code commands for the workflows; the review-panel commands are generated (below) |
 
@@ -79,10 +79,11 @@ The repo is designed to be checked out as `~/.claude`, but you can develop in a 
 ## Where things are
 
 - `tools/orc.mjs`: the CLI. Loads roles, models and adapters, builds each tool (`buildTool`), and dispatches the commands.
-- `tools/lib/`: `frontmatter.mjs` (frontmatter, generated marker), `roles.mjs` (role parsing), `models.mjs` (models validation), `toml.mjs` (Codex TOML), `manifest.mjs` (install manifest, path safety), `text.mjs` (the one text reader), `help.mjs` (the help table), `brief.mjs`, `reviewtier.mjs`, `costlog.mjs`, `dispatch.mjs`, `hooks.mjs` (the method-tooling commands), `standards.mjs` (the standards archive, detect and apply), `calibration.mjs`, `corpus.mjs` and `metrics.mjs` (the review panel's calibration, regression corpus and metrics).
+- `tools/lib/`: `frontmatter.mjs` (frontmatter, generated marker), `roles.mjs` (role parsing), `models.mjs` (models validation), `toml.mjs` (Codex TOML), `manifest.mjs` (install manifest, path safety), `text.mjs` (the one text reader), `help.mjs` (the help table), `brief.mjs`, `reviewtier.mjs`, `costlog.mjs`, `dispatch.mjs`, `hooks.mjs` (the method-tooling commands; also reads and writes `settings.json`), `sprintkit.mjs` (the sprint kit: presets, stack detection, the `settings.json` plan and removal), `standards.mjs` (the standards archive, detect and apply), `calibration.mjs`, `corpus.mjs` and `metrics.mjs` (the review panel's calibration, regression corpus and metrics).
 - `tests/orc.test.mjs`: goldens, roles, frontmatter, caps, `check`, `install`, rulebook hygiene.
 - `tests/hardening.test.mjs`: option parsing, refusals, stale agents, YAML quoting, running through a junction, BOM and UTF-16 input, first differing line.
 - `tests/manifest.test.mjs`: install manifest, re-install, `uninstall`, `status`, symlink and junction refusals.
+- `tests/sprintkit.test.mjs`: `install --sprint-kit` over real home shapes (none, populated, invalid, re-applied, a full install), the `settings.json` merge and restore, stack detection, presets, and the onboarding doc.
 - `tests/tooling.test.mjs`: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks`, the board reminder, models validation, `golden`, `help`, the generated marker.
 - `tests/standards.test.mjs`: `standards list`, `show`, `detect` and `apply`, and the archive validation in `check`.
 - `tests/guard.test.mjs`: the git guard, `tools/guard.mjs` and `tools/guard.ps1` through one table of PreToolUse payloads in real temporary repos (both hooks must give the same decision), the read-only role list against `roles/*.md`, fail-open lines, and the example-file wiring.
