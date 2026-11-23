@@ -145,6 +145,7 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks`, `standards`; review panel: `calibration`, `corpus`, `metrics`; `help` |
 | `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them), install, check, tooling, standards and review-panel tool tests |
 | `CONTRIBUTING.md` | How to change this repo: sources vs generated files, the edit loop, traps |
+| `LICENSE` | MIT |
 | `docs/cli.md` | The full command reference |
 | `orchestration/README.md` | Cost-log format and review questions; the anomaly log and its promotion table |
 | `standards/`, `orchestration/standards.md`, `skills/repo-standards/` | The coding-standards archive (format in `standards/README.md`), the tool-neutral setup procedure, and its Claude Code skill |
@@ -296,6 +297,10 @@ If git reports "dubious ownership", run `git config --global --add safe.director
 Agents and people changing this repo: start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Push a branch and open a pull request against `main`. Report bugs and ideas in [Issues](https://github.com/Co0pDawg/Orc-istration/issues).
+
+## License
+
+[MIT](LICENSE). `workflows/grill.md` is adapted from mattpocock-skills, also MIT; its notice is in [workflows/LICENSE-mattpocock-skills.txt](workflows/LICENSE-mattpocock-skills.txt).
 
 ---
 
