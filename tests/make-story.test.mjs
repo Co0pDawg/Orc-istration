@@ -69,3 +69,23 @@ test('make-story: a template without the sprint-events block exits 1', () => {
   assert.match(r.stderr, /exactly one sprint-events block; found 0/);
   assert.equal(fs.existsSync(path.join(dir, 'docs', 'story.html')), false);
 });
+
+test('make-story: a template with two sprint-events blocks exits 1 and writes nothing', () => {
+  const block = '<script type="application/json" id="sprint-events">{}</script>';
+  const dir = setup({ 'events.json': JSON.stringify(EVENTS), 'meta.json': JSON.stringify(META), 'two.html': `<!doctype html>${block}${block}` });
+  const r = run(dir, ['--template', path.join(dir, 'two.html')]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /exactly one sprint-events block; found 2/);
+  assert.equal(fs.existsSync(path.join(dir, 'docs', 'story.html')), false);
+});
+
+test('make-story: runs when started through a junction or symlink to its folder', () => {
+  const dir = setup({ 'events.json': JSON.stringify(EVENTS), 'meta.json': JSON.stringify(META) });
+  const link = path.join(dir, 'linked-sprint');
+  fs.symlinkSync(path.dirname(SCRIPT), link, 'junction');
+  const out = path.join(dir, 'docs', 'story.html');
+  const r = spawnSync(process.execPath, [path.join(link, 'make-story.mjs'), '--events', path.join(dir, 'events.json'), '--meta', path.join(dir, 'meta.json'), '--out', out], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.existsSync(out), true);
+  fs.rmSync(link, { recursive: false, force: true });
+});

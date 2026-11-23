@@ -88,6 +88,16 @@ function main(argv) {
   process.stdout.write(`make-story: wrote ${args.out} (${events.length} events)\n`);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Real paths on both sides, as the other tools do, so a run through a junction or symlink still runs.
+function isMain() {
+  if (!process.argv[1]) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isMain()) {
   main(process.argv.slice(2));
 }

@@ -25,7 +25,7 @@ The sprint starts by finding out what the client needs. The person driving the s
 
 - **Live.** The interviewer or stakeholder is the client, and the user asks the questions. The AI may suggest questions and turn the user's notes into the document, but it never invents a requirement the client did not state. An assumption the user makes is written as an assumption, then confirmed or left open.
 - **Practice.** The AI plays the client from a brief it keeps hidden. It answers in character and only what is asked, never volunteers the hidden criteria, and reveals the full hidden list only after the build ends, so the user can score how many they found.
-  - **Source.** The hidden brief is an exercise the user has not read (pasted unread, or named as a file), or one the AI writes for the user's chosen stack.
+  - **Source.** The hidden brief is an exercise the user has not read (pasted unread, or named as a file kept outside the project repo), or one the AI writes for the user's chosen stack.
   - **Storage.** Until the reveal it stays in session scratch or the AI's own context only: out of the project repo, out of `REQUIREMENTS.md`, out of every builder and refuter brief, and out of the events file.
   - **Reveal.** After the build, the AI shows the full hidden list and the score: hidden criteria found out of the total. The hidden brief may then be added to the repo as `docs/hidden-brief.md`, with that score.
 
