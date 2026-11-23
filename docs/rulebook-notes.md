@@ -101,6 +101,7 @@ A reason the rulebook carries again is dropped from this list (its board, inline
 - SQL command batch, why: the in-memory provider hides statement order and FK enforcement.
 - Ticket decisions, example deferral: "ads deferred: needs a nonce-based CSP and a consent banner".
 - Cost log, why: the Loop signal lets the tier rule be tuned from evidence; the context sizes let a review compare orchestrator spend against subagent spend.
+- Anomaly log, why (2026-11-22): 32 entries above rest on one incident each, because an incident with no rule had nowhere to go except into a rule; the log holds it until it repeats. No run has tested this yet.
 - Rate-limit guard, why: a rate-limited dispatch costs the launch and the wait and returns nothing.
 - No `git stash` in a worktree, why: every worktree shares one stash stack.
 - Never pipe an app-starting step, why: the app inherits the pipe and the capture waits for it forever.
