@@ -144,7 +144,7 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `docs/cli.md` | The full command reference |
 | `orchestration/README.md` | Cost-log format and review questions |
 | `standards/`, `orchestration/standards.md`, `skills/repo-standards/` | The coding-standards archive (format in `standards/README.md`), the tool-neutral setup procedure, and its Claude Code skill |
-| `orchestration/sprint.md`, `skills/sprint/` | Sprint mode: a timeboxed build (default 45 minutes) that waives the board, standards setup, review panel and cost log for one task, and its Claude Code skill, the story-page template and the shared theme |
+| `orchestration/sprint.md`, `skills/sprint/` | Sprint mode: a timeboxed build (default 45 minutes) that waives the board, standards setup, review panel and cost log for one task, and its Claude Code skill, the story-page template with its `make-story.mjs` filler, and the shared theme |
 | `skills/board/`, `skills/brief/`, `skills/wrap-up/` | Claude Code skills for the routine steps of an orchestrated task: board writes, marching orders, and the finish |
 | `.claude/skills/ship-prompts/` | Project skill for contributors: regenerate, test and ship a change to this repo |
 | `docs/` | Rulebook incident notes; the tracker contract and how to adopt a repo; outlines for unattended runs and project memory |

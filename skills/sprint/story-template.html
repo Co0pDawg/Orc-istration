@@ -6,8 +6,8 @@
 <title>How this was built</title>
 <!--
   "How this was built": the sprint story page (orchestration/sprint.md, polish ladder rung 6).
-  Copy this file to docs/story.html and replace the contents of the "sprint-events" block below with
-  {"meta": {...}, "events": <sprint-events.json>}, writing every "<" in the inlined JSON as \u003c.
+  Fill it with make-story.mjs beside this file: it writes docs/story.html with the "sprint-events" block
+  below set to {"meta": <story-meta.json>, "events": <sprint-events.json>}, escaped for a script element.
   The page reads nothing else: no fetch and no network, so it works opened straight from disk.
 
   The link below fits docs/story.html with the shared theme copied to src/theme/. Adjust the path if the
@@ -22,6 +22,7 @@
   :where(main section) { margin-top: 1.5rem; }
   :where(.ui-brand) { margin: 0; font-weight: 600; color: #555; }
   :where(.story-sub) { margin: 0.25rem 0 0; color: #555; }
+  :where(.story-foot) { color: #555; }
   :where(.story-tiles) { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.75rem; list-style: none; padding: 0; margin: 0; }
   :where(.ui-card) { border: 1px solid #ddd; border-radius: 8px; padding: 0.75rem; background: #fff; }
   :where(.story-tile-value) { display: block; font-size: 1.4rem; font-weight: 600; }
@@ -38,7 +39,7 @@
   :where(.story-refs) { font-family: ui-monospace, monospace; font-size: 0.85rem; color: #555; margin: 0.15rem 0 0; }
   @media (prefers-color-scheme: dark) {
     :where(body) { background: #161618; color: #eee; }
-    :where(.story-sub, .ui-timeline-time, .story-refs) { color: #aaa; }
+    :where(.story-sub, .story-foot, .ui-timeline-time, .story-refs) { color: #aaa; }
     :where(.ui-card, .ui-timeline-item) { background: #222; border-color: #333; }
     :where(.ui-timeline-item[data-kind="correction"]) { background: #2a1a18; border-color: #e57366; }
   }
@@ -70,7 +71,7 @@
     <ol class="ui-timeline" id="story-timeline" role="list"></ol>
   </section>
 </main>
-<footer class="story-sub">
+<footer class="story-foot">
   <p>Built in sprint mode with Orc-istration</p>
 </footer>
 
@@ -123,14 +124,26 @@
     const d = new Date(iso);
     return Number.isNaN(d.getTime()) ? null : d;
   };
+  // Clock times use the sprint's own offset (the one on meta.start), not the viewer's time zone.
+  let zone = null;
+  const offsetMinutes = (iso) => {
+    const m = typeof iso === 'string' ? /(Z|([+-])(\d{2}):?(\d{2}))$/.exec(iso) : null;
+    if (!m) return null;
+    if (m[1] === 'Z') return 0;
+    return (m[2] === '-' ? -1 : 1) * (Number(m[3]) * 60 + Number(m[4]));
+  };
   const clockTime = (iso) => {
     const d = time(iso);
-    return d ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : DASH;
+    if (!d) return DASH;
+    if (zone === null) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const local = new Date(d.getTime() + zone * 60000);
+    const h = local.getUTCHours();
+    return ((h % 12) || 12) + ':' + String(local.getUTCMinutes()).padStart(2, '0') + (h < 12 ? ' AM' : ' PM');
   };
   const minutesBetween = (a, b) => {
     const x = time(a);
     const y = time(b);
-    return x && y ? Math.round((y - x) / 60000) : null;
+    return x && y ? Math.floor((y - x) / 60000) : null;
   };
   const isObject = (v) => v !== null && typeof v === 'object';
 
@@ -144,6 +157,7 @@
     return;
   }
   const meta = isObject(data) && isObject(data.meta) ? data.meta : {};
+  zone = offsetMinutes(meta.start);
   const events = isObject(data) && Array.isArray(data.events) ? data.events.filter(isObject) : [];
   events.sort((a, b) => (time(a.at) || 0) - (time(b.at) || 0));
 
