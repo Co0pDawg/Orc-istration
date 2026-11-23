@@ -37,11 +37,13 @@
   :where(.story-title) { font-weight: 600; margin: 0; }
   :where(.story-detail) { margin: 0.15rem 0 0; }
   :where(.story-refs) { font-family: ui-monospace, monospace; font-size: 0.85rem; color: #555; margin: 0.15rem 0 0; }
+  :where(#story-error:not([hidden])) { border: 1px solid #c0392b; border-left-width: 4px; padding: 0.75rem; color: #8e1b10; background: #fff4f2; }
   @media (prefers-color-scheme: dark) {
     :where(body) { background: #161618; color: #eee; }
-    :where(.story-sub, .story-foot, .ui-timeline-time, .story-refs) { color: #aaa; }
+    :where(.story-sub, .story-foot, .ui-timeline-time, .story-refs, .ui-brand) { color: #aaa; }
     :where(.ui-card, .ui-timeline-item) { background: #222; border-color: #333; }
     :where(.ui-timeline-item[data-kind="correction"]) { background: #2a1a18; border-color: #e57366; }
+    :where(#story-error:not([hidden])) { color: #f4b4ab; background: #2a1a18; border-color: #e57366; }
   }
 </style>
 <link rel="stylesheet" href="../src/theme/theme.css">
@@ -75,7 +77,7 @@
   <p>Built in sprint mode with Orc-istration</p>
 </footer>
 
-<!-- Illustrative sample only. Replace it with this sprint's meta and its sprint-events.json. -->
+<!-- make-story.mjs fills this block from story-meta.json and sprint-events.json. The sample below is illustrative only. -->
 <script type="application/json" id="sprint-events">
 {
   "meta": {
@@ -88,7 +90,8 @@
       { "id": "AC-1", "text": "A user can add an item and see it in the list", "status": "met" },
       { "id": "AC-2", "text": "An empty item is rejected with a message", "status": "not met" }
     ],
-    "tests": { "passed": 6, "total": 6 }
+    "tests": { "passed": 6, "total": 6 },
+    "hidden": { "found": 3, "total": 4 }
   },
   "events": [
     { "at": "2026-01-05T10:07:00-05:00", "kind": "requirement", "title": "Requirements agreed", "refs": ["AC-1", "AC-2"] },
@@ -101,17 +104,131 @@
 }
 </script>
 <script>
+'use strict';
+// The data-to-view logic as small pure functions; tests/story-page.test.mjs runs this script in node.
+const storyLogic = (() => {
+  const KINDS = ['requirement', 'decision', 'build', 'review', 'correction', 'milestone'];
+  const DASH = '\u2013';
+  const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+  // The UTC offset in minutes from an ISO time's suffix, or null when it has none.
+  const offsetMinutes = (iso) => {
+    const m = typeof iso === 'string' ? /(Z|([+-])(\d{2}):?(\d{2}))$/.exec(iso) : null;
+    if (!m) return null;
+    if (m[1] === 'Z') return 0;
+    return (m[2] === '-' ? -1 : 1) * (Number(m[3]) * 60 + Number(m[4]));
+  };
+
+  // A Date, or null. Once the sprint's zone is known, a time without an offset is invalid too.
+  const parseTime = (iso, zone) => {
+    if (typeof iso !== 'string') return null;
+    if (zone !== null && offsetMinutes(iso) === null) return null;
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+
+  // What the block's root lacks, or null when it is {"meta": {...}, "events": [...]}.
+  const rootProblem = (data) => {
+    const missing = [];
+    if (!isObject(data) || !isObject(data.meta)) missing.push('a "meta" object');
+    if (!isObject(data) || !Array.isArray(data.events)) missing.push('an "events" array');
+    if (!missing.length) return null;
+    return 'The sprint-events block must hold {"meta": {...}, "events": [...]}, but it is missing ' +
+      missing.join(' and ') + '. Fill it with make-story.mjs.';
+  };
+
+  // Events in time order. Those without a valid time go last, in the order they were recorded.
+  const sortEvents = (events, zone) => events
+    .filter(isObject)
+    .map((e, i) => ({ e, i, t: parseTime(e.at, zone) }))
+    .sort((a, b) => {
+      if ((a.t === null) !== (b.t === null)) return a.t === null ? 1 : -1;
+      return (a.t === null ? 0 : a.t - b.t) || a.i - b.i;
+    })
+    .map((x) => x.e);
+
+  const kindOf = (e) => (KINDS.includes(e.kind) ? e.kind : 'other');
+  const kindLabel = (kind) => kind.charAt(0).toUpperCase() + kind.slice(1);
+
+  // Clock times use the sprint's own offset (the one on meta.start), not the viewer's time zone.
+  const clockTime = (iso, zone) => {
+    const d = parseTime(iso, zone);
+    if (!d) return DASH;
+    if (zone === null) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const local = new Date(d.getTime() + zone * 60000);
+    const h = local.getUTCHours();
+    return ((h % 12) || 12) + ':' + String(local.getUTCMinutes()).padStart(2, '0') + (h < 12 ? ' AM' : ' PM');
+  };
+
+  const minutesBetween = (a, b, zone) => {
+    const x = parseTime(a, zone);
+    const y = parseTime(b, zone);
+    return x && y ? Math.floor((y - x) / 60000) : null;
+  };
+
+  const eventTime = (e, start, zone) => {
+    const late = e.late === true ? ', noted late' : '';
+    if (!parseTime(e.at, zone)) return 'time not recorded' + late;
+    const mins = minutesBetween(start, e.at, zone);
+    return clockTime(e.at, zone) + (mins === null ? '' : ' (' + mins + ' min)') + late;
+  };
+
+  // Exact statuses only; anything else is unknown and never counts as met.
+  const acStatus = (status) => {
+    if (status === 'met') return ['ok', 'Met'];
+    if (status === 'not met') return ['danger', 'Not met'];
+    return ['info', 'Unknown'];
+  };
+
+  const acsOf = (meta) => (Array.isArray(meta.acs) ? meta.acs.filter(isObject) : []);
+
+  // Minutes from the start to the last event with a valid time, or null.
+  const elapsed = (meta, sorted, zone) => {
+    const timed = sorted.filter((e) => parseTime(e.at, zone));
+    return timed.length ? minutesBetween(meta.start, timed[timed.length - 1].at, zone) : null;
+  };
+
+  const tiles = (meta, sorted, zone) => {
+    const acs = acsOf(meta);
+    const met = acs.filter((a) => acStatus(a.status)[0] === 'ok').length;
+    const unknown = acs.filter((a) => acStatus(a.status)[0] === 'info').length;
+    const core = minutesBetween(meta.start, meta.coreComplete, zone);
+    const tests = isObject(meta.tests) ? meta.tests : null;
+    let testText = DASH;
+    if (tests && tests.total !== undefined) {
+      testText = (tests.passed !== undefined ? tests.passed + ' of ' : '') + tests.total;
+    }
+    const list = [
+      ['Core complete', core === null ? DASH : core + ' min'],
+      ['Acceptance criteria met', acs.length ? met + ' of ' + acs.length + (unknown ? ' (' + unknown + ' unknown)' : '') : DASH]
+    ];
+    if (isObject(meta.hidden)) list.push(['Hidden criteria found', meta.hidden.found + ' of ' + meta.hidden.total]);
+    list.push(
+      ['Tests passing', testText],
+      ['Reviews', sorted.filter((e) => kindOf(e) === 'review').length],
+      ['Self-corrections', sorted.filter((e) => kindOf(e) === 'correction').length]
+    );
+    return list;
+  };
+
+  return {
+    DASH, isObject, offsetMinutes, parseTime, rootProblem, sortEvents, kindOf, kindLabel, clockTime,
+    minutesBetween, eventTime, acStatus, acsOf, elapsed, tiles
+  };
+})();
+
 (() => {
-  'use strict';
-  // Theme class names (skills/sprint/theme/theme.css) in one place, so they are easy to realign.
+  const L = storyLogic;
+  // The theme class names this script sets (skills/sprint/theme/theme.css), so they are easy to realign.
   const THEME = {
+    alert: 'ui-alert ui-alert--danger',
+    card: 'ui-card',
     chip: (variant) => 'ui-chip ui-chip--' + variant,
     item: 'ui-timeline-item',
     kind: 'ui-timeline-kind',
     time: 'ui-timeline-time',
     text: 'ui-timeline-text'
   };
-  const DASH = String.fromCharCode(0x2013);
 
   const el = (tag, cls, text) => {
     const n = document.createElement(tag);
@@ -120,46 +237,28 @@
     return n;
   };
   const byId = (id) => document.getElementById(id);
-  const time = (iso) => {
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? null : d;
+  const showError = (message) => {
+    const p = byId('story-error');
+    p.className = THEME.alert;
+    p.textContent = message;
+    p.hidden = false;
   };
-  // Clock times use the sprint's own offset (the one on meta.start), not the viewer's time zone.
-  let zone = null;
-  const offsetMinutes = (iso) => {
-    const m = typeof iso === 'string' ? /(Z|([+-])(\d{2}):?(\d{2}))$/.exec(iso) : null;
-    if (!m) return null;
-    if (m[1] === 'Z') return 0;
-    return (m[2] === '-' ? -1 : 1) * (Number(m[3]) * 60 + Number(m[4]));
-  };
-  const clockTime = (iso) => {
-    const d = time(iso);
-    if (!d) return DASH;
-    if (zone === null) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    const local = new Date(d.getTime() + zone * 60000);
-    const h = local.getUTCHours();
-    return ((h % 12) || 12) + ':' + String(local.getUTCMinutes()).padStart(2, '0') + (h < 12 ? ' AM' : ' PM');
-  };
-  const minutesBetween = (a, b) => {
-    const x = time(a);
-    const y = time(b);
-    return x && y ? Math.floor((y - x) / 60000) : null;
-  };
-  const isObject = (v) => v !== null && typeof v === 'object';
 
   let data;
   try {
     data = JSON.parse(byId('sprint-events').textContent);
   } catch {
-    const p = byId('story-error');
-    p.textContent = 'The sprint-events block could not be read as JSON.';
-    p.hidden = false;
+    showError('The sprint-events block could not be read as JSON. Fill it with make-story.mjs.');
     return;
   }
-  const meta = isObject(data) && isObject(data.meta) ? data.meta : {};
-  zone = offsetMinutes(meta.start);
-  const events = isObject(data) && Array.isArray(data.events) ? data.events.filter(isObject) : [];
-  events.sort((a, b) => (time(a.at) || 0) - (time(b.at) || 0));
+  const problem = L.rootProblem(data);
+  if (problem) {
+    showError(problem);
+    return;
+  }
+  const meta = data.meta;
+  const zone = L.offsetMinutes(meta.start);
+  const events = L.sortEvents(data.events, zone);
 
   // Header: the project title, the clock and the elapsed time.
   if (meta.title) {
@@ -167,45 +266,29 @@
     document.title = 'How ' + meta.title + ' was built';
   }
   byId('story-clock').textContent = (meta.clock ? meta.clock + '-minute sprint' : 'Sprint') +
-    (meta.start ? ', ' + clockTime(meta.start) + ' to ' + clockTime(meta.deadline) : '') + '.';
-  const elapsed = minutesBetween(meta.start, events.length ? events[events.length - 1].at : null);
+    (meta.start ? ', ' + L.clockTime(meta.start, zone) + ' to ' + L.clockTime(meta.deadline, zone) : '') + '.';
+  const elapsed = L.elapsed(meta, events, zone);
   byId('story-elapsed').textContent = elapsed === null ? '' : 'Elapsed: ' + elapsed + ' min to the last event.';
 
   // Stat tiles
-  const acs = Array.isArray(meta.acs) ? meta.acs.filter(isObject) : [];
-  const met = acs.filter((a) => a.status === 'met').length;
-  const core = minutesBetween(meta.start, meta.coreComplete);
-  const tests = isObject(meta.tests) ? meta.tests : null;
-  let testText = DASH;
-  if (tests && tests.total !== undefined) {
-    testText = (tests.passed !== undefined ? tests.passed + ' of ' : '') + tests.total;
-  }
-  const tiles = [
-    ['Core complete', core === null ? DASH : core + ' min'],
-    ['Acceptance criteria met', acs.length ? met + ' of ' + acs.length : DASH],
-    ['Tests passing', testText],
-    ['Reviews', events.filter((e) => e.kind === 'review').length],
-    ['Self-corrections', events.filter((e) => e.kind === 'correction').length]
-  ];
   const tileList = byId('story-tiles');
-  for (const [label, value] of tiles) {
-    const li = el('li', 'ui-card');
+  for (const [label, value] of L.tiles(meta, events, zone)) {
+    const li = el('li', THEME.card);
     li.appendChild(el('span', 'story-tile-value', value));
     li.appendChild(el('span', 'story-tile-label', label));
     tileList.appendChild(li);
   }
 
-  // Requirements: met or not-met chips, with the status in text as well as colour.
+  // Requirements: met, not-met or unknown chips, with the status in text as well as colour.
+  const acs = L.acsOf(meta);
   const acList = byId('story-acs');
   if (!acs.length) acList.appendChild(el('li', null, 'No acceptance criteria recorded.'));
   for (const a of acs) {
     const li = el('li');
-    let status = ['info', a.status ? String(a.status) : 'Unknown'];
-    if (a.status === 'met') status = ['ok', 'Met'];
-    if (a.status === 'not met') status = ['danger', 'Not met'];
-    li.appendChild(el('span', THEME.chip(status[0]), status[1]));
+    const [variant, label] = L.acStatus(a.status);
+    li.appendChild(el('span', THEME.chip(variant), label));
     li.appendChild(document.createTextNode(' '));
-    li.appendChild(el('strong', null, a.id || DASH));
+    li.appendChild(el('strong', null, a.id || L.DASH));
     li.appendChild(document.createTextNode(a.text ? ' ' + a.text : ''));
     acList.appendChild(li);
   }
@@ -214,18 +297,16 @@
   const list = byId('story-timeline');
   if (!events.length) list.appendChild(el('li', null, 'No events recorded.'));
   for (const e of events) {
-    const kind = typeof e.kind === 'string' && /^[a-z]+$/.test(e.kind) ? e.kind : 'other';
+    const kind = L.kindOf(e);
     const li = el('li', THEME.item);
     li.setAttribute('data-kind', kind);
-    li.appendChild(el('span', THEME.kind, kind.charAt(0).toUpperCase() + kind.slice(1)));
+    li.appendChild(el('span', THEME.kind, L.kindLabel(kind)));
     li.appendChild(document.createTextNode(' '));
-    const mins = minutesBetween(meta.start, e.at);
-    const t = el('time', THEME.time, clockTime(e.at) + (mins === null ? '' : ' (' + mins + ' min)') +
-      (e.late === true ? ', noted late' : ''));
-    if (time(e.at)) t.setAttribute('datetime', e.at);
+    const t = el('time', THEME.time, L.eventTime(e, meta.start, zone));
+    if (L.parseTime(e.at, zone)) t.setAttribute('datetime', e.at);
     li.appendChild(t);
     const body = el('div', THEME.text);
-    body.appendChild(el('p', 'story-title', e.title || DASH));
+    body.appendChild(el('p', 'story-title', e.title || L.DASH));
     if (e.detail) body.appendChild(el('p', 'story-detail', e.detail));
     if (kind === 'correction') {
       body.appendChild(el('p', 'story-detail', 'Caught by: ' + (e.caughtBy || 'not recorded')));

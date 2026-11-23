@@ -1,8 +1,9 @@
 /*
  * Sprint theme. One token layer, four looks, ui- components.
  * Clean Pro is the default (light and dark follow prefers-color-scheme).
- * The alternates set data-theme on <html> and only override tokens; the one
- * exception is neon's focus glow, scoped to neon so other looks set no filter.
+ * The alternates set data-theme on <html>; each overrides tokens and sets
+ * color-scheme. The other exception is neon's focus glow, a rule scoped to neon
+ * so other looks set no filter.
  * Components read tokens only. Every text and control pair meets WCAG AA:
  * text 4.5:1, borders and focus rings 3:1 (see README.md).
  */
@@ -69,7 +70,8 @@
 
 /* ---- Tokens: Clean Pro, dark ---- */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) {
+  :root:not([data-theme]),
+  :root[data-theme="clean-pro"] {
     --ui-bg: #0b1120;
     --ui-surface: #111827;
     --ui-surface-2: #1e293b;
@@ -621,6 +623,21 @@ body {
 .ui-timeline-item[data-kind="review"] .ui-timeline-kind {
   color: var(--ui-warn);
   background: var(--ui-warn-bg);
+}
+
+.ui-timeline-item[data-kind="build"] .ui-timeline-kind {
+  color: var(--ui-ok);
+  background: var(--ui-ok-bg);
+}
+
+.ui-timeline-item[data-kind="milestone"] .ui-timeline-kind {
+  color: var(--ui-text);
+  background: var(--ui-surface);
+}
+
+.ui-timeline-item[data-kind="milestone"]::before {
+  border-color: var(--ui-accent-text);
+  background: var(--ui-accent-text);
 }
 
 .ui-timeline-item[data-kind="correction"] {

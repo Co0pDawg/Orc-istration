@@ -24,10 +24,10 @@ Sprint mode overrides the lite modes (`Orc orchestration: lite`, `Orc review: li
 The sprint starts by finding out what the client needs. The person driving the sprint (the user) leads it in one of two modes:
 
 - **Live.** The interviewer or stakeholder is the client, and the user asks the questions. The AI may suggest questions and turn the user's notes into the document, but it never invents a requirement the client did not state. An assumption the user makes is written as an assumption, then confirmed or left open.
-- **Practice.** The AI plays the client from a brief it keeps hidden. It answers in character and only what is asked, never volunteers the hidden criteria, and reveals the full hidden list only after the build ends, so the user can score how many they found.
+- **Practice.** The AI plays the client from a brief it keeps hidden. It answers in character and only what is asked, never volunteers the hidden criteria, and reveals the full hidden list at core complete, so the user can score how many they found.
   - **Source.** The hidden brief is an exercise the user has not read (pasted unread, or named as a file kept outside the project repo), or one the AI writes for the user's chosen stack.
-  - **Storage.** Until the reveal it stays in session scratch or the AI's own context only: out of the project repo, out of `REQUIREMENTS.md`, out of every builder and refuter brief, and out of the events file.
-  - **Reveal.** After the build, the AI shows the full hidden list and the score: hidden criteria found out of the total. The hidden brief may then be added to the repo as `docs/hidden-brief.md`, with that score.
+  - **Storage.** Until the reveal it stays in the orchestrator's own context. If it must be a file, that file sits outside the project repo and outside the session scratchpad that agents share, is never named in a brief, and is never opened by an agent. It also stays out of `REQUIREMENTS.md` and the events file.
+  - **Reveal.** At core complete, right after the last slice's commit and before the polish ladder, the AI shows the full hidden list and the score: hidden criteria found out of the total. Missed criteria are not built during the polish ladder. The sprint report and the story page include the score, and the hidden brief may be added to the repo as `docs/hidden-brief.md`, with that score.
 
 The output is `REQUIREMENTS.md`:
 
@@ -56,7 +56,7 @@ The user reads it back and the client agrees; record that agreement in the file.
 
 - Required: `at`, `kind` and `title`. `kind` is one of `requirement`, `decision`, `build`, `review`, `correction`, `milestone`.
 - Optional: `detail`, `refs` (commit shas, AC ids, file paths) and `late` (`true` for an event noticed late).
-- For a `correction`, also `caughtBy`, `fix` and `guard`. Write all three; the story page shows "not recorded" for a missing `caughtBy`.
+- For a `correction`, also `caughtBy`, `fix` and `guard`. Write all three; `make-story.mjs` warns about a missing one, and the story page shows "not recorded" for a missing `caughtBy`.
 - Append an entry when the event happens, with `at` read from the clock at that moment (ISO time with offset).
 - An event noticed late is written with the time it was noticed plus `"late": true`. Never back-date one, and never reconstruct events afterwards from memory or `git log`.
 - Commit the file with the next commit.
@@ -71,7 +71,7 @@ For the default 45 minutes, discovery ends by about minute 8 (about a sixth of t
 |---|---|
 | ~8 min | `REQUIREMENTS.md` agreed (or copied as given) and committed; the slice plan written |
 | ~20 min | Slice 1 runs end to end and is committed |
-| Core done | The last slice is committed: note the time ("core complete at 32 min") and start the polish ladder |
+| Core done | The last slice is committed: note the time ("core complete at 32 min"), in practice mode reveal the hidden list and the score, then start the polish ladder |
 | T-10 | Feature freeze: no new slices or code rungs, only fixes to what exists |
 | T-5 | Final diff read done, app run once, committed |
 
@@ -86,7 +86,7 @@ Finishing the slices early is not the end of the sprint: the clock is the budget
 3. **API and usage docs.** The stack's usual form: OpenAPI or Swagger for a web API, `--help` text for a command-line tool, a `.http` file or a curl demo script.
 4. **A small UI or mockup**, when it shows the work better: one page served by the app that drives the main flow, styled with the copied theme. Say in the report that it goes beyond the brief.
 5. **README.** What it does, how to run and test it, the design decisions and trade-offs, and what would come next.
-6. **Sprint report** (`SPRINT.md` or the README's last section): whether the requirements were discovered or given, each AC mapped to its code and test, the ACs met out of the total, in practice mode the reveal and the score (hidden criteria found out of the total), a timeline from `git log` (slice and rung commits with times), when the core was complete, the tests, the refuters' verdicts, the self-corrections from the events file, what was cut, and a plain statement of how AI was used and who drove. The rung also produces the story page, "How this was built". Write `story-meta.json` at the project root: `title`, `clock` (minutes), `start`, `deadline`, `coreComplete` (ISO times with offset), `acs` (each `{"id", "text", "status": "met" | "not met"}`) and `tests` (`{"passed", "total"}`). Then run `node <setup>/skills/sprint/make-story.mjs --events sprint-events.json --meta story-meta.json --out docs/story.html`. It fills the template's `sprint-events` block with `sprint-events.json` as recorded and escapes it so no event text can break out of the block, and it exits 1 on a bad file. Open `docs/story.html` once to check it renders. The page loads nothing else, so it works opened from disk; adjust its theme link if the theme is not at `src/theme/`.
+6. **Sprint report** (`SPRINT.md` or the README's last section): whether the requirements were discovered or given, each AC mapped to its code and test, the ACs met out of the total, in practice mode the hidden list revealed at core complete and the score (hidden criteria found out of the total), a timeline from `git log` (slice and rung commits with times), when the core was complete, the tests, the refuters' verdicts, the self-corrections from the events file, what was cut, and a plain statement of how AI was used and who drove. The rung also produces the story page, "How this was built". Write `story-meta.json` at the project root: `title`, `clock` (minutes), `start`, `deadline`, `coreComplete` (ISO times with offset), `acs` (each `{"id", "text", "status": "met" | "not met"}`), `tests` (`{"passed", "total"}`) and, in practice mode, `hidden` (`{"found", "total"}`, the score). Then run `node <setup>/skills/sprint/make-story.mjs --events sprint-events.json --meta story-meta.json --out docs/story.html`. It fills the template's `sprint-events` block with `sprint-events.json` as recorded and escapes it so no event text can break out of the block. It checks every event: `at` is an ISO time with an explicit offset (`Z`, `+HH:MM` or `-HH:MM`), `kind` is one of the six kinds, `title` is a non-empty string, and `late`, if present, is `true` or `false`. It checks the meta: `start`, `deadline` and `coreComplete`, if present, are ISO times with an offset; `acs`, if present, is an array of objects with a non-empty `id`, a string `text` and a `status` of exactly `"met"` or `"not met"`; `tests` and `hidden`, if present, hold non-negative integers, with `found` no more than `total`. On the first violation it exits 1 and names the field, such as `events[3].at`. A `correction` missing `caughtBy`, `fix` or `guard` gets a warning on stderr, and the page is still written. Open `docs/story.html` once to check it renders. The page loads nothing else, so it works opened from disk; adjust its theme link if the theme is not at `src/theme/`.
 
 Rules for the ladder:
 
@@ -137,9 +137,9 @@ Each of these is a standing rule that sprint mode turns off for this task only:
 
 Normally, the sprint ends at T-5, not when the slices land; a sprint that is recorded somewhere (such as a practice log) is recorded as finished then.
 
-When every rung of the polish ladder is done before T-5, the sprint may end then rather than idle, and the report says so.
+When every rung of the polish ladder is done before T-5, the sprint may end then rather than idle, and the report says so. The T-5 gates still come first: the final diff read, the one real run of the app and the commit.
 
-Report in under 10 lines: what works (the demo steps), the ACs met out of the total, in practice mode the reveal and the score (hidden criteria found out of the total), the polish rungs done, what was cut, known defects (the should-fixes not fixed), the branch and the last commit, when the core was complete and the total elapsed time. Point to the package: whichever of the README, the sprint report, the story page and a UI exist.
+Report in under 10 lines: what works (the demo steps), the ACs met out of the total, in practice mode the score revealed at core complete (hidden criteria found out of the total), the polish rungs done, what was cut, known defects (the should-fixes not fixed), the branch and the last commit, when the core was complete and the total elapsed time. Point to the package: whichever of the README, the sprint report, the story page and a UI exist.
 
 ## Before the clock starts (optional prep)
 

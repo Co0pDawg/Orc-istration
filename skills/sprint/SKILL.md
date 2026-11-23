@@ -11,4 +11,4 @@ Follow `<setup>/orchestration/sprint.md`. Resolve `<setup>` in this order: the `
 
 Start by stating the start time and the deadline. The sprint begins with the Discover step (a live or a practice client) unless the user hands over a finished brief; then show the slice checklist and follow the procedure's timebox. The refuter dispatch is `subagent_type: "refuter"` with `model: "sonnet"`.
 
-Beside this skill: `story-template.html`, the "How this was built" story page, filled by `make-story.mjs`; and `theme/`, the shared look to copy into the project.
+In `<setup>/skills/sprint/`: `story-template.html`, the "How this was built" story page, filled by `make-story.mjs`; and `theme/`, the shared look to copy into the project. Read them from the setup checkout, not from a hand-copied skill folder.

@@ -8,7 +8,9 @@ import { fileURLToPath } from 'node:url';
 
 const USAGE = 'usage: node make-story.mjs --events <sprint-events.json> --meta <story-meta.json> [--template <path>] --out <docs/story.html>';
 const BLOCK = /(<script type="application\/json" id="sprint-events">)[\s\S]*?(<\/script>)/g;
-const BACKSLASH = String.fromCharCode(92);
+const KINDS = ['requirement', 'decision', 'build', 'review', 'correction', 'milestone'];
+const AC_STATUSES = ['met', 'not met'];
+const ISO_WITH_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 function fail(message) {
   process.stderr.write(`make-story: ${message}\n${USAGE}\n`);
@@ -43,16 +45,70 @@ function readJson(file, label) {
   } catch (e) {
     fail(`the ${label} file ${file} is not valid JSON: ${e instanceof Error ? e.message : String(e)}`);
   }
-  return undefined;
+}
+
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const isIso = (v) => typeof v === 'string' && ISO_WITH_OFFSET.test(v) && !Number.isNaN(Date.parse(v));
+const isCount = (v) => Number.isInteger(v) && v >= 0;
+const ISO_RULE = 'must be an ISO time with an offset (Z, +HH:MM or -HH:MM)';
+
+// The first violation in the events, or null. Corrections missing caughtBy, fix or guard become warnings.
+function checkEvents(events, warnings) {
+  if (!Array.isArray(events)) return 'must hold a JSON array';
+  for (const [i, e] of events.entries()) {
+    const at = `events[${i}]`;
+    if (!isObject(e)) return `${at} must be a JSON object`;
+    if (!isIso(e.at)) return `${at}.at ${ISO_RULE}`;
+    if (!KINDS.includes(e.kind)) return `${at}.kind must be one of ${KINDS.join(', ')}`;
+    if (typeof e.title !== 'string' || e.title.trim() === '') return `${at}.title must be a non-empty string`;
+    if (e.late !== undefined && typeof e.late !== 'boolean') return `${at}.late must be true or false`;
+    if (e.kind === 'correction') {
+      const missing = ['caughtBy', 'fix', 'guard'].filter((k) => typeof e[k] !== 'string' || e[k].trim() === '');
+      if (missing.length) warnings.push(`${at} (correction) has no ${missing.join(', ')}`);
+    }
+  }
+  return null;
+}
+
+// The first violation in the meta, or null.
+function checkMeta(meta) {
+  if (!isObject(meta)) return 'must hold a JSON object';
+  for (const key of ['start', 'deadline', 'coreComplete']) {
+    if (meta[key] !== undefined && !isIso(meta[key])) return `meta.${key} ${ISO_RULE}`;
+  }
+  if (meta.acs !== undefined) {
+    if (!Array.isArray(meta.acs)) return 'meta.acs must be an array';
+    for (const [i, ac] of meta.acs.entries()) {
+      const at = `meta.acs[${i}]`;
+      if (!isObject(ac)) return `${at} must be an object with id, text and status`;
+      if (typeof ac.id !== 'string' || ac.id.trim() === '') return `${at}.id must be a non-empty string`;
+      if (typeof ac.text !== 'string') return `${at}.text must be a string`;
+      if (!AC_STATUSES.includes(ac.status)) return `${at}.status must be "met" or "not met"`;
+    }
+  }
+  if (meta.tests !== undefined) {
+    if (!isObject(meta.tests)) return 'meta.tests must be an object with passed and total';
+    for (const key of ['passed', 'total']) {
+      if (!isCount(meta.tests[key])) return `meta.tests.${key} must be a non-negative integer`;
+    }
+  }
+  if (meta.hidden !== undefined) {
+    if (!isObject(meta.hidden)) return 'meta.hidden must be an object with found and total';
+    for (const key of ['found', 'total']) {
+      if (!isCount(meta.hidden[key])) return `meta.hidden.${key} must be a non-negative integer`;
+    }
+    if (meta.hidden.found > meta.hidden.total) return 'meta.hidden.found must not exceed meta.hidden.total';
+  }
+  return null;
 }
 
 // JSON that is safe inside a <script> element: no "<" (so no "</script>" or "<!--"), and no
 // U+2028 or U+2029. JSON.parse reads the escapes back as the same characters.
-export function inlineJson(value) {
+function inlineJson(value) {
   return JSON.stringify(value, null, 2)
-    .replace(/</g, `${BACKSLASH}u003c`)
-    .replace(new RegExp(String.fromCharCode(0x2028), 'g'), `${BACKSLASH}u2028`)
-    .replace(new RegExp(String.fromCharCode(0x2029), 'g'), `${BACKSLASH}u2029`);
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
 }
 
 function main(argv) {
@@ -61,14 +117,13 @@ function main(argv) {
   const templatePath = args.template || path.join(here, 'story-template.html');
 
   const events = readJson(args.events, 'events');
-  if (!Array.isArray(events)) fail(`the events file ${args.events} must hold a JSON array`);
-  if (!events.every((e) => e !== null && typeof e === 'object' && !Array.isArray(e))) {
-    fail(`every entry in ${args.events} must be a JSON object`);
-  }
+  const warnings = [];
+  const eventError = checkEvents(events, warnings);
+  if (eventError) fail(`the events file ${args.events}: ${eventError}`);
   const meta = readJson(args.meta, 'meta');
-  if (meta === null || typeof meta !== 'object' || Array.isArray(meta)) {
-    fail(`the meta file ${args.meta} must hold a JSON object`);
-  }
+  const metaError = checkMeta(meta);
+  if (metaError) fail(`the meta file ${args.meta}: ${metaError}`);
+  for (const w of warnings) process.stderr.write(`make-story: warning: ${w}\n`);
 
   let template;
   try {
@@ -83,8 +138,12 @@ function main(argv) {
 
   const payload = inlineJson({ meta, events });
   const page = template.replace(BLOCK, (_, open, close) => `${open}\n${payload}\n${close}`);
-  fs.mkdirSync(path.dirname(path.resolve(args.out)), { recursive: true });
-  fs.writeFileSync(args.out, page);
+  try {
+    fs.mkdirSync(path.dirname(path.resolve(args.out)), { recursive: true });
+    fs.writeFileSync(args.out, page);
+  } catch (e) {
+    fail(`cannot write ${args.out}: ${e instanceof Error ? e.message : String(e)}`);
+  }
   process.stdout.write(`make-story: wrote ${args.out} (${events.length} events)\n`);
 }
 

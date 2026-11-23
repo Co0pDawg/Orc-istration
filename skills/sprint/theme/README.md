@@ -64,7 +64,7 @@ The theme loads no fonts, scripts or images from the network. It uses system fon
 
 ## Tokens
 
-Each look sets the same custom properties on `:root`. Clean Pro sets them directly, with its dark values under `@media (prefers-color-scheme: dark)` when no `data-theme` is set. Each alternate is one `:root[data-theme="<name>"]` block that overrides tokens and nothing else. Components read tokens only.
+Each look sets the same custom properties on `:root`. Clean Pro sets them directly, with its dark values under `@media (prefers-color-scheme: dark)` when no `data-theme` is set or it is `clean-pro`. Each alternate is one `:root[data-theme="<name>"]` block that overrides tokens and sets `color-scheme`. The other exception is neon's focus glow, a rule scoped to neon (see the Focus row). Components read tokens only.
 
 | Group | Tokens |
 |---|---|
@@ -115,17 +115,17 @@ A timeline item looks like this:
 </ol>
 ```
 
-The kinds are `requirement`, `decision`, `build`, `review` and `correction`. A `correction` item stands out: a danger-coloured border, a tinted background, a filled marker and a warning icon on its badge.
+The kinds are `requirement`, `decision`, `build`, `review`, `correction` and `milestone`. Each badge has its own tint: info for a requirement, the accent for a decision, ok for a build and warn for a review. A `milestone` badge is plain text on the surface, with a marker filled in the accent colour. A `correction` item stands out: a danger-coloured border, a tinted background, a filled marker and a warning icon on its badge.
 
 ## The picker
 
 The picker lets someone switch looks during a demo without any visible control on the page.
 
-- **Type `theme`.** Type the letters t, h, e, m, e in sequence while focus is not in a form field. Keys typed in an input, select, textarea or editable element are ignored, as are keys with Ctrl, Alt or Meta.
+- **Type `theme`.** Type the letters t, h, e, m, e in sequence while focus is not in a form field. Keys typed in an input, select, textarea or editable element are ignored, including one inside an open shadow root, as are keys with Ctrl, Alt or Meta.
 - **Press the brand five times.** Click or press Enter on the `.ui-brand` button five times within three seconds.
 - **`?theme=<name>` in the URL** applies a look for that page load without saving it. The names are `clean-pro`, `neon`, `editorial` and `playful`.
 
-The picker is a native `<dialog>` with a labelled group of four radio buttons. Choosing a look applies it at once. Esc or the Done button closes it, and focus returns to where it was. The choice is saved in the `localStorage` key `sprint-theme` and applied as `data-theme` on `<html>`; choosing Clean Pro removes the attribute and the saved value. On load, a valid `?theme=` wins, then a valid saved look; with neither, the picker leaves any `data-theme` the page set itself. Unknown names are ignored. If storage is blocked, the look still applies to the page. The picker builds its dialog with DOM methods and never writes HTML strings.
+The picker is a native `<dialog>` with a labelled group of four radio buttons. Choosing a look applies it at once. Esc or the Done button closes it, and focus returns to where it was. The choice is saved in the `localStorage` key `sprint-theme` and applied as `data-theme` on `<html>`; choosing Clean Pro removes the attribute and the saved value. On load, a valid `?theme=` wins, then a valid saved look; with neither, the picker leaves any `data-theme` the page set itself. Unknown names are ignored. If storage is blocked, the look still applies to the page, and the picker's hint says so. The picker builds its dialog with DOM methods and never writes HTML strings. Its pure logic (the typed sequence, the brand presses, the initial look and the form-field check) is exported for tests; importing it without a `document` adds no listeners.
 
 ## The contrast rule
 
