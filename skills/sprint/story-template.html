@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How this was built</title>
+<!--
+  "How this was built": the sprint story page (orchestration/sprint.md, polish ladder rung 6).
+  Copy this file to docs/story.html and replace the contents of the "sprint-events" block below with
+  {"meta": {...}, "events": <sprint-events.json>}, writing every "<" in the inlined JSON as \u003c.
+  The page reads nothing else: no fetch and no network, so it works opened straight from disk.
+
+  The link below fits docs/story.html with the shared theme copied to src/theme/. Adjust the path if the
+  theme lives elsewhere. Without the theme, the inline styles keep the page readable; they come first so
+  the theme's rules win. Every fallback selector sits in :where(), so it adds no specificity.
+-->
+<style>
+  :where(body) { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #fafafa; color: #1d1d1f; }
+  :where(.ui-header-inner, main, footer) { max-width: 60rem; margin: 0 auto; padding: 1rem; }
+  :where(h1) { margin: 0; font-size: 1.75rem; }
+  :where(h2) { font-size: 1.2rem; margin: 0 0 0.5rem; }
+  :where(main section) { margin-top: 1.5rem; }
+  :where(.ui-brand) { margin: 0; font-weight: 600; color: #555; }
+  :where(.story-sub) { margin: 0.25rem 0 0; color: #555; }
+  :where(.story-tiles) { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.75rem; list-style: none; padding: 0; margin: 0; }
+  :where(.ui-card) { border: 1px solid #ddd; border-radius: 8px; padding: 0.75rem; background: #fff; }
+  :where(.story-tile-value) { display: block; font-size: 1.4rem; font-weight: 600; }
+  :where(.story-acs) { list-style: none; padding: 0; margin: 0; }
+  :where(.story-acs li) { padding: 0.4rem 0; }
+  :where(.ui-chip, .ui-timeline-kind) { display: inline-block; border: 1px solid currentColor; border-radius: 999px; padding: 0 0.6rem; font-size: 0.85rem; }
+  :where(.ui-timeline) { list-style: none; padding: 0; margin: 0; }
+  :where(.ui-timeline-item) { border: 1px solid #ddd; border-radius: 8px; padding: 0.5rem 0.75rem; margin: 0 0 0.75rem; background: #fff; }
+  :where(.ui-timeline-item[data-kind="correction"]) { border-color: #c0392b; border-left-width: 4px; background: #fff4f2; }
+  :where(.ui-timeline-time) { margin-left: 0.5rem; color: #555; font-size: 0.9rem; }
+  :where(.ui-timeline-text) { margin: 0.25rem 0 0; }
+  :where(.story-title) { font-weight: 600; margin: 0; }
+  :where(.story-detail) { margin: 0.15rem 0 0; }
+  :where(.story-refs) { font-family: ui-monospace, monospace; font-size: 0.85rem; color: #555; margin: 0.15rem 0 0; }
+  @media (prefers-color-scheme: dark) {
+    :where(body) { background: #161618; color: #eee; }
+    :where(.story-sub, .ui-timeline-time, .story-refs) { color: #aaa; }
+    :where(.ui-card, .ui-timeline-item) { background: #222; border-color: #333; }
+    :where(.ui-timeline-item[data-kind="correction"]) { background: #2a1a18; border-color: #e57366; }
+  }
+</style>
+<link rel="stylesheet" href="../src/theme/theme.css">
+</head>
+<body>
+<header class="ui-header">
+  <div class="ui-header-inner">
+    <div>
+      <p class="ui-brand">How this was built</p>
+      <h1 class="ui-title" id="story-title">Sprint project</h1>
+      <p class="ui-subtitle story-sub"><span id="story-clock"></span> <span id="story-elapsed"></span></p>
+    </div>
+  </div>
+</header>
+<main>
+  <p id="story-error" role="alert" hidden></p>
+  <section aria-labelledby="h-glance">
+    <h2 class="ui-heading" id="h-glance">At a glance</h2>
+    <ul class="story-tiles" id="story-tiles" role="list"></ul>
+  </section>
+  <section aria-labelledby="h-requirements">
+    <h2 class="ui-heading" id="h-requirements">Requirements</h2>
+    <ul class="story-acs" id="story-acs" role="list"></ul>
+  </section>
+  <section aria-labelledby="h-timeline">
+    <h2 class="ui-heading" id="h-timeline">Timeline</h2>
+    <ol class="ui-timeline" id="story-timeline" role="list"></ol>
+  </section>
+</main>
+<footer class="story-sub">
+  <p>Built in sprint mode with Orc-istration</p>
+</footer>
+
+<!-- Illustrative sample only. Replace it with this sprint's meta and its sprint-events.json. -->
+<script type="application/json" id="sprint-events">
+{
+  "meta": {
+    "title": "Example project",
+    "clock": 45,
+    "start": "2026-01-05T10:00:00-05:00",
+    "deadline": "2026-01-05T10:45:00-05:00",
+    "coreComplete": "2026-01-05T10:31:00-05:00",
+    "acs": [
+      { "id": "AC-1", "text": "A user can add an item and see it in the list", "status": "met" },
+      { "id": "AC-2", "text": "An empty item is rejected with a message", "status": "not met" }
+    ],
+    "tests": { "passed": 6, "total": 6 }
+  },
+  "events": [
+    { "at": "2026-01-05T10:07:00-05:00", "kind": "requirement", "title": "Requirements agreed", "refs": ["AC-1", "AC-2"] },
+    { "at": "2026-01-05T10:18:00-05:00", "kind": "build", "title": "Slice 1 committed", "refs": ["AC-1"] },
+    { "at": "2026-01-05T10:24:00-05:00", "kind": "review", "title": "Refuter on slice 1: REWORK, one must-fix" },
+    { "at": "2026-01-05T10:28:00-05:00", "kind": "correction", "title": "List lost items on reload", "detail": "Items were kept only in memory.", "caughtBy": "the refuter, not the tests", "fix": "Persist the list after each change.", "guard": "Regression test for reload" },
+    { "at": "2026-01-05T10:31:00-05:00", "kind": "milestone", "title": "Core complete" },
+    { "at": "2026-01-05T10:36:00-05:00", "kind": "decision", "title": "AC-2 deferred at the freeze", "late": true }
+  ]
+}
+</script>
+<script>
+(() => {
+  'use strict';
+  // Theme class names (skills/sprint/theme/theme.css) in one place, so they are easy to realign.
+  const THEME = {
+    chip: (variant) => 'ui-chip ui-chip--' + variant,
+    item: 'ui-timeline-item',
+    kind: 'ui-timeline-kind',
+    time: 'ui-timeline-time',
+    text: 'ui-timeline-text'
+  };
+  const DASH = String.fromCharCode(0x2013);
+
+  const el = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined && text !== null) n.textContent = String(text);
+    return n;
+  };
+  const byId = (id) => document.getElementById(id);
+  const time = (iso) => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+  const clockTime = (iso) => {
+    const d = time(iso);
+    return d ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : DASH;
+  };
+  const minutesBetween = (a, b) => {
+    const x = time(a);
+    const y = time(b);
+    return x && y ? Math.round((y - x) / 60000) : null;
+  };
+  const isObject = (v) => v !== null && typeof v === 'object';
+
+  let data;
+  try {
+    data = JSON.parse(byId('sprint-events').textContent);
+  } catch {
+    const p = byId('story-error');
+    p.textContent = 'The sprint-events block could not be read as JSON.';
+    p.hidden = false;
+    return;
+  }
+  const meta = isObject(data) && isObject(data.meta) ? data.meta : {};
+  const events = isObject(data) && Array.isArray(data.events) ? data.events.filter(isObject) : [];
+  events.sort((a, b) => (time(a.at) || 0) - (time(b.at) || 0));
+
+  // Header: the project title, the clock and the elapsed time.
+  if (meta.title) {
+    byId('story-title').textContent = String(meta.title);
+    document.title = 'How ' + meta.title + ' was built';
+  }
+  byId('story-clock').textContent = (meta.clock ? meta.clock + '-minute sprint' : 'Sprint') +
+    (meta.start ? ', ' + clockTime(meta.start) + ' to ' + clockTime(meta.deadline) : '') + '.';
+  const elapsed = minutesBetween(meta.start, events.length ? events[events.length - 1].at : null);
+  byId('story-elapsed').textContent = elapsed === null ? '' : 'Elapsed: ' + elapsed + ' min to the last event.';
+
+  // Stat tiles
+  const acs = Array.isArray(meta.acs) ? meta.acs.filter(isObject) : [];
+  const met = acs.filter((a) => a.status === 'met').length;
+  const core = minutesBetween(meta.start, meta.coreComplete);
+  const tests = isObject(meta.tests) ? meta.tests : null;
+  let testText = DASH;
+  if (tests && tests.total !== undefined) {
+    testText = (tests.passed !== undefined ? tests.passed + ' of ' : '') + tests.total;
+  }
+  const tiles = [
+    ['Core complete', core === null ? DASH : core + ' min'],
+    ['Acceptance criteria met', acs.length ? met + ' of ' + acs.length : DASH],
+    ['Tests passing', testText],
+    ['Reviews', events.filter((e) => e.kind === 'review').length],
+    ['Self-corrections', events.filter((e) => e.kind === 'correction').length]
+  ];
+  const tileList = byId('story-tiles');
+  for (const [label, value] of tiles) {
+    const li = el('li', 'ui-card');
+    li.appendChild(el('span', 'story-tile-value', value));
+    li.appendChild(el('span', 'story-tile-label', label));
+    tileList.appendChild(li);
+  }
+
+  // Requirements: met or not-met chips, with the status in text as well as colour.
+  const acList = byId('story-acs');
+  if (!acs.length) acList.appendChild(el('li', null, 'No acceptance criteria recorded.'));
+  for (const a of acs) {
+    const li = el('li');
+    let status = ['info', a.status ? String(a.status) : 'Unknown'];
+    if (a.status === 'met') status = ['ok', 'Met'];
+    if (a.status === 'not met') status = ['danger', 'Not met'];
+    li.appendChild(el('span', THEME.chip(status[0]), status[1]));
+    li.appendChild(document.createTextNode(' '));
+    li.appendChild(el('strong', null, a.id || DASH));
+    li.appendChild(document.createTextNode(a.text ? ' ' + a.text : ''));
+    acList.appendChild(li);
+  }
+
+  // Timeline: kind badge, time, then the text. A correction also shows what caught it.
+  const list = byId('story-timeline');
+  if (!events.length) list.appendChild(el('li', null, 'No events recorded.'));
+  for (const e of events) {
+    const kind = typeof e.kind === 'string' && /^[a-z]+$/.test(e.kind) ? e.kind : 'other';
+    const li = el('li', THEME.item);
+    li.setAttribute('data-kind', kind);
+    li.appendChild(el('span', THEME.kind, kind.charAt(0).toUpperCase() + kind.slice(1)));
+    li.appendChild(document.createTextNode(' '));
+    const mins = minutesBetween(meta.start, e.at);
+    const t = el('time', THEME.time, clockTime(e.at) + (mins === null ? '' : ' (' + mins + ' min)') +
+      (e.late === true ? ', noted late' : ''));
+    if (time(e.at)) t.setAttribute('datetime', e.at);
+    li.appendChild(t);
+    const body = el('div', THEME.text);
+    body.appendChild(el('p', 'story-title', e.title || DASH));
+    if (e.detail) body.appendChild(el('p', 'story-detail', e.detail));
+    if (kind === 'correction') {
+      body.appendChild(el('p', 'story-detail', 'Caught by: ' + (e.caughtBy || 'not recorded')));
+      if (e.fix) body.appendChild(el('p', 'story-detail', 'Fix: ' + e.fix));
+      if (e.guard) body.appendChild(el('p', 'story-detail', 'Guard: ' + e.guard));
+    }
+    if (Array.isArray(e.refs) && e.refs.length) body.appendChild(el('p', 'story-refs', e.refs.join(', ')));
+    li.appendChild(body);
+    list.appendChild(li);
+  }
+})();
+</script>
+</body>
+</html>

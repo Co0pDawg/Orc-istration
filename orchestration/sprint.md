@@ -10,19 +10,62 @@ Only when the user explicitly asks for a timeboxed build: "sprint mode", "sprint
 
 Sprint mode overrides the lite modes (`Orc orchestration: lite`, `Orc review: lite`) for that task. On a `/start` run, it skips Step 12 (the review panel) like any other review; the rest of `/start` runs as written.
 
-## Start (minute 0 to 5)
+## Start (the first minutes)
 
 1. Note the start time and the deadline (12-hour clock). Every status line to the user carries the elapsed time, for example `[12/45 min]`.
-2. Restate the goal in one sentence and the demo you will show at the end. Ask at most one question, and only if the goal is ambiguous; otherwise pick sensible defaults and say which. The sprint delivers a package, not only a build: the working app plus whatever polish the clock allows (see "Leftover time" below).
-3. Write the plan as at most 3 vertical slices, each runnable on its own. Slice 1 is the thinnest end-to-end path (a walking skeleton). Show it as the visible checklist.
-4. Create a branch (never `main` or `develop`).
+2. Restate the goal in one sentence and the demo you will show at the end. The sprint delivers a package, not only a build: the working app plus whatever polish the clock allows (see "Leftover time" below).
+3. Create a branch (never `main` or `develop`). Create `sprint-events.json` at the project root (see "The events file" below).
+4. For any UI, and for the story page, copy `<setup>/skills/sprint/theme/` into the project (for example `src/theme/`). Its README also describes a hidden look picker.
+5. Run Discover (below), then write the plan as at most 3 vertical slices, each runnable on its own and each naming the ACs it delivers. Slice 1 is the thinnest end-to-end path (a walking skeleton). Show it as the visible checklist.
+
+## Discover (on the clock, before the slices)
+
+The sprint starts by finding out what the client needs. The user (the candidate) leads it in one of two modes:
+
+- **Live.** The interviewer or stakeholder is the client, and the user asks the questions. The AI may suggest questions and turn the user's notes into the document, but it never invents a requirement the client did not state. An assumption the user makes is written as an assumption, then confirmed or left open.
+- **Practice.** The AI plays the client from a brief it keeps hidden. It answers in character and only what is asked, never volunteers the hidden criteria, and reveals the full hidden list only after the build ends, so the user can score how many they found.
+
+The output is `REQUIREMENTS.md`:
+
+- the client's goal in one sentence;
+- who uses it;
+- numbered acceptance criteria (`AC-1`, `AC-2`, and so on), each testable;
+- assumptions, each marked confirmed or open;
+- out of scope;
+- open questions.
+
+The user reads it back and the client agrees; record that agreement in the file. It is the sprint's first commit, with the subject "Requirements agreed".
+
+**When the user gives a finished brief instead,** skip discovery: copy the brief into `REQUIREMENTS.md` marked "as given", and say so in the report. Never present a given brief as discovered. Ask at most one question, and only if the brief is ambiguous; otherwise pick sensible defaults, write them as assumptions, and say which.
+
+**Traceability.** Each slice in the plan names the ACs it delivers. Test names or descriptions carry the AC id they prove (for example `AC-2: rejects an end time before the start`). The sprint report maps each AC to its code and test.
+
+**Change requests.** A new or changed requirement mid-sprint updates `REQUIREMENTS.md` with a note of when and why, is recorded as an event, and gets a decision: in scope or deferred.
+
+## The events file
+
+`sprint-events.json` at the project root is a JSON array, recorded as things happen so the story is not rebuilt from memory afterwards. Each entry:
+
+```json
+{ "at": "2026-01-05T10:28:00-05:00", "kind": "correction", "title": "One line", "detail": "Short text", "refs": ["<commit sha>", "AC-2", "src/list.js"] }
+```
+
+- `kind` is one of `requirement`, `decision`, `build`, `review`, `correction`, `milestone`. `detail` and `refs` (commit shas, AC ids, file paths) are optional.
+- Append an entry when the event happens, with `at` read from the clock at that moment (ISO time with offset).
+- An event noticed late is written with the time it was noticed plus `"late": true`. Never back-date one, and never reconstruct events afterwards from memory or `git log`.
+- Commit the file with the next commit.
+- A `correction` records what was wrong (`detail`), what caught it (`caughtBy`: a test, a refuter, a builder's read, the orchestrator's diff read, the client), how it was fixed (`fix`), and the guard added (`guard`, for example a regression test and its commit). Typical corrections: a refuter must-fix, a surviving mutant turned into a test, a defect a builder or reviewer found in earlier work, a failing run fixed, a requirement misunderstanding the client corrected.
+- Name what actually caught it. If the tests missed it, say so; never credit the tests with a catch a review or a person made.
 
 ## Timebox
 
+For the default 45 minutes, discovery ends by about minute 8, roughly a sixth of the clock. Scale the first two marks for other clocks.
+
 | By | State |
 |---|---|
-| ~15 min | Slice 1 runs end to end and is committed |
-| Core done | The last slice is committed: note the time ("core complete at 12 min") and start the polish ladder |
+| ~8 min | `REQUIREMENTS.md` agreed and committed; the slice plan written |
+| ~20 min | Slice 1 runs end to end and is committed |
+| Core done | The last slice is committed: note the time ("core complete at 32 min") and start the polish ladder |
 | T-10 | Feature freeze: no new slices or code rungs, only fixes to what exists |
 | T-5 | Final diff read done, app run once, committed |
 
@@ -35,9 +78,9 @@ Finishing the slices early is not the end of the sprint: the clock is the budget
 1. **Review fixes.** Fix the refuters' logged should-fixes, each with a test.
 2. **Edge-case tests.** The bad inputs and boundaries the refuters probed by hand become tests.
 3. **API and usage docs.** The stack's usual form: OpenAPI or Swagger for a web API, `--help` text for a command-line tool, a `.http` file or a curl demo script.
-4. **A small UI or mockup**, when it shows the work better: one page served by the app that drives the main flow. Say in the report that it goes beyond the brief.
+4. **A small UI or mockup**, when it shows the work better: one page served by the app that drives the main flow, styled with the copied theme. Say in the report that it goes beyond the brief.
 5. **README.** What it does, how to run and test it, the design decisions and trade-offs, and what would come next.
-6. **Sprint report** (`SPRINT.md` or the README's last section): a timeline from `git log` (slice and rung commits with times), when the core was complete, the tests, the refuters' verdicts, what was cut, and a plain statement of how AI was used and who drove.
+6. **Sprint report** (`SPRINT.md` or the README's last section): whether the requirements were discovered or given, each AC mapped to its code and test, a timeline from `git log` (slice and rung commits with times), when the core was complete, the tests, the refuters' verdicts, the self-corrections from the events file, what was cut, and a plain statement of how AI was used and who drove. The rung also produces the story page, "How this was built": copy `<setup>/skills/sprint/story-template.html` to `docs/story.html` and replace the contents of its `sprint-events` JSON block with `{"meta": {...}, "events": [...]}`. `events` is `sprint-events.json` as recorded. `meta` holds `title`, `clock` (minutes), `start`, `deadline`, `coreComplete` (ISO times), `acs` (each `{"id", "text", "status": "met" | "not met"}`) and `tests` (`{"passed", "total"}`). Write every `<` in the inlined JSON as `\u003c`, so text in an event cannot close the block. The page loads nothing else, so it works opened from disk; adjust its theme link if the theme is not at `src/theme/`.
 
 Rules for the ladder:
 
@@ -88,7 +131,9 @@ Each of these is a standing rule that sprint mode turns off for this task only:
 
 The sprint ends at T-5, not when the slices land; a sprint that is recorded somewhere (such as a practice log) is recorded as finished then.
 
-Report in under 10 lines: what works (the demo steps), the polish rungs done, what was cut, known defects (the should-fixes not fixed), the branch and the last commit, when the core was complete and the total elapsed time. Point to the package: whichever of the README, the sprint report and a UI exist.
+When every rung of the polish ladder is done before T-5, the sprint may end then rather than idle, and the report says so.
+
+Report in under 10 lines: what works (the demo steps), the ACs met out of the total, the polish rungs done, what was cut, known defects (the should-fixes not fixed), the branch and the last commit, when the core was complete and the total elapsed time. Point to the package: whichever of the README, the sprint report, the story page and a UI exist.
 
 ## Before the clock starts (optional prep)
 
