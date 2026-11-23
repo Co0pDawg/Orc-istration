@@ -21,7 +21,7 @@ Edit the sources. Never hand-edit a generated file; regenerate it.
 | `review/` | The review panel: procedure, explorer contract, lane checklists, calibration, regression corpus and metrics formats |
 | `workflows/*.md`, `templates/` | The portable workflows (`/start`, `/draft-pr` and others) and the target-repo rulebook template |
 | `orchestration/standards.md`, `orchestration/sprint.md` | The standards setup procedure and sprint mode |
-| `skills/*/SKILL.md` | Claude Code skills (copied into `~/.claude/skills` by hand; `install --sprint-kit` copies `skills/sprint`) |
+| `skills/*/SKILL.md` | Claude Code skills (copied into `~/.claude/skills` by hand; `install --sprint-kit` copies `skills/sprint/SKILL.md`). The sprint skill folder also holds `story-template.html`, `make-story.mjs` and `theme/`, which sprint mode reads from the setup checkout |
 | `.claude/skills/*/SKILL.md` | Project skills for developing this repo, such as `ship-prompts` (loaded only in a session opened here; `.claude/settings.json` stays untracked) |
 | `commands/*.md` (hand-written ones) | Claude Code commands for the workflows; the review-panel commands are generated (below) |
 
@@ -88,6 +88,10 @@ The repo is designed to be checked out as `~/.claude`, but you can develop in a 
 - `tests/standards.test.mjs`: `standards list`, `show`, `detect` and `apply`, and the archive validation in `check`.
 - `tests/guard.test.mjs`: the git guard, `tools/guard.mjs` and `tools/guard.ps1` through one table of PreToolUse payloads in real temporary repos (both hooks must give the same decision), the read-only role list against `roles/*.md`, fail-open lines, and the example-file wiring.
 - `tests/review-tools.test.mjs`: `calibration`, `corpus` and `metrics`, over the run-log fixtures in `tests/fixtures/reviews/` and the corpus cases in `tests/fixtures/corpus/` (format: `review/corpus.md`).
+- `tests/make-story.test.mjs`: `skills/sprint/make-story.mjs`: escaping, the event and meta checks, argument and I/O errors, BOM input, running through a junction.
+- `tests/story-page.test.mjs`: the story template's inline script, run in `node:vm` against a stub document: sorting, kinds, clock times, tiles and the wrong-root alert.
+- `tests/sprint-theme.test.mjs`: `skills/sprint/theme/theme.css`: tokens per look, WCAG contrast per look, reduced motion, no network loads, and the README head script's look list.
+- `tests/theme-picker.test.mjs`: the picker's exported logic: the typed sequence, editable targets (including a shadow root), the brand press window and the initial look.
 
 ## Keep the README and wiki current
 
