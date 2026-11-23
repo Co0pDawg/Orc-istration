@@ -1,7 +1,8 @@
 /*
  * Sprint theme. One token layer, four looks, ui- components.
  * Clean Pro is the default (light and dark follow prefers-color-scheme).
- * The alternates set data-theme on <html> and only override tokens.
+ * The alternates set data-theme on <html> and only override tokens; the one
+ * exception is neon's focus glow, scoped to neon so other looks set no filter.
  * Components read tokens only. Every text and control pair meets WCAG AA:
  * text 4.5:1, borders and focus rings 3:1 (see README.md).
  */
@@ -18,7 +19,7 @@
   --ui-text: #0f172a;
   --ui-text-muted: #526077;
   --ui-border: #e2e8f0;
-  --ui-border-strong: #8792a6;
+  --ui-border-strong: #7a8599;
   --ui-border-width: 1px;
 
   --ui-accent: #047857;
@@ -236,6 +237,10 @@ body {
 :focus-visible {
   outline: 2px solid var(--ui-focus);
   outline-offset: 2px;
+}
+
+/* Only neon has a glow; scoping it keeps every other look from touching a focused element's filter. */
+:root[data-theme="neon"] :focus-visible {
   filter: var(--ui-focus-glow);
 }
 
@@ -691,7 +696,7 @@ body {
 }
 
 .ui-radio input {
-  accent-color: var(--ui-accent);
+  accent-color: var(--ui-accent-text);
   width: 1.1rem;
   height: 1.1rem;
   margin: 0;
@@ -711,7 +716,10 @@ body {
   *,
   *::before,
   *::after {
-    transition: none !important;
-    animation: none !important;
+    /* Near-zero durations rather than none, so animations that fill forwards still end in their final state. */
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

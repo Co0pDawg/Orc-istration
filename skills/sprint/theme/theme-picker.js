@@ -2,6 +2,7 @@
 //   <script type="module" src="/src/theme/theme-picker.js"></script>
 // It applies the saved look on load, and opens a picker when someone types "theme" outside a form
 // field or presses the .ui-brand button five times. ?theme=<name> applies a look for one page load.
+// Modules run after the first paint, so pages also put the README's small head script in <head>.
 
 const LOOKS = [
   { id: "clean-pro", name: "Clean Pro", note: "Neutral greys and emerald; follows light or dark mode" },
@@ -43,7 +44,7 @@ function storeLook(id) {
 }
 
 function applyLook(id) {
-  if (id === DEFAULT_LOOK || !isLook(id)) delete document.documentElement.dataset.theme;
+  if (id === DEFAULT_LOOK) delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = id;
 }
 
@@ -154,5 +155,8 @@ document.addEventListener("click", (event) => {
   }
 });
 
+// A valid ?theme= wins, then a valid stored look. With neither, a data-theme the host page set stays.
 const requested = new URLSearchParams(window.location.search).get("theme");
-applyLook(requested !== null && isLook(requested) ? requested : (readStoredLook() ?? DEFAULT_LOOK));
+const stored = readStoredLook();
+const initial = requested !== null && isLook(requested) ? requested : stored !== null && isLook(stored) ? stored : null;
+if (initial !== null) applyLook(initial);

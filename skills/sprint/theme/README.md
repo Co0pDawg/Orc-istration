@@ -19,10 +19,30 @@ Every look uses the same components, so a page reads as one system whichever loo
    <link rel="stylesheet" href="/src/style.css" />
    ```
 
-3. Include the picker once, as a module:
+3. Include the picker once, as a module, at the end of `<body>`:
 
    ```html
    <script type="module" src="/src/theme/theme-picker.js"></script>
+   ```
+
+   A module runs after the first paint, so on its own a saved alternate look would flash Clean Pro first. To stop that, also paste this small script into `<head>`, after the stylesheets. It only reads `?theme=` and the saved look and sets `data-theme`; the picker does everything else. It is inline rather than a file because bundlers such as Vite only bundle `type="module"` scripts.
+
+   ```html
+   <script>
+     // Sprint theme: apply a ?theme= or saved look before the first paint. theme-picker.js does the rest.
+     (() => {
+       const looks = ["neon", "editorial", "playful"];
+       const requested = new URLSearchParams(location.search).get("theme");
+       let stored = null;
+       try {
+         stored = localStorage.getItem("sprint-theme");
+       } catch {
+         // Storage blocked: the page keeps its default look.
+       }
+       const id = requested === "clean-pro" || looks.includes(requested) ? requested : stored;
+       if (looks.includes(id)) document.documentElement.dataset.theme = id;
+     })();
+   </script>
    ```
 
 4. Add a header with the brand slot. The brand text is the app's own; the theme ships none. Use a `<button>` so keyboard users can reach the picker:
@@ -53,14 +73,16 @@ Each look sets the same custom properties on `:root`. Clean Pro sets them direct
 | Borders | `--ui-border` (dividers), `--ui-border-strong` (controls), `--ui-border-width` |
 | Accent | `--ui-accent`, `--ui-accent-fill` (solid or gradient), `--ui-accent-hover`, `--ui-accent-contrast` (text on the accent), `--ui-accent-text` (accent-coloured text on a surface), `--ui-accent-soft` |
 | Status | `--ui-ok`, `--ui-ok-bg`, `--ui-warn`, `--ui-warn-bg`, `--ui-danger`, `--ui-danger-bg`, `--ui-info`, `--ui-info-bg` |
-| Focus | `--ui-focus` (ring colour), `--ui-focus-glow` (a `filter` value, `none` except in neon) |
+| Focus | `--ui-focus` (ring colour), `--ui-focus-glow` (a `filter` value; only neon applies it, through a rule scoped to `:root[data-theme="neon"]`, so other looks never set `filter` on a focused element) |
 | Shape | `--ui-radius-sm`, `--ui-radius-md`, `--ui-radius-lg`, `--ui-radius-pill` |
 | Depth | `--ui-shadow-sm`, `--ui-shadow-md`, `--ui-shadow-press` |
 | Type | `--ui-font-body`, `--ui-font-display`, `--ui-font-mono`, `--ui-display-weight`, `--ui-display-tracking` |
 | Spacing | `--ui-space-1` (0.25rem) to `--ui-space-6` (2rem) |
 | Motion | `--ui-duration` (150ms), `--ui-ease` |
 
-With `prefers-reduced-motion: reduce`, `--ui-duration` is 0 and all transitions and animations are off.
+With `prefers-reduced-motion: reduce`, `--ui-duration` is 0, and every transition and animation on the page runs in 0.01ms, once. Animations still end in their final state, so an element that fades in with `animation-fill-mode: forwards` still appears.
+
+The alternates override only the tokens that differ. Every look defines its own colours: the colour tokens in the Page and surfaces, Text, Borders, Accent, Status and Focus rows. The effect tokens (`--ui-bg-image`, `--ui-backdrop-blur`, `--ui-accent-fill`, `--ui-focus-glow`, `--ui-border-width`) and the shape, type, spacing and motion tokens that a look leaves out come from Clean Pro by design. Clean Pro dark also keeps the light accent fill (`--ui-accent`, `--ui-accent-hover`, `--ui-accent-contrast`), since white on `#047857` passes in both modes.
 
 ## Components
 
@@ -103,7 +125,7 @@ The picker lets someone switch looks during a demo without any visible control o
 - **Press the brand five times.** Click or press Enter on the `.ui-brand` button five times within three seconds.
 - **`?theme=<name>` in the URL** applies a look for that page load without saving it. The names are `clean-pro`, `neon`, `editorial` and `playful`.
 
-The picker is a native `<dialog>` with a labelled group of four radio buttons. Choosing a look applies it at once. Esc or the Done button closes it, and focus returns to where it was. The choice is saved in the `localStorage` key `sprint-theme` and applied as `data-theme` on `<html>`; choosing Clean Pro removes the attribute and the saved value. If storage is blocked, the look still applies to the page. The picker builds its dialog with DOM methods and never writes HTML strings.
+The picker is a native `<dialog>` with a labelled group of four radio buttons. Choosing a look applies it at once. Esc or the Done button closes it, and focus returns to where it was. The choice is saved in the `localStorage` key `sprint-theme` and applied as `data-theme` on `<html>`; choosing Clean Pro removes the attribute and the saved value. On load, a valid `?theme=` wins, then a valid saved look; with neither, the picker leaves any `data-theme` the page set itself. Unknown names are ignored. If storage is blocked, the look still applies to the page. The picker builds its dialog with DOM methods and never writes HTML strings.
 
 ## The contrast rule
 
