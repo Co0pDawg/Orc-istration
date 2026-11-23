@@ -17,7 +17,7 @@ The template is the numbered "Marching orders" list in the rulebook (`AGENTS.md`
    - **Scratch path**: `<scratchpad>/<agent>-<topic>.md` for overflow.
    - **Intent** (refuters): the ticket brief path or the acceptance criteria verbatim, or `none: <why>`. Builders and debuggers write `n/a`.
    - **Data precondition** (builders and refuters): the real rows or paths the feature depends on.
-   - **Board** (builders and refuters): `BOARD: <address> card cards/<id> stage <label>` with the full `cards/<id>` path, or `BOARD: none`. A refuter writes a local board but not the artifact board (on Claude Code it has no MCP tools); see the `board` skill for who writes which card.
+   - **Board** (builders and refuters): `BOARD: <address> card cards/<id> stage <label>` with the full `cards/<id>` path, or `BOARD: none`. On Claude Code a refuter cannot write the board, so its brief says `BOARD: none` (see the `board` skill).
 3. Lint it: `brief lint "<file>" --role <role>`. Fix each problem it names and lint again until it exits 0.
 4. Dispatch with `subagent_type: "<role>"` and the brief as the prompt. Pass `model:` only to override the tier for this one dispatch, such as `model: "sonnet"` for a Mid-tier refuter. Parallel builders get `isolation: "worktree"`.
 

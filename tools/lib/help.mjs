@@ -33,12 +33,14 @@ export const HELP = {
   install: {
     repo: true,
     summary: 'Install one tool\'s generated files (for claude-code also its hook scripts) into a home folder (dry run without --apply); the rulebook names this checkout as the setup checkout',
-    synopsis: 'install --tool <id> [--home <dir>] [--apply] [--force] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board]',
+    synopsis: 'install --tool <id> [--home <dir>] [--apply] [--force] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board] [--sprint-kit [--stack dotnet|node|python]]',
     options: {
       '--tool <id>': 'the adapter to install (required; not all)',
       '--home <dir>': 'home folder (default your home; required for claude-code)',
       '--apply': 'write the files (backs up each replaced file)',
       '--force': 'replace hand-written or edited files, with a backup',
+      '--sprint-kit': 'claude-code only: also the sprint skill, the Node git guard hook and a stack permission preset in settings.json (merged, backed up), no board; uninstall removes it and restores what it replaced (docs/interview-machine.md)',
+      '--stack <ids>': 'with --sprint-kit: dotnet, node and/or python (default: detected in the current folder)',
       '--profile <name>': 'append profiles/<name>.md (repeatable or comma-separated); recorded in the manifest',
       '--no-profile': 'clear the profiles recorded at install',
       '--board <address>': 'this machine\'s board address, added to the rulebook (with --board-repo; an artifact address, Claude Code only, needs none)',
@@ -48,7 +50,7 @@ export const HELP = {
   },
   uninstall: {
     repo: true,
-    summary: 'Delete the files an install recorded in its manifest (dry run without --apply)',
+    summary: 'Delete the files an install recorded in its manifest (dry run without --apply); for a sprint kit also remove its settings.json entries and restore the files it replaced',
     synopsis: 'uninstall --tool <id> [--home <dir>] [--apply] [--force]',
     options: {
       '--tool <id>': 'the adapter to uninstall (required; not all)',
@@ -60,9 +62,10 @@ export const HELP = {
   status: {
     repo: true,
     summary: 'Compare an installed copy with what would be generated now, without writing',
-    synopsis: 'status --tool <id> [--home <dir>] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board]',
+    synopsis: 'status --tool <id> [--home <dir>] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board] [--sprint-kit]',
     options: {
       '--tool <id>': 'the adapter to compare (required; not all)',
+      '--sprint-kit': 'compare with a sprint kit (default: when the manifest records one), settings.json entries included',
       '--home <dir>': 'home folder (default your home)',
       '--profile <name>': 'compare with these profiles appended (default: the ones recorded at install)',
       '--no-profile': 'compare with no profiles',
