@@ -132,8 +132,10 @@ test('sprint theme: every look meets WCAG AA for its text, accent, focus and tim
   ];
   const NON_TEXT = [
     ['--ui-focus', '--ui-bg'],
-    // Badge outlines (currentColor) and the milestone marker against the timeline item's surface.
+    // Badge outlines (currentColor) against the timeline item's surface.
     ['--ui-ok', '--ui-surface'], ['--ui-accent-text', '--ui-surface'], ['--ui-text', '--ui-surface'],
+    // The milestone marker sits outside the item, on the page background.
+    ['--ui-accent-text', '--ui-bg'],
   ];
   const failures = [];
   for (const [look, tokens] of Object.entries(tokenSets)) {
