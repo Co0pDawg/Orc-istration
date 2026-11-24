@@ -51,11 +51,18 @@ export function allowProblem(rule) {
   }
   const m = /^Bash\(([^()]*)\)$/.exec(r);
   if (!m) return `"${r}" is not one tool name or one Bash(<command>) rule`;
+  if (/[;&|<>`$\r\n]/.test(m[1])) return `"${r}" holds a shell operator, substitution or redirection (; & | < > \` $ or a newline)`;
   const inner = m[1].trim().replace(/:\*$/, ' *');
   const words = inner.split(/\s+/).filter(Boolean);
   const first = words[0] ?? '';
   if (!first || first.includes('*')) return `"${r}" matches any command`;
-  const prog = first.replace(/\\/g, '/').split('/').pop().toLowerCase().replace(/\.exe$/, '');
+  let prog = first.replace(/\\/g, '/').split('/').pop().toLowerCase().replace(/\.exe$/, '');
+  // A git-<x> program is git <x> (git-send-pack, git-receive-pack).
+  const dashed = /^git-(.+)$/.exec(prog);
+  if (dashed) {
+    prog = 'git';
+    words.splice(0, 1, 'git', dashed[1]);
+  }
   if (prog === 'gh') return `"${r}" reaches gh, which only the script runs`;
   if (RUNNERS.includes(prog)) return `"${r}" reaches ${prog}, which runs any command it is given`;
   if (/\bpush\b/i.test(inner)) return `"${r}" reaches git push, which only the script runs`;
@@ -124,7 +131,9 @@ export function classify(r, timeoutSec) {
   };
   // A usage limit comes first: it may arrive with is_error and a non-zero exit, and must not leave a failed marker.
   // Without the result JSON, the message may be on stdout or stderr.
-  const limit = LIMIT_RESULT.exec(text) ?? (json ? null : (LIMIT_LINE.exec(String(r.stdout ?? '')) ?? LIMIT_LINE.exec(String(r.stderr ?? ''))));
+  // The result text counts only on an error result, so a successful final message that starts with it is not a limit.
+  const errorResult = json ? json.is_error === true || json.subtype !== 'success' || r.code !== 0 : false;
+  const limit = json ? (errorResult ? LIMIT_RESULT.exec(text) : null) : (LIMIT_LINE.exec(String(r.stdout ?? '')) ?? LIMIT_LINE.exec(String(r.stderr ?? '')));
   if (!r.timedOut && !r.signalled && (limit || Number(json?.api_error_status) === 429)) return { outcome: 'limit', reason: limit ? limit[0].trim() : 'API error 429', ...facts };
   const failed = (reason) => ({ outcome: 'failed', reason, ...facts });
   if (r.signalled) return { outcome: 'stopped', reason: `stopped by ${r.signalled}`, ...facts };
@@ -162,21 +171,27 @@ export function prBody(n, text, costUsd, turns) {
 }
 
 // The deadline --until sets: the next HH:mm at or after the moment the run started (23:00 with 06:00 is tomorrow's
-// 06:00; 05:00 with 06:00 is today's).
+// 06:00; 05:00 with 06:00 is today's). A run that starts less than an hour after HH:mm (a late scheduled start,
+// 06:00:30 with 06:00) gets today's HH:mm, already passed, so it starts nothing instead of running for a day.
+export const UNTIL_GRACE_MS = 60 * 60 * 1000;
 export function untilDeadline(start, until) {
   const d = new Date(start);
   d.setHours(until.h, until.m, 0, 0);
-  if (d.getTime() < start.getTime()) d.setDate(d.getDate() + 1);
+  if (start.getTime() - d.getTime() >= UNTIL_GRACE_MS) d.setDate(d.getDate() + 1);
   return d;
 }
 
 const TOKEN_VARS = ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'];
+// gh prefers a token variable over its keyring login, so the session gets this placeholder, never the real token.
+export const TOKEN_PLACEHOLDER = 'orc-queue-no-token';
 
 // The session's environment: every plain git push route closed (a pre-push hook that fails, no transport protocol
-// allowed, no credential helper, nothing that prompts), gh pointed at an empty config folder and no GitHub token.
+// allowed, no credential helper, nothing that prompts), gh pointed at an empty config folder, and every GitHub token
+// variable set to a placeholder so gh does not fall back to its keyring login.
 export function sessionEnv(base, { blockHooks, ghDir }) {
   const env = {};
   for (const [k, v] of Object.entries(base)) if (!TOKEN_VARS.includes(k.toUpperCase()) && !/^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/i.test(k)) env[k] = v;
+  for (const k of TOKEN_VARS) env[k] = TOKEN_PLACEHOLDER;
   const config = [['core.hooksPath', blockHooks], ['credential.helper', ''], ['protocol.allow', 'never']];
   config.forEach(([k, v], i) => Object.assign(env, { [`GIT_CONFIG_KEY_${i}`]: k, [`GIT_CONFIG_VALUE_${i}`]: v }));
   return Object.assign(env, {
@@ -262,7 +277,9 @@ function locate(o, env) {
   const remote = parseGithubRemote(url);
   if (!remote) fail(`${repoDir} has no GitHub origin (remote.origin.url is ${url ? `"${url}"` : 'not set'}); nothing changed`);
   const state = o.state ?? path.join(os.homedir(), '.claude', 'orc-queue', `${remote.owner}-${remote.repo}`);
-  return { git, repoDir, slug: `${remote.owner}/${remote.repo}`, state };
+  // The script pushes to this URL, not to the remote name, so a pushurl or other remote.origin.* setting a session
+  // writes into the shared .git/config cannot redirect the push.
+  return { git, repoDir, slug: `${remote.owner}/${remote.repo}`, state, originUrl: url };
 }
 
 // Everything the run reads before it changes anything: gh login, base, issues, branches, PRs, markers.
@@ -314,11 +331,15 @@ function survey(o, loc, io, env) {
     i.branch = branch;
     i.marker = marker;
     const retry = o.issue === i.number && marker?.outcome === 'failed';
-    const pushedSha = retry && typeof marker.pushed?.sha === 'string' ? marker.pushed.sha : null;
+    const pushedSha = retry && typeof marker.pushed?.sha === 'string' && /^[0-9a-f]{40,64}$/.test(marker.pushed.sha) ? marker.pushed.sha : null;
     if (!authors.includes(i.author.toLowerCase())) i.skip = `author ${i.author || '(none)'} is not allowed`;
     else if (marker && !retry) i.skip = `marker (${marker.outcome ?? 'unknown'})`;
     else if (prHeads.has(branch)) i.skip = `an open PR has head ${branch}`;
-    else if (pushedSha && remoteBranches.get(branch) === pushedSha) i.prOnly = { sha: pushedSha, title: marker.prTitle, body: marker.prBody };
+    else if (pushedSha && marker.base !== base) i.skip = `branch ${branch} was pushed for base ${marker.base ?? '(unknown)'}, not ${base}`;
+    else if (pushedSha && remoteBranches.get(branch) === pushedSha) {
+      const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+      i.prOnly = { sha: pushedSha, text: typeof marker.agentText === 'string' ? marker.agentText : '(the agent report was not recorded)', costUsd: num(marker.costUsd), turns: num(marker.turns) };
+    }
     else if (pushedSha && remoteBranches.has(branch)) i.skip = `branch ${branch} on origin is no longer the commit the marker recorded (${pushedSha.slice(0, 12)})`;
     else if (remoteBranches.has(branch)) i.skip = `branch ${branch} exists on origin`;
     else if (localBranches.has(branch) && !marker) i.skip = `a local branch ${branch} exists that the queue did not leave (no marker)`;
@@ -327,20 +348,26 @@ function survey(o, loc, io, env) {
   return Object.assign(loc, { gh, login, authors, base, issues });
 }
 
-// A WARN when the base branch is not protected on GitHub, or when that cannot be checked; never a refusal.
+// A WARN when the base branch is not protected on GitHub, when admins can bypass its protection, or when either
+// cannot be checked; never a refusal. Rulesets are not read.
 function warnUnprotected(ctx, io) {
-  const r = run(ctx.gh, ['api', `repos/${ctx.slug}/branches/${ctx.base}`], { cwd: ctx.repoDir });
-  let isProtected = null;
-  if (r.code === 0) {
+  const get = (p) => {
+    const r = run(ctx.gh, ['api', p], { cwd: ctx.repoDir });
+    if (r.code !== 0) return { error: firstLine(r.stderr) || `exit ${r.code}` };
     try {
-      const p = JSON.parse(r.stdout)?.protected;
-      if (typeof p === 'boolean') isProtected = p;
+      return { json: JSON.parse(r.stdout) };
     } catch {
-      // not JSON: reported below as not checked
+      return { error: 'the answer is not JSON' };
     }
-  }
-  if (isProtected === false) io.err(`WARN queue: ${ctx.base} is not protected on GitHub; add branch protection that requires a pull request (orchestration/queue.md, "Protect the base branch")`);
-  else if (isProtected === null) io.err(`WARN queue: could not check whether ${ctx.base} is protected on GitHub${r.code !== 0 ? ` (${firstLine(r.stderr)})` : ''}; check it by hand`);
+  };
+  const cannot = (why) => io.err(`WARN queue: could not check whether ${ctx.base} is protected on GitHub${why ? ` (${why})` : ''}; check it by hand (orchestration/queue.md, "Protect the base branch")`);
+  const branch = get(`repos/${ctx.slug}/branches/${ctx.base}`);
+  if (branch.error || typeof branch.json?.protected !== 'boolean') return cannot(branch.error);
+  if (!branch.json.protected) return io.err(`WARN queue: ${ctx.base} is not protected on GitHub; add branch protection that requires a pull request and cannot be bypassed (orchestration/queue.md, "Protect the base branch")`);
+  const rules = get(`repos/${ctx.slug}/branches/${ctx.base}/protection`);
+  if (rules.error || typeof rules.json?.enforce_admins?.enabled !== 'boolean') return cannot(rules.error);
+  if (!rules.json.enforce_admins.enabled) io.err(`WARN queue: ${ctx.base} is protected, but admins can bypass it; tick "Do not allow bypassing the above settings" (orchestration/queue.md, "Protect the base branch")`);
+  return undefined;
 }
 
 // The headless command. The prompt goes on stdin, never through a shell.
@@ -353,22 +380,40 @@ export function queuePlan(o, prompt, env = process.env) {
   return { command: 'claude', args, stdin: prompt, toolId: 'claude-code', exe, argv: [...exe.pre, ...args] };
 }
 
-// The lock: one run at a time per state folder. A lock whose pid is not running is taken over inside a takeover
-// folder (mkdir is atomic), so two runs cannot both take it.
-function takeLock(state, io) {
+// The name of the file that lets one run take over one stale lock: it is derived from the stale lock's exact content.
+export const lockToken = (text) => crypto.createHash('sha256').update(String(text)).digest('hex').slice(0, 16);
+
+// The lock: one run at a time per state folder. It records the pid, the start and an expiry (the longest the run can
+// take). A lock is stale when its pid is not running or it has expired (so a reused pid cannot block every run). To
+// take a stale lock over, a run first creates a token file named after that lock's exact content (create-exclusive,
+// so only one run wins), checks the lock is unchanged, and replaces it. A token left by a crashed takeover blocks
+// further takeovers of that lock until it is deleted by hand: the lock fails closed, never open.
+function takeLock(state, io, maxSeconds) {
   const file = path.join(state, 'queue.lock');
-  const mutex = `${file}.takeover`;
+  const started = new Date();
+  const mine = JSON.stringify({ pid: process.pid, startedAt: started.toISOString(), expiresAt: new Date(started.getTime() + maxSeconds * 1000).toISOString() });
   const create = () => {
     const fd = fs.openSync(file, 'wx');
-    fs.writeSync(fd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+    fs.writeSync(fd, mine);
     fs.closeSync(fd);
   };
-  const release = () => {
+  const tryCreate = () => {
     try {
-      if (JSON.parse(fs.readFileSync(file, 'utf8')).pid === process.pid) fs.rmSync(file, { force: true });
-    } catch {
-      // already gone
+      create();
+    } catch (e) {
+      if (e?.code === 'EEXIST') fail(`another queue run took ${file}; nothing changed`);
+      throw e;
     }
+  };
+  const read = () => {
+    try {
+      return fs.readFileSync(file, 'utf8');
+    } catch {
+      return null;
+    }
+  };
+  const release = () => {
+    if (read() === mine) fs.rmSync(file, { force: true });
   };
   try {
     create();
@@ -376,52 +421,46 @@ function takeLock(state, io) {
   } catch (e) {
     if (e?.code !== 'EEXIST') throw e;
   }
+  const held = read();
+  if (held === null) {
+    tryCreate();
+    return release;
+  }
+  let info = {};
   try {
-    fs.mkdirSync(mutex);
+    info = JSON.parse(held) ?? {};
+  } catch {
+    // unreadable: stale
+  }
+  const pid = Number.isSafeInteger(info.pid) && info.pid > 0 ? info.pid : null;
+  let alive = false;
+  if (pid) {
+    try {
+      process.kill(pid, 0);
+      alive = true;
+    } catch (k) {
+      alive = k?.code === 'EPERM';
+    }
+  }
+  const expiry = Date.parse(info.expiresAt ?? '') || Date.parse(info.startedAt ?? '') + 24 * 3600 * 1000;
+  const expired = Number.isFinite(expiry) && expiry <= Date.now();
+  if (alive && !expired) fail(`another queue run holds ${file} (pid ${pid}); nothing changed`);
+  const token = `${file}.takeover-${lockToken(held)}`;
+  try {
+    fs.closeSync(fs.openSync(token, 'wx'));
   } catch (e) {
-    if (e?.code !== 'EEXIST') throw e;
-    let age = 0;
-    try {
-      age = Date.now() - fs.statSync(mutex).mtimeMs;
-    } catch {
-      // removed meanwhile
-    }
-    if (age < 60000) fail(`another queue run is taking over ${file}; nothing changed`);
-    fs.rmSync(mutex, { recursive: true, force: true });
-    try {
-      fs.mkdirSync(mutex);
-    } catch {
-      fail(`another queue run is taking over ${file}; nothing changed`);
-    }
+    if (e?.code === 'EEXIST') fail(`another queue run is taking over ${file}; if none is running, delete ${token} and ${file}; nothing changed`);
+    throw e;
   }
   try {
-    let pid = null;
-    try {
-      pid = JSON.parse(fs.readFileSync(file, 'utf8')).pid;
-    } catch {
-      // gone or unreadable: stale
-    }
-    let alive = false;
-    if (Number.isSafeInteger(pid) && pid > 0) {
-      try {
-        process.kill(pid, 0);
-        alive = true;
-      } catch (k) {
-        alive = k?.code === 'EPERM';
-      }
-    }
-    if (alive) fail(`another queue run holds ${file} (pid ${pid}); nothing changed`);
-    fs.rmSync(file, { force: true });
-    try {
-      create();
-    } catch (e) {
-      if (e?.code === 'EEXIST') fail(`another queue run took ${file}; nothing changed`);
-      throw e;
-    }
-    io.err(`queue: note: took over a stale lock (pid ${pid ?? 'unknown'} is not running)`);
+    const now = read();
+    if (now !== null && now !== held) fail(`another queue run took ${file}; nothing changed`);
+    if (now !== null) fs.rmSync(file, { force: true });
+    tryCreate();
   } finally {
-    fs.rmSync(mutex, { recursive: true, force: true });
+    fs.rmSync(token, { force: true });
   }
+  io.err(`queue: note: took over a stale lock (${alive ? `pid ${pid} is running but the lock expired at ${new Date(expiry).toISOString()}` : `pid ${pid ?? 'unknown'} is not running`})`);
   return release;
 }
 
@@ -480,17 +519,19 @@ async function runIssue(ctx, o, issue, io) {
   const branch = issue.branch;
   if (PROTECTED.includes(branch)) fail(`refusing to push to ${branch}`);
   const started = new Date();
-  const rec = { issue: n, branch, base: ctx.base, outcome: 'failed', reason: null, prUrl: null, pushed: null, prTitle: null, prBody: null, costUsd: null, turns: null, subtype: null, isError: null, apiErrorStatus: null, usage: null, result: null, startedAt: started.toISOString(), finishedAt: null };
+  const rec = { issue: n, branch, base: ctx.base, outcome: 'failed', reason: null, prUrl: null, pushed: null, costUsd: null, turns: null, subtype: null, isError: null, apiErrorStatus: null, usage: null, result: null, startedAt: started.toISOString(), finishedAt: null };
   const finish = () => {
     rec.finishedAt = new Date().toISOString();
     return rec;
   };
-  // A branch pushed by an earlier run whose PR could not be opened: open the PR only, no model run.
+  const title = `Issue #${n}: ${oneLine(issue.title)}`.slice(0, 250);
+  // A branch pushed by an earlier run whose PR could not be opened: open the PR only, no model run. The title comes
+  // from the live issue and the body from prBody(), so Refs and the footer are always the script's own.
   if (issue.prOnly) {
-    const title = issue.prOnly.title || `Issue #${n}: ${oneLine(issue.title)}`.slice(0, 250);
-    const body = issue.prOnly.body || prBody(n, '(the agent report was not recorded)', null, null);
-    const pr = openPr(ctx, n, branch, title, body);
-    if (pr.error) Object.assign(rec, { reason: pr.error, pushed: { branch, sha: issue.prOnly.sha }, prTitle: title, prBody: body });
+    const { sha, text, costUsd, turns } = issue.prOnly;
+    Object.assign(rec, { result: text, costUsd, turns });
+    const pr = openPr(ctx, n, branch, title, prBody(n, text, costUsd, turns));
+    if (pr.error) Object.assign(rec, { reason: `${pr.error} (the branch is pushed; --issue ${n} opens the PR only)`, pushed: { branch, sha } });
     else Object.assign(rec, { outcome: 'done', reason: 'opened the PR for the branch pushed earlier', prUrl: pr.url });
     return finish();
   }
@@ -526,14 +567,14 @@ async function runIssue(ctx, o, issue, io) {
     else if (!(ahead > 0)) Object.assign(rec, { outcome: 'blocked', reason: 'QUEUE RESULT: done, but no commit on the branch' });
     else {
       const sha = g(['rev-parse', `refs/heads/${branch}`]).stdout.trim();
-      const push = g(['push', 'origin', `refs/heads/${branch}:refs/heads/${branch}`]);
+      // To origin's URL as read before any session, never forced, with no tags: no pushurl, remote.origin.* or
+      // push.followTags setting a session wrote into .git/config applies.
+      const push = g(['-c', 'push.followTags=false', 'push', '--no-follow-tags', ctx.originUrl, `refs/heads/${branch}:refs/heads/${branch}`]);
       if (push.code !== 0) Object.assign(rec, { outcome: 'failed', reason: `git push failed: ${lastLine(push.stderr)}` });
       else {
         dropLocalBranch(ctx, wt, branch);
-        const title = `Issue #${n}: ${oneLine(issue.title)}`.slice(0, 250);
-        const body = prBody(n, cls.text, cls.costUsd, cls.turns);
-        const pr = openPr(ctx, n, branch, title, body);
-        if (pr.error) Object.assign(rec, { outcome: 'failed', reason: `${pr.error} (the branch is pushed; --issue ${n} opens the PR only)`, pushed: { branch, sha }, prTitle: title, prBody: body });
+        const pr = openPr(ctx, n, branch, title, prBody(n, cls.text, cls.costUsd, cls.turns));
+        if (pr.error) Object.assign(rec, { outcome: 'failed', reason: `${pr.error} (the branch is pushed; --issue ${n} opens the PR only)`, pushed: { branch, sha } });
         else rec.prUrl = pr.url;
       }
     }
@@ -543,12 +584,12 @@ async function runIssue(ctx, o, issue, io) {
 
 function writeRecord(state, rec) {
   if (['done', 'blocked', 'failed'].includes(rec.outcome)) {
-    const marker = { issue: rec.issue, outcome: rec.outcome === 'done' ? 'handled' : rec.outcome, reason: rec.reason, prUrl: rec.prUrl, at: rec.finishedAt ?? new Date().toISOString() };
-    if (rec.pushed) Object.assign(marker, { pushed: rec.pushed, prTitle: rec.prTitle, prBody: rec.prBody });
+    const marker = { issue: rec.issue, outcome: rec.outcome === 'done' ? 'handled' : rec.outcome, reason: rec.reason, prUrl: rec.prUrl, base: rec.base, at: rec.finishedAt ?? new Date().toISOString() };
+    // For a PR-only retry: the pushed commit and the agent's report; the title, Refs and footer are rebuilt.
+    if (rec.pushed) Object.assign(marker, { pushed: rec.pushed, agentText: rec.result ?? '', costUsd: rec.costUsd, turns: rec.turns });
     fs.writeFileSync(path.join(state, `issue-${rec.issue}.json`), `${JSON.stringify(marker, null, 2)}\n`);
   }
-  const logged = { ...rec };
-  delete logged.prBody;
+  const logged = rec;
   fs.writeFileSync(path.join(state, `run-${rec.issue}-${stamp(new Date(rec.startedAt))}.json`), `${JSON.stringify(logged, null, 2)}\n`);
   const cost = rec.costUsd === null ? 'n/a' : `$${rec.costUsd.toFixed(2)}`;
   fs.appendFileSync(path.join(state, 'queue.log'), `${new Date().toISOString()} issue #${rec.issue} ${rec.outcome} cost ${cost} turns ${rec.turns ?? 'n/a'}${rec.prUrl ? ` ${rec.prUrl}` : ''}${rec.reason ? ` (${oneLine(rec.reason)})` : ''}\n`);
@@ -569,9 +610,10 @@ export async function runQueue({ sub, models, opt, cwd }, io) {
     if (sub === 'run' && o.apply) {
       madeState = !fs.existsSync(loc.state);
       fs.mkdirSync(loc.state, { recursive: true });
-      release = takeLock(loc.state, io);
+      release = takeLock(loc.state, io, o.max * o.timeoutSec + 3600);
     }
     const ctx = survey(o, loc, io, env);
+    if (deadline && deadline.getTime() <= startedAt.getTime() && sub === 'run') io.out(`the run started less than an hour after --until ${o.until.text}, so that time counts as passed: no issue starts`);
     if (sub === 'list') {
       if (!ctx.issues.length) io.out(`no open issue with label ${o.label} in ${ctx.slug}`);
       for (const i of ctx.issues) io.out(`#${i.number}  ${i.skip ? `skipped: ${i.skip}` : 'eligible'}  ${oneLine(i.title)}`);

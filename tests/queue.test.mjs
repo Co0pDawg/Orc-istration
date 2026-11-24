@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { main } from '../tools/orc.mjs';
-import { allowProblem, buildPrompt, classify, prBody, parseGithubRemote, untilDeadline, sessionEnv, BASE_TOOLS, DENY_TOOLS, FOOTER } from '../tools/lib/queue.mjs';
+import { allowProblem, buildPrompt, classify, prBody, parseGithubRemote, untilDeadline, sessionEnv, lockToken, BASE_TOOLS, DENY_TOOLS, FOOTER, TOKEN_PLACEHOLDER } from '../tools/lib/queue.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORC = path.join(REPO, 'tools', 'orc.mjs');
@@ -35,6 +35,10 @@ const out = (v) => { process.stdout.write(JSON.stringify(v) + '\\n'); process.ex
 if (argv[0] === 'api' && argv[1] === 'user') {
   if (!sc.user) { process.stderr.write('You are not logged into any GitHub hosts. To log in, run: gh auth login\\n'); process.exit(4); }
   out({ login: sc.user, id: 1, type: 'User' });
+}
+if (argv[0] === 'api' && /^repos\\/owner\\/repo\\/branches\\/[^/]+\\/protection$/.test(argv[1])) {
+  if (sc.enforceAdmins === 'fail') { process.stderr.write('HTTP 404: Branch not protected\\n'); process.exit(1); }
+  out({ enforce_admins: { url: 'x', enabled: sc.enforceAdmins ?? true } });
 }
 if (argv[0] === 'api' && /^repos\\/owner\\/repo\\/branches\\//.test(argv[1])) {
   if (sc.protected === 'fail') { process.stderr.write('HTTP 403: Resource not accessible\\n'); process.exit(1); }
@@ -85,6 +89,22 @@ if (mode === 'plant') {
   fs.writeFileSync(path.join(hooks, 'pre-push'), '#!/bin/sh\\necho planted > "' + process.env.QUEUE_HOOK_FLAG.replace(/\\\\/g, '/') + '"\\nexit 1\\n', { mode: 0o755 });
   result({ result: 'QUEUE RESULT: done\\nPlanted.' });
 }
+if (mode === 'plantnohooks') {
+  commit();
+  const tmp = process.env.QUEUE_TMP;
+  for (const d of fs.readdirSync(tmp).filter((x) => x.startsWith('orc-queue-nohooks-'))) {
+    try { fs.writeFileSync(path.join(tmp, d, 'pre-push'), '#!/bin/sh\\necho planted > "' + process.env.QUEUE_HOOK_FLAG.replace(/\\\\/g, '/') + '"\\nexit 1\\n', { mode: 0o755 }); } catch {}
+  }
+  result({ result: 'QUEUE RESULT: done\\nPlanted.' });
+}
+if (mode === 'plantconfig') {
+  commit();
+  git('config', 'remote.origin.pushurl', process.env.QUEUE_EVIL);
+  git('config', 'push.followTags', 'true');
+  git('tag', '-a', '-m', 'm', 'planted-tag');
+  result({ result: 'QUEUE RESULT: done\\nPlanted config.' });
+}
+if (mode === 'limitsuccess') result({ result: "You've hit your session limit · resets 3:45pm, I wrote that as my answer." });
 if (mode === 'blocked') result({ result: 'QUEUE RESULT: blocked\\nThe issue is unclear.' });
 if (mode === 'nocommit') result({ result: 'QUEUE RESULT: done\\nNothing to change.' });
 if (mode === 'dirty') { commit(); fs.writeFileSync('leftover.txt', 'x\\n'); fs.writeFileSync('planted.local', 'ignored\\n'); fs.appendFileSync('README.md', 'edited\\n'); result({ result: 'QUEUE RESULT: done\\nDone.' }); }
@@ -104,11 +124,12 @@ const issue = (number, extra = {}) => ({ number, title: `Invented change ${numbe
 
 // A developer checkout on branch `feature` with an uncommitted edit and an untracked file; a bare origin with `main`
 // (origin has its own pushurl, and a second remote `upstream` points at the same bare repo); and the stubs.
-function setup({ issues = [issue(1)], prs = [], user = 'example-user', prCreateFail = false, protectedBase = true } = {}) {
+function setup({ issues = [issue(1)], prs = [], user = 'example-user', prCreateFail = false, protectedBase = true, enforceAdmins = true } = {}) {
   const root = tempDir('queue');
   const bare = path.join(root, 'origin.git');
   const dev = path.join(root, 'dev');
   git(root, 'init', '-q', '--bare', '-b', 'main', bare);
+  git(root, 'init', '-q', '--bare', '-b', 'main', path.join(root, 'evil.git'));
   git(root, 'init', '-q', '-b', 'main', dev);
   for (const [k, v] of [['user.name', 'orc queue test'], ['user.email', 'queue@example.invalid'], ['core.autocrlf', 'false']]) git(dev, 'config', k, v);
   fs.writeFileSync(path.join(dev, 'README.md'), 'seed\n');
@@ -129,7 +150,7 @@ function setup({ issues = [issue(1)], prs = [], user = 'example-user', prCreateF
   fs.writeFileSync(path.join(stubs, 'claude.mjs'), CLAUDE_STUB);
   const scenario = path.join(stubs, 'scenario.json');
   const s = { root, bare, dev, stubs, scenario, state: path.join(root, 'state'), home: tempDir('queue-home'), hookFlag: path.join(root, 'hook-ran.txt') };
-  s.write = (extra = {}) => fs.writeFileSync(scenario, JSON.stringify({ user, issues, prs, prCreateFail, protected: protectedBase, ...extra }));
+  s.write = (extra = {}) => fs.writeFileSync(scenario, JSON.stringify({ user, issues, prs, prCreateFail, protected: protectedBase, enforceAdmins, ...extra }));
   s.write();
   return s;
 }
@@ -140,15 +161,29 @@ function readLines(file) {
 
 function stubEnv(s, modes, logs) {
   return { HOME: s.home, USERPROFILE: s.home, ORC_TOOL_BIN_GH: path.join(s.stubs, 'gh.mjs'), ORC_TOOL_BIN_CLAUDE_CODE: path.join(s.stubs, 'claude.mjs'),
-    QUEUE_GH: s.scenario, QUEUE_GH_LOG: logs.gh, QUEUE_CLAUDE_LOG: logs.claude, QUEUE_MODES: JSON.stringify(modes), QUEUE_BARE: slash(s.bare), QUEUE_HOOK_FLAG: s.hookFlag, GH_TOKEN: 'invented-token' };
+    QUEUE_GH: s.scenario, QUEUE_GH_LOG: logs.gh, QUEUE_CLAUDE_LOG: logs.claude, QUEUE_MODES: JSON.stringify(modes), QUEUE_BARE: slash(s.bare), QUEUE_HOOK_FLAG: s.hookFlag, QUEUE_EVIL: slash(path.join(s.root, 'evil.git')), QUEUE_TMP: os.tmpdir(), GH_TOKEN: 'invented-token' };
 }
 const newLogs = (s) => ({ gh: path.join(s.stubs, `gh-${Date.now()}-${Math.random()}.jsonl`), claude: path.join(s.stubs, `claude-${Date.now()}-${Math.random()}.jsonl`) });
 
-function queue(s, argv, { modes = {}, state = true, repoDir = s.dev } = {}) {
+// A git wrapper that records the script's own git calls and runs the real git.
+const GIT_WRAPPER = `import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const argv = process.argv.slice(2);
+fs.appendFileSync(process.env.QUEUE_GIT_LOG, JSON.stringify(argv) + '\\n');
+const r = spawnSync('git', argv, { stdio: 'inherit', shell: false, windowsHide: true });
+process.exit(r.status ?? 1);
+`;
+
+function queue(s, argv, { modes = {}, state = true, repoDir = s.dev, gitLog = null } = {}) {
   const logs = newLogs(s);
   const env = { ...process.env, ...stubEnv(s, modes, logs) };
   delete env.ORC_TOOL_BIN_GIT;
   delete env.NODE_TEST_CONTEXT;
+  if (gitLog) {
+    const wrapper = path.join(s.stubs, 'git-wrapper.mjs');
+    fs.writeFileSync(wrapper, GIT_WRAPPER);
+    Object.assign(env, { ORC_TOOL_BIN_GIT: wrapper, QUEUE_GIT_LOG: gitLog });
+  }
   const full = [ORC, 'queue', ...argv, '--repo-dir', repoDir, ...(state ? ['--state', s.state] : [])];
   const r = spawnSync(process.execPath, full, { cwd: s.dev, env, encoding: 'utf8', timeout: 180000 });
   return { code: r.status, out: r.stdout, err: r.stderr, gh: readLines(logs.gh), claude: readLines(logs.claude) };
@@ -195,9 +230,11 @@ test('allowed tools: the base list passes the --allow check, and --allow refuses
     'Bash(sh:*)', 'Bash(SH -c x)', 'Bash(bash:*)', 'Bash(zsh:*)', 'Bash(pwsh:*)', 'Bash(pwsh.exe:*)', 'Bash(powershell:*)', 'Bash(PowerShell.EXE -c x)', 'Bash(cmd:*)', 'Bash(cmd.exe /c x)',
     'Bash(npx:*)', 'Bash(npx.exe:*)', 'Bash(env:*)', 'Bash(xargs:*)', 'Bash(/bin/sh:*)', 'Bash(gh.exe:*)',
     'PowerShell', 'WebFetch', 'mcp__github__create_pull_request', 'Edit(src/**)',
+    'Bash(ls && gh auth token)', 'Bash(cat x | gh)', 'Bash(git add ; gh)', 'Bash(npm test & gh)', 'Bash(npm test `gh auth token`)', 'Bash(git add .|sh)', 'Bash(npm test $(gh auth token))',
+    'Bash(npm test > out.txt)', 'Bash(npm test < in.txt)', 'Bash(npm test\ngh auth token)', 'Bash(git-send-pack:*)', 'Bash(git-receive-pack:*)', 'Bash(git-upload-pack origin)',
   ];
   for (const bad of refused) assert.ok(allowProblem(bad), `refused: ${bad}`);
-  for (const ok of ['Bash(npm ci:*)', 'Bash(git show:*)', 'Bash(git restore:*)', 'NotebookEdit']) assert.strictEqual(allowProblem(ok), null, ok);
+  for (const ok of ['Bash(npm ci:*)', 'Bash(git show:*)', 'Bash(git restore:*)', 'Bash(git-blame:*)', 'NotebookEdit']) assert.strictEqual(allowProblem(ok), null, ok);
   for (const d of ['Bash(git push:*)', 'Bash(gh:*)', 'Bash(sh:*)', 'Bash(pwsh.exe:*)', 'Bash(npx:*)', 'Bash(env:*)', 'Bash(xargs:*)', 'PowerShell', 'WebFetch', 'WebSearch', 'mcp__*']) assert.ok(DENY_TOOLS.includes(d), `denied: ${d}`);
 });
 
@@ -227,6 +264,10 @@ test('classify: a usage limit wins over its error exit, also on stderr; a QUEUE 
   const stderr = classify({ code: 1, stdout: 'not json', stderr: "Error\nYou've hit your Sonnet limit · resets 4pm\n" }, 10);
   assert.strictEqual(stderr.outcome, 'limit');
   assert.match(stderr.reason, /Sonnet limit · resets 4pm/);
+  const answer = classify({ code: 0, stdout: JSON.stringify({ subtype: 'success', is_error: false, result: "You've hit your session limit · resets 3:45pm" }) }, 10);
+  assert.strictEqual(answer.outcome, 'failed', 'a successful final message that starts with the limit text is not a limit');
+  assert.strictEqual(classify({ code: 1, stdout: JSON.stringify({ subtype: 'success', is_error: false, result: "You've hit your session limit" }) }, 10).outcome, 'limit', 'a non-zero exit makes it one');
+  assert.strictEqual(classify({ code: 0, stdout: JSON.stringify({ subtype: 'error_during_execution', is_error: false, result: "You've hit your session limit" }) }, 10).outcome, 'limit', 'so does an error subtype');
   const quoted = classify({ code: 0, stdout: JSON.stringify({ subtype: 'success', is_error: false, result: "QUEUE RESULT: done\nYou've hit your Opus limit is the message I added." }) }, 10);
   assert.strictEqual(quoted.outcome, 'done');
   assert.strictEqual(classify({ code: 0, timedOut: true, stdout: '' }, 10).outcome, 'failed');
@@ -253,6 +294,7 @@ test('the session environment: no transport, a failing pre-push hook, no credent
   const env = sessionEnv({ PATH: 'p', gh_token: 'x', GitHub_Token: 'y', GH_ENTERPRISE_TOKEN: 'z', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'n', GIT_CONFIG_KEY_7: 'a.b', HOME: 'h' }, { blockHooks: 'B', ghDir: 'G' });
   assert.deepStrictEqual(env, {
     PATH: 'p', HOME: 'h',
+    GH_TOKEN: TOKEN_PLACEHOLDER, GITHUB_TOKEN: TOKEN_PLACEHOLDER, GH_ENTERPRISE_TOKEN: TOKEN_PLACEHOLDER, GITHUB_ENTERPRISE_TOKEN: TOKEN_PLACEHOLDER,
     GIT_CONFIG_COUNT: '3',
     GIT_CONFIG_KEY_0: 'core.hooksPath', GIT_CONFIG_VALUE_0: 'B',
     GIT_CONFIG_KEY_1: 'credential.helper', GIT_CONFIG_VALUE_1: '',
@@ -262,11 +304,25 @@ test('the session environment: no transport, a failing pre-push hook, no credent
   });
 });
 
+// Only equality with the placeholder is asserted: what gh returns is never printed, logged or stored.
+const ghOnPath = !spawnSync('gh', ['--version'], { stdio: 'ignore', shell: false, windowsHide: true }).error;
+test('the real gh, in the session environment, reports the placeholder token, not a keyring login', { skip: ghOnPath ? false : 'gh is not on PATH' }, () => {
+  const ghDir = tempDir('queue-ghcfg');
+  const env = sessionEnv(process.env, { blockHooks: tempDir('queue-hooks'), ghDir });
+  const r = spawnSync('gh', ['auth', 'token'], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], shell: false, windowsHide: true, timeout: 30000 });
+  const same = r.status === 0 && (r.stdout ?? '').trim() === TOKEN_PLACEHOLDER;
+  assert.ok(same, 'gh auth token in the session environment did not print the placeholder');
+});
+
 test('--until: the deadline is the next HH:mm at or after the run started', () => {
   const at = (d, h, m) => new Date(2030, 0, d, h, m);
   assert.strictEqual(untilDeadline(at(10, 23, 0), { h: 6, m: 0 }).getTime(), at(11, 6, 0).getTime());
   assert.strictEqual(untilDeadline(at(10, 5, 0), { h: 6, m: 0 }).getTime(), at(10, 6, 0).getTime());
   assert.strictEqual(untilDeadline(at(10, 6, 0), { h: 6, m: 0 }).getTime(), at(10, 6, 0).getTime(), 'started exactly at the time: nothing runs');
+  const late = new Date(2030, 0, 10, 6, 0, 30);
+  assert.strictEqual(untilDeadline(late, { h: 6, m: 0 }).getTime(), at(10, 6, 0).getTime(), 'a late start (06:00:30) gets today\'s 06:00, already passed');
+  assert.strictEqual(untilDeadline(at(10, 6, 59), { h: 6, m: 0 }).getTime(), at(10, 6, 0).getTime(), 'up to an hour late: still passed');
+  assert.strictEqual(untilDeadline(at(10, 7, 0), { h: 6, m: 0 }).getTime(), at(11, 6, 0).getTime(), 'an hour or more after: tomorrow');
 });
 
 test('the queue options are refused by every other command (bench run --model is not --models)', () => {
@@ -281,7 +337,7 @@ test('the queue options are refused by every other command (bench run --model is
 
 test('list: each eligibility reason, the default author is the gh user, and comments are never requested', () => {
   const s = setup({
-    issues: [issue(5), issue(1), issue(2, { author: { login: 'other-user' } }), issue(3), issue(4), issue(6)],
+    issues: [issue(5), issue(1, { author: { login: 'Example-User' } }), issue(2, { author: { login: 'other-user' } }), issue(3), issue(4), issue(6)],
     prs: [{ number: 50, headRefName: 'queue/issue-5', url: 'https://github.com/owner/repo/pull/50' }],
   });
   fs.mkdirSync(s.state, { recursive: true });
@@ -308,8 +364,10 @@ test('list: each eligibility reason, the default author is the gh user, and comm
     assert.ok(!(c.argv[0] === 'issue' && c.argv[1] === 'view'), 'no issue view');
   }
   assert.deepStrictEqual(r.claude, []);
+  const shouting = queue(s, ['list', '--author', 'EXAMPLE-USER']);
+  assert.match(shouting.out, /^#1 {2}eligible/m, 'logins match case-insensitively, in --author and in the issue');
   const other = queue(s, ['list', '--author', 'other-user']);
-  assert.match(other.out, /^#1 {2}skipped: author example-user is not allowed/m);
+  assert.match(other.out, /^#1 {2}skipped: author Example-User is not allowed/m);
   assert.match(other.out, /^#2 {2}eligible/m);
 });
 
@@ -348,6 +406,14 @@ test('an unprotected base, or one that cannot be checked, is a WARN in the dry r
   const idle = queue(s, ['run', '--apply']);
   assert.match(idle.out, /no eligible issue/);
   assert.match(idle.err, /WARN queue: main is not protected on GitHub/, 'also when there is no work');
+  const bypass = setup({ enforceAdmins: false });
+  const b = queue(bypass, ['run']);
+  assert.strictEqual(b.code, 0, b.err);
+  assert.match(b.err, /WARN queue: main is protected, but admins can bypass it; tick "Do not allow bypassing the above settings"/);
+  assert.ok(b.gh.some((c) => c.argv[0] === 'api' && c.argv[1] === 'repos/owner/repo/branches/main/protection'));
+  const unread = setup({ enforceAdmins: 'fail' });
+  const ur = queue(unread, ['run']);
+  assert.match(ur.err, /WARN queue: could not check whether main is protected on GitHub \(HTTP 404/);
   const u = setup({ protectedBase: 'fail' });
   const unknown = queue(u, ['run']);
   assert.strictEqual(unknown.code, 0, unknown.err);
@@ -371,7 +437,7 @@ test('a done run pushes exactly queue/issue-<n>, opens a draft PR with Refs and 
   assert.match(c.stdin, /BEGIN ISSUE-DATA-[0-9a-f]+\nIssue #1\nTitle: --draft=false -x\n/);
   for (const [route, code] of Object.entries(c.push)) assert.notStrictEqual(code, 0, `the session's ${route} push is blocked`);
   assert.match(c.blockHook ?? '', /^#!\/bin\/sh\n.*\nexit 1\n$/s, 'the session\'s hooks path holds a failing pre-push hook');
-  assert.strictEqual(c.ghToken, null, 'no GitHub token reaches the model');
+  assert.strictEqual(c.ghToken, TOKEN_PLACEHOLDER, 'only the placeholder token reaches the model');
   assert.ok(c.ghConfigDir, 'gh config points at an empty folder');
   assert.deepStrictEqual(remoteHeads(s), ['refs/heads/main', 'refs/heads/queue/issue-1'], 'only the script\'s push landed');
   const create = r.gh.find((x) => x.argv[1] === 'create');
@@ -411,6 +477,30 @@ test('a pre-push hook the session plants in .git/hooks never runs on the script\
   assert.ok(!fs.existsSync(s.hookFlag), 'the planted hook did not run');
   assert.deepStrictEqual(remoteHeads(s), ['refs/heads/main', 'refs/heads/queue/issue-1']);
   assert.strictEqual(marker(s, 1).outcome, 'handled');
+});
+
+test('the script\'s push is never forced, goes to origin\'s URL, and a hook planted in its own hooks folder during the session does not run', () => {
+  const s = setup();
+  const gitLog = path.join(s.stubs, 'git-calls.jsonl');
+  const r = queue(s, ['run', '--apply'], { modes: { 1: 'plantnohooks' }, gitLog });
+  assert.strictEqual(r.code, 0, r.err);
+  assert.ok(!fs.existsSync(s.hookFlag), 'the hook planted in the old hooks folder did not run');
+  const pushes = readLines(gitLog).filter((a) => a.includes('push'));
+  assert.strictEqual(pushes.length, 1);
+  const push = pushes[0];
+  assert.ok(!push.some((a) => /^(-f|--force|--force-with-lease|--mirror)/.test(a) || a.startsWith('+')), `not forced: ${push.join(' ')}`);
+  assert.deepStrictEqual(push.slice(push.indexOf('push') + 1), ['--no-follow-tags', 'https://github.com/owner/repo.git', 'refs/heads/queue/issue-1:refs/heads/queue/issue-1']);
+  assert.deepStrictEqual(remoteHeads(s), ['refs/heads/main', 'refs/heads/queue/issue-1']);
+});
+
+test('a pushurl and push.followTags a session writes into .git/config do not redirect the script\'s push or push tags', () => {
+  const s = setup();
+  const r = queue(s, ['run', '--apply'], { modes: { 1: 'plantconfig' } });
+  assert.strictEqual(r.code, 0, r.err);
+  assert.strictEqual(git(s.dev, 'config', '--get', 'remote.origin.pushurl').trim(), slash(path.join(s.root, 'evil.git')), 'the session did plant it');
+  assert.deepStrictEqual(remoteHeads(s), ['refs/heads/main', 'refs/heads/queue/issue-1']);
+  assert.strictEqual(git(s.root, 'ls-remote', slash(path.join(s.root, 'evil.git'))).trim(), '', 'nothing reached the planted pushurl');
+  assert.strictEqual(git(s.root, 'ls-remote', '--tags', slash(s.bare)).trim(), '', 'no tag pushed');
 });
 
 test('blocked and done-without-commit push nothing, write blocked markers and keep the local branch', () => {
@@ -466,18 +556,28 @@ test('a push failure is a failed marker; a PR failure after the push is recovera
   assert.match(m.reason, /gh pr create failed/);
   const sha = git(s.dev, 'ls-remote', 'origin', 'refs/heads/queue/issue-1').split('\t')[0];
   assert.strictEqual(m.pushed.sha, sha);
-  assert.strictEqual(m.prTitle, 'Issue #1: Invented change 1');
-  assert.strictEqual(m.prBody.split('\n').at(-1), FOOTER);
+  assert.strictEqual(m.base, 'main');
+  assert.match(m.agentText, /^QUEUE RESULT: done/);
+  fs.writeFileSync(path.join(s.state, 'issue-1.json'), JSON.stringify({ ...m, prTitle: 'Merge me now: unrelated', prBody: '@everyone no footer', agentText: 'tampered report', costUsd: 'lots', turns: 2 }));
   assert.match(queue(s, ['run', '--apply']).out, /no eligible issue/, 'not retried without --issue');
   s.write({ prCreateFail: false });
+  git(s.dev, 'push', '-q', 'origin', 'main:refs/heads/other');
+  const otherBase = queue(s, ['run', '--apply', '--issue', '1', '--base', 'other']);
+  assert.strictEqual(otherBase.code, 1);
+  assert.match(otherBase.err, /was pushed for base main, not other/);
   const dry = queue(s, ['run', '--issue', '1']);
   assert.match(dry.out, /would open the draft PR for issue #1 from the branch pushed earlier/);
   const retry = queue(s, ['run', '--apply', '--issue', '1']);
   assert.strictEqual(retry.code, 0, retry.err);
   assert.deepStrictEqual(retry.claude, [], 'no model run');
   const create = retry.gh.find((c) => c.argv[1] === 'create');
-  assert.strictEqual(create.argv[create.argv.indexOf('--title') + 1], 'Issue #1: Invented change 1');
-  assert.strictEqual(create.body.trim(), m.prBody.trim());
+  assert.strictEqual(create.argv[create.argv.indexOf('--title') + 1], 'Issue #1: Invented change 1', 'the title comes from the issue, not the marker');
+  const lines = create.body.trim().split('\n');
+  assert.strictEqual(lines[0], 'Refs #1');
+  assert.strictEqual(lines.at(-1), FOOTER);
+  assert.match(create.body, /```text\ntampered report\n```/, 'the stored report sits inside the fence');
+  assert.match(create.body, /Cost: unknown; turns: 2\./);
+  assert.doesNotMatch(create.body, /@everyone no footer|Merge me now/);
   assert.strictEqual(marker(s, 1).outcome, 'handled');
 
   const moved = setup({ issues: [issue(3)], prCreateFail: true });
@@ -521,6 +621,11 @@ test('--until: a run started at 23:00 with --until 06:00 starts issues at 23:30 
   const early = await queueAt(t, ['run', '--apply', '--max', '2', '--until', '06:00'], [at(10, 5, 0), at(10, 5, 30), at(10, 6, 0)]);
   assert.strictEqual(early.code, 0, early.err);
   assert.deepStrictEqual(early.claude.map((c) => c.branch), ['queue/issue-1'], 'started at 05:00: the deadline is today\'s 06:00');
+  const l = setup({ issues: [issue(1)] });
+  const late = await queueAt(l, ['run', '--apply', '--until', '06:00'], [new Date(2030, 0, 10, 6, 0, 30), new Date(2030, 0, 10, 6, 0, 31)]);
+  assert.strictEqual(late.code, 0, late.err);
+  assert.deepStrictEqual(late.claude, [], 'a start at 06:00:30 does not run until tomorrow');
+  assert.match(late.out, /less than an hour after --until 06:00, so that time counts as passed/);
 });
 
 test('--max is respected', () => {
@@ -542,18 +647,25 @@ test('the lock is taken before the survey: a live holder refuses the run, a take
   assert.deepStrictEqual(held.claude, []);
   assert.ok(fs.existsSync(lock), 'a live lock is left alone');
   const dead = spawnSync(process.execPath, ['-e', 'process.exit(0)']).pid;
-  fs.writeFileSync(lock, JSON.stringify({ pid: dead }));
-  fs.mkdirSync(`${lock}.takeover`);
+  const stale = JSON.stringify({ pid: dead, startedAt: '2030-01-01T00:00:00.000Z' });
+  fs.writeFileSync(lock, stale);
+  const token = `${lock}.takeover-${lockToken(stale)}`;
+  fs.writeFileSync(token, '');
   const racing = queue(s, ['run', '--apply']);
   assert.strictEqual(racing.code, 1);
-  assert.match(racing.err, /another queue run is taking over/);
-  fs.rmSync(`${lock}.takeover`, { recursive: true });
+  assert.match(racing.err, /another queue run is taking over .*; if none is running, delete /);
+  assert.strictEqual(fs.readFileSync(lock, 'utf8'), stale, 'a token left by a crashed takeover fails closed');
+  fs.rmSync(token);
   const r = queue(s, ['run', '--apply']);
   assert.strictEqual(r.code, 0, r.err);
-  assert.match(r.err, /took over a stale lock/);
+  assert.match(r.err, /took over a stale lock \(pid \d+ is not running\)/);
   assert.strictEqual(r.claude.length, 1);
   assert.ok(!fs.existsSync(lock));
-  assert.ok(!fs.existsSync(`${lock}.takeover`));
+  assert.deepStrictEqual(fs.readdirSync(s.state).filter((x) => x.includes('takeover')), []);
+  fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, startedAt: '2020-01-01T00:00:00.000Z', expiresAt: '2020-01-01T02:00:00.000Z' }));
+  const reused = queue(s, ['run', '--apply']);
+  assert.strictEqual(reused.code, 0, reused.err);
+  assert.match(reused.err, /took over a stale lock \(pid \d+ is running but the lock expired/, 'a reused pid does not block every run');
 });
 
 test('a missing <state>/wt is re-added without pruning the developer\'s other worktrees', () => {
