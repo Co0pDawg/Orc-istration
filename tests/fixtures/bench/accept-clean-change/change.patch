@@ -1,0 +1,47 @@
+diff --git a/src/slug.js b/src/slug.js
+index 75457b0..189fc9b 100644
+--- a/src/slug.js
++++ b/src/slug.js
+@@ -1,8 +1,13 @@
+-// Turns a title into a URL slug: lower case, every run of characters other than a-z and 0-9 becomes one hyphen, and
+-// there is no hyphen at either end.
+-export function slugify(title) {
++const SEPARATORS = ['-', '_', '.'];
++
++// Turns a title into a URL slug: lower case, every run of characters other than a-z and 0-9 becomes one separator
++// (default '-'; '_' and '.' are also allowed), and there is no separator at either end.
++export function slugify(title, { separator = '-' } = {}) {
++  if (!SEPARATORS.includes(separator)) throw new RangeError(`separator must be one of ${SEPARATORS.join(' ')}, got ${separator}`);
+   return title
+     .toLowerCase()
+-    .replace(/[^a-z0-9]+/g, '-')
+-    .replace(/^-+|-+$/g, '');
++    .replace(/[^a-z0-9]+/g, separator)
++    .split(separator)
++    .filter(Boolean)
++    .join(separator);
+ }
+diff --git a/test/slug.test.mjs b/test/slug.test.mjs
+index 00db5bd..195b25d 100644
+--- a/test/slug.test.mjs
++++ b/test/slug.test.mjs
+@@ -10,3 +10,19 @@ test('collapses runs and trims the ends', () => {
+   assert.strictEqual(slugify('  Rock & Roll!! '), 'rock-roll');
+   assert.strictEqual(slugify('***'), '');
+ });
++
++test('the separator option replaces the hyphen, trimmed at both ends', () => {
++  assert.strictEqual(slugify('Hello World', { separator: '_' }), 'hello_world');
++  assert.strictEqual(slugify(' A.B  c! ', { separator: '.' }), 'a.b.c');
++  assert.strictEqual(slugify('--x--y--', { separator: '_' }), 'x_y');
++  assert.strictEqual(slugify('***', { separator: '.' }), '');
++});
++
++test('the default separator is a hyphen', () => {
++  assert.strictEqual(slugify('a b', {}), 'a-b');
++});
++
++test('any other separator is refused', () => {
++  assert.throws(() => slugify('a b', { separator: '/' }), RangeError);
++  assert.throws(() => slugify('a b', { separator: '' }), RangeError);
++});

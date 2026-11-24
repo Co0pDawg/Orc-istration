@@ -142,7 +142,7 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `profiles/*.md` | Optional rulebook additions (`--profile <name>`); `dotnet-azure-devops` holds the long rulebook's stack rules and general lessons |
 | `models.json` | Tier to model, per tool; `models.local.json` (untracked) overrides |
 | `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
-| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks`, `standards`; review panel: `calibration`, `corpus`, `metrics`; `help` |
+| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `bench`, `hooks`, `standards`; review panel: `calibration`, `corpus`, `metrics`; `help` |
 | `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them), install, check, tooling, standards and review-panel tool tests, and the sprint tests (theme tokens and contrast, the theme picker, `make-story.mjs` and the story page) |
 | `CONTRIBUTING.md` | How to change this repo: sources vs generated files, the edit loop, traps |
 | `LICENSE` | MIT |
@@ -165,7 +165,7 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 ## Limits
 
 - The full loop has run live only on Claude Code (on the files generated from this repo since 2026-11-18). Antigravity CLI has had one headless run of the generated scout.
-- Slash commands, skills and review metrics are Claude Code only; other tools follow `review/PROCEDURE.md`, `workflows/*.md` and the `orchestration/` procedures by hand. `dispatch` runs headlessly on Antigravity and Claude Code only.
+- Slash commands, skills and review metrics are Claude Code only; other tools follow `review/PROCEDURE.md`, `workflows/*.md` and the `orchestration/` procedures by hand. `dispatch` runs headlessly on Antigravity and Claude Code only, and `bench` on Claude Code only.
 - Gemini CLI, Codex, Cursor, Copilot and OpenCode are verified by tests against documented formats only.
 - Cursor and Copilot need model ids set in `models.local.json`; until then they use `inherit` or the default model.
 - Hooks, the worklog and sound alerts are Claude Code extras. On other tools the board update after each report is a build-loop step.
@@ -197,6 +197,7 @@ Every command is `node tools/orc.mjs <command>`. Options: `node tools/orc.mjs he
 | `corpus` | List the review regression corpus, or score a panel report against one case |
 | `metrics` | Capture or report per-run review metrics from Claude Code transcripts |
 | `dispatch` | Run one role headlessly at its tier (Antigravity and Claude Code) |
+| `bench` | Replay benchmark: run the builder and refuter on fixed cases (Claude Code), score them with tokens and cost, and compare variants |
 | `hooks` | Merge the example hooks into `settings.json` (dry run without `--apply`) |
 | `standards` | List, show or detect archive coding standards, or compose a project's `STANDARDS.md` (dry run without `--apply`) |
 | `help` | List the commands, or one command's options |
@@ -209,7 +210,7 @@ The Full pre-PR review tier runs the review panel, ported from a production setu
 
 Stack-specific checks (tenant scoping, CSRF, migration co-change, UI test hooks, generated files, a documentation map) come from the reviewed repo's own `REVIEW.md`, or the file its rulebook names; without one the lanes skip those checks. A ticket brief comes from ticket text or a brief file you give. Run logs and metrics land in the reviewed repo's `.orc/` folder (`review/calibration.md`, `review/metrics.md`).
 
-Each verdict in a run log may end `(developer)` or `(agent)`; `calibration` computes precision from the developer's verdicts only and counts agent verdicts apart (`(agent)` anywhere in the cell marks one). Defects a review missed are appended to its log as escaped defects, which give each lane a recall figure; a row `calibration` cannot read is listed under Parser warnings rather than counted as no escape. `metrics capture` counts the verifier's lead verdicts and its finding-verification verdicts apart and reads the run log's `Verification:` line. Before a change to a lane, a role or `models.json` is kept, the affected lanes run on the regression corpus (`tests/fixtures/corpus/`, `review/corpus.md`) and `corpus score` checks that nothing expected was missed.
+Each verdict in a run log may end `(developer)` or `(agent)`; `calibration` computes precision from the developer's verdicts only and counts agent verdicts apart (`(agent)` anywhere in the cell marks one). Defects a review missed are appended to its log as escaped defects, which give each lane a recall figure; a row `calibration` cannot read is listed under Parser warnings rather than counted as no escape. `metrics capture` counts the verifier's lead verdicts and its finding-verification verdicts apart and reads the run log's `Verification:` line. Before a change to a lane, a role or `models.json` is kept, the affected lanes run on the regression corpus (`tests/fixtures/corpus/`, `review/corpus.md`) and `corpus score` checks that nothing expected was missed. A change to the builder or refuter role, or to their tiers, runs the replay benchmark instead (`bench run`, `orchestration/bench.md`): the roles on fixed cases, with the false-ACCEPT rate and the cost per pass for each variant.
 
 In Claude Code, `/pre-pr-review [branch] [base] [scope keywords] [lite|full]`, `/review-verdict` and `/calibration-report` are generated into `commands/`. They find this checkout through the `ORC_HOME` environment variable, else the rulebook's "Setup checkout (this machine)" line, else `~/.claude`. Other tools follow `review/PROCEDURE.md` by hand.
 

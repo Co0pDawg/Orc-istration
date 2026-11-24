@@ -1,0 +1,37 @@
+diff --git a/src/username.js b/src/username.js
+index fbf5b36..b615372 100644
+--- a/src/username.js
++++ b/src/username.js
+@@ -3,5 +3,7 @@ export function validateUsername(name) {
+   const problems = [];
+   if (name.length < 3) problems.push('too short');
+   if (name.length > 20) problems.push('too long');
++  if (!/^[a-z0-9-]*$/.test(name)) problems.push('only lower-case letters, digits and hyphens');
++  if (!/^[a-z]/.test(name)) problems.push('must start with a letter');
+   return problems;
+ }
+diff --git a/test/username.test.mjs b/test/username.test.mjs
+index 53224d1..0f66165 100644
+--- a/test/username.test.mjs
++++ b/test/username.test.mjs
+@@ -5,9 +5,20 @@ import { validateUsername } from '../src/username.js';
+ test('a name of 3 to 20 characters has no problems', () => {
+   assert.deepStrictEqual(validateUsername('abc'), []);
+   assert.deepStrictEqual(validateUsername('a'.repeat(20)), []);
++  assert.deepStrictEqual(validateUsername('ab-12'), []);
+ });
+ 
+ test('length limits', () => {
+   assert.deepStrictEqual(validateUsername('ab'), ['too short']);
+   assert.deepStrictEqual(validateUsername('a'.repeat(21)), ['too long']);
+ });
++
++test('only lower-case letters, digits and hyphens', () => {
++  assert.deepStrictEqual(validateUsername('abC'), ['only lower-case letters, digits and hyphens']);
++  assert.deepStrictEqual(validateUsername('ab_c'), ['only lower-case letters, digits and hyphens']);
++});
++
++test('must start with a letter', () => {
++  assert.deepStrictEqual(validateUsername('1abc'), ['must start with a letter']);
++  assert.deepStrictEqual(validateUsername('-abc'), ['must start with a letter']);
++});

@@ -1,0 +1,36 @@
+diff --git a/src/paginate.js b/src/paginate.js
+index b18afd1..ce01e3c 100644
+--- a/src/paginate.js
++++ b/src/paginate.js
+@@ -3,3 +3,8 @@ export function page(items, number, size) {
+   const start = (number - 1) * size;
+   return items.slice(start, start + size);
+ }
++
++// How many pages `total` items fill at `size` items per page.
++export function pageCount(total, size) {
++  return Math.floor(total / size) + 1;
++}
+diff --git a/test/paginate.test.mjs b/test/paginate.test.mjs
+index 0fef17a..69888a2 100644
+--- a/test/paginate.test.mjs
++++ b/test/paginate.test.mjs
+@@ -1,6 +1,6 @@
+ import { test } from 'node:test';
+ import assert from 'node:assert/strict';
+-import { page } from '../src/paginate.js';
++import { page, pageCount } from '../src/paginate.js';
+ 
+ const items = ['a', 'b', 'c', 'd', 'e'];
+ 
+@@ -12,3 +12,10 @@ test('returns the items of one page', () => {
+ test('a page past the end is empty', () => {
+   assert.deepStrictEqual(page(items, 4, 2), []);
+ });
++
++test('pageCount counts the pages', () => {
++  for (const [total, size] of [[5, 2], [10, 5], [0, 3]]) {
++    const n = pageCount(total, size);
++    assert.ok(Number.isInteger(n), `${total}/${size} gives a whole number of pages`);
++  }
++});
