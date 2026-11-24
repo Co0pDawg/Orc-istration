@@ -12,7 +12,7 @@ export default {
     'No per-agent tool allowlist, sandbox or approval setting: read-only rests on the role body.',
     'No imports in AGENTS.md: the whole rulebook is one file (32 KiB default cap).',
     'No hook system in the research: the board update after an agent report is a build-loop step.',
-    'Windows support is through WSL2 per the docs. One native Windows trial launched only as `codex exec --ephemeral` with the sandbox off (the workspace-write launch failed); workspace-write on native Windows is unverified.',
+    'Native Windows workspace-write passed with MXC on standalone Codex CLI 0.172.0. See docs/example-prompts.md for the tested configuration and earlier bundled and legacy sandbox errors.',
     'No headless recipe: `orc.mjs dispatch` cannot run this tool (no documented headless syntax in the research).',
   ],
   renderAgent(role, tierModel) {
