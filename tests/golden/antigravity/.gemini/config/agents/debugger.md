@@ -13,7 +13,7 @@ tools:
   - read_url_content
   - search_web
 subagent: true
-mainAgent: false
+mainAgent: true
 model: pro
 commandExecutionPolicy: sandbox
 ---

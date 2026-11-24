@@ -119,7 +119,7 @@ Each tool's specifics (dispatch, model mapping, hooks, what it cannot do) are in
 # Antigravity CLI
 
 - **Dispatch:** call `invoke_subagent` with the roster name and the marching orders; `@name` in the CLI messages one. Subagents run concurrently with a clean context; the High-tier cap of three still applies.
-- **Tiers:** subagent `model` is `flash` (Low, Mid) or `pro` (High). A headless run (`agy -p`) takes `--model <slug>` from `models.json` `headless`; refresh the slugs with `agy models | node tools/orc.mjs models --tool antigravity --from-stdin`.
+- **Tiers:** subagent `model` is `flash` (Low, Mid) or `pro` (High). A headless run (`agy -p`) takes `--model <slug>` from `models.json` `headless`; refresh the slugs with `agy models | node tools/orc.mjs models --tool antigravity --from-stdin` (Flash slugs only; write any other listed slug into `models.local.json` by hand). Every role is a main agent as well as a subagent, because `agy --agent <name>` selects only main agents.
 - **Hooks:** `hooks.json` (SessionStart, PreToolUse, PostToolUse, PreInvocation, PostInvocation, Stop).
 - **Shared `~/.gemini`:** Antigravity may load both `AGENTS.md` and a Gemini CLI `GEMINI.md` there, so two rulebook copies; `install` warns. Remove `~/.gemini/GEMINI.md` unless you also use Gemini CLI.
 - **Review panel:** no slash command here: follow `review/PROCEDURE.md` in the setup checkout, dispatching the `review-*` agents by name. `metrics capture` reads Claude Code transcripts only, so it is unsupported here.
