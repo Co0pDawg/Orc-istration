@@ -200,7 +200,7 @@ Save the last command's output as `models.local.json`. It picks the Flash slugs 
 
 ## Limits
 
-- The full loop runs day to day only on Claude Code (on the files generated from this repo since 2026-11-18). The [Codex trials](docs/example-prompts.md#native-windows-execution-checks) cover named-role dispatch and workspace-write with MXC on native Windows. The bundled and legacy sandbox configurations tested on that host failed at shell startup. Antigravity CLI has had one headless run of the generated builder (agy 1.5.16, 2026-11-24): it fixed a small function against failing tests and returned its report. An earlier scout run (2026-11-15) does not count: the roles were then generated with `mainAgent: false`, which `agy --agent` cannot select, and agy at that version ran the default agent without saying so.
+- The full loop runs day to day only on Claude Code (on the files generated from this repo since 2026-11-18). The [Codex trials](docs/example-prompts.md#native-windows-execution-checks) cover named-role dispatch and workspace-write with MXC on native Windows. The bundled and legacy sandbox configurations tested on that host failed at shell startup. Antigravity CLI has had one headless run of the generated builder (agy 1.5.16, 2026-11-24): it fixed a small function against failing tests and returned its report. An earlier scout run (2026-11-15) does not count: the roles were then generated with `mainAgent: false`, which `agy --agent` cannot select, and agy at that version most likely ran the default agent without saying so. `dispatch` needs agy 1.5.16 or later, which exits 1 for an unknown `--agent`; after updating this repo, re-run `install --tool antigravity --apply` so the installed roles carry the new flag.
 - Slash commands, skills and review metrics are Claude Code only; other tools follow `review/PROCEDURE.md`, `workflows/*.md` and the `orchestration/` procedures by hand. `dispatch` runs headlessly on Antigravity and Claude Code only.
 - Gemini CLI, Cursor, Copilot and OpenCode are verified by tests against documented formats only.
 - Cursor and Copilot need model ids set in `models.local.json`; until then they use `inherit` or the default model.
@@ -225,7 +225,7 @@ Every command is `node tools/orc.mjs <command>`. Options: `node tools/orc.mjs he
 | `install` | Install one tool's files into a home folder (dry run without `--apply`); `--sprint-kit` adds the sprint skill, the git guard hook and a stack permission preset for Claude Code |
 | `uninstall` | Delete the files an install recorded (dry run without `--apply`); for a sprint kit, also remove its `settings.json` entries and restore what it replaced |
 | `status` | Compare an installed copy with the current build (a sprint kit's `settings.json` entries included) |
-| `models` | Turn `agy models` output into a `models.local.json` fragment |
+| `models` | Turn `agy models` output into a `models.local.json` fragment (Flash slugs only) |
 | `brief` | Print or lint a marching-orders brief |
 | `review-tier` | Say whether a branch diff is Light-eligible or Full |
 | `costlog` | Draft a cost log from the board |
