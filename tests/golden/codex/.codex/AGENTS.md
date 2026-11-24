@@ -122,10 +122,11 @@ Each tool's specifics (dispatch, model mapping, hooks, what it cannot do) are in
 - **Tiers:** Low `gpt-6-luna`, Mid `gpt-6.1-sol`, High `gpt-6-astra` (`models.json`), with `model_reasoning_effort` from the tier.
 - **Board:** local backend only; `install --board <address> --board-repo <path>` adds this machine's Board line.
 - **Review panel:** no slash command here: follow `review/PROCEDURE.md` in the setup checkout, dispatching the `review-*` agents by name. `metrics capture` reads Claude Code transcripts only, so it is unsupported here.
+- **Fallback: one session per role.** Dispatch by name is not yet verified live. If it fails, run each role as its own Codex session: a builder session given the `developer_instructions` from `agents/builder.toml` and the written spec; then a fresh session given `agents/refuter.toml`'s, the spec and the diff, which reruns the tests and returns ACCEPT or REWORK with evidence. After a rework, a fresh refuter session reviews again, and the orchestrator reads the final diff. `orc.mjs dispatch` has no Codex recipe.
 
 What Codex CLI cannot do (generated from the adapter's gaps):
 - No per-agent tool allowlist, sandbox or approval setting: read-only rests on the role body.
 - No imports in AGENTS.md: the whole rulebook is one file (32 KiB default cap).
 - No hook system in the research: the board update after an agent report is a build-loop step.
-- Windows support is through WSL2 per the docs.
+- Windows support is through WSL2 per the docs. One native Windows trial launched only as `codex exec --ephemeral` with the sandbox off (the workspace-write launch failed); workspace-write on native Windows is unverified.
 - No headless recipe: `orc.mjs dispatch` cannot run this tool (no documented headless syntax in the research).
