@@ -356,7 +356,7 @@ function stamp(d = new Date()) {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices', 'stack', 'from', 'case', 'report'];
+const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices', 'stack', 'from', 'case', 'report', 'family'];
 
 // Value options that may repeat; each value may also be comma-separated.
 const LIST_OPTIONS = ['profile', 'stack'];
@@ -393,14 +393,26 @@ export function args(argv) {
   return out;
 }
 
-export function parseAgyModels(text) {
+export function parseAgyModels(text, family) {
+  let re;
+  let label;
+  if (family === undefined) {
+    re = /^\s*(\S*flash\S*-(low|medium|high))\s/;
+    label = 'flash';
+  } else {
+    const name = typeof family === 'string' ? family.trim() : '';
+    if (!name) return { error: 'family name must not be empty' };
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    re = new RegExp(`^\\s*((?:\\S*-)?${esc}-(low|medium|high))\\s`);
+    label = name;
+  }
   const found = {};
   for (const line of normalizeEol(text).split('\n')) {
-    const m = /^\s*(\S*flash\S*-(low|medium|high))\s/.exec(`${line} `);
+    const m = re.exec(`${line} `);
     if (m) found[{ low: 'low', medium: 'mid', high: 'high' }[m[2]]] ??= m[1];
   }
   const missing = ['low', 'mid', 'high'].filter((t) => !found[t]);
-  if (missing.length) return { error: `cannot tell the ${missing.join(', ')} flash slug(s) from this list` };
+  if (missing.length) return { error: `cannot tell the ${missing.join(', ')} ${label} slug(s) from this list` };
   return { fragment: { antigravity: { headless: { low: found.low, mid: found.mid, high: found.high } } } };
 }
 
@@ -641,8 +653,11 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const files = [...built.files, ...hookScriptFiles(repo, adapter, { sprintKit: kit }), ...(kit ? kitFiles(repo, adapter) : [])];
     for (const c of adapter.conflicts ?? []) {
       const other = path.join(home, ...c.path.split('/'));
-      if (fs.existsSync(other) && isGenerated(read(other))) {
+      if (!fs.existsSync(other) || !fs.statSync(other).isFile()) continue;
+      if (isGenerated(read(other))) {
         io.err(`WARN ${other} is an orc-generated ${c.tool} rulebook in the same folder: ${c.warning}. Remove ${other} unless you also use ${c.tool}.`);
+      } else {
+        io.err(`WARN ${other} exists in the same folder (${c.tool} rulebook): ${c.handWrittenWarning ?? c.warning}. Review both files so their rules do not conflict.`);
       }
     }
     const when = stamp(io.now ? io.now() : new Date());
@@ -1103,8 +1118,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   }
 
   if (cmd === 'models') {
-    if (opt.tool !== 'antigravity' || !opt['from-stdin']) return fail('usage: models --tool antigravity --from-stdin');
-    const { fragment, error } = parseAgyModels(decodeText(io.stdin()));
+    if (opt.tool !== 'antigravity' || !opt['from-stdin']) return fail('usage: models --tool antigravity --from-stdin [--family <name>]');
+    const { fragment, error } = parseAgyModels(decodeText(io.stdin()), opt.family);
     if (error) return fail(`${error}; paste the output of "agy models"`);
     io.out(JSON.stringify(fragment, null, 2));
     return 0;

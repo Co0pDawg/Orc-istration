@@ -56,11 +56,19 @@ export function formatCommand(plan) {
   return lines.join('\n');
 }
 
-function killTree(child) {
-  if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', shell: false });
-  else {
+export function killTree(child, { platform = process.platform, runSync = spawnSync, killProcess = process.kill } = {}) {
+  if (platform === 'win32') {
+    let r;
     try {
-      process.kill(-child.pid, 'SIGKILL');
+      r = runSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', shell: false });
+    } catch {
+      child.kill();
+      return;
+    }
+    if (r?.error || r?.status !== 0) child.kill();
+  } else {
+    try {
+      killProcess(-child.pid, 'SIGKILL');
     } catch {
       child.kill('SIGKILL');
     }

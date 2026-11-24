@@ -10,6 +10,7 @@ import { parseMarchingOrders, briefTemplate, lintBrief } from '../tools/lib/brie
 import { classify } from '../tools/lib/reviewtier.mjs';
 import { costlog, dispatchRows } from '../tools/lib/costlog.mjs';
 import { mergeHooks, formatLike } from '../tools/lib/hooks.mjs';
+import { killTree } from '../tools/lib/dispatch.mjs';
 import { run as reminder } from '../tools/board-reminder.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -328,7 +329,7 @@ test('dispatch --dry-run prints the argv for antigravity and claude-code', () =>
   const agy = isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', brief, '--dry-run']);
   assert.equal(agy.code, 0, agy.err);
   const slug = models.antigravity.headless.low;
-  assert.ok(agy.out.includes(` -p ${JSON.stringify(fs.readFileSync(brief, 'utf8'))} --agent scout --model ${slug} --output-format json\n`), agy.out);
+  assert.ok(agy.out.includes(` -p ${JSON.stringify(fs.readFileSync(brief, 'utf8'))} --agent scout --model ${slug} --output-format json --disable-slash-commands\n`), agy.out);
   assert.match(agy.out, /stdin: none/);
   const cc = isolated(['dispatch', '--tool', 'claude-code', '--role', 'builder', '--brief', brief, '--dry-run']);
   assert.equal(cc.code, 0, cc.err);
@@ -389,6 +390,7 @@ test('dispatch real run passes the brief byte-identical, with no shell, and retu
     if (tool === 'antigravity') {
       assert.equal(argv[0], '-p');
       assert.equal(argv[1], text, 'brief arrives byte-identical as one argument');
+      assert.ok(argv.includes('--disable-slash-commands'), 'antigravity headless passes --disable-slash-commands');
       assert.equal(stdin, '');
     } else {
       assert.deepEqual(argv.slice(0, 3), ['-p', '--agent', 'builder']);
@@ -420,6 +422,56 @@ test('dispatch honours the timeout and kills the child tree', () => {
   const until = Date.now() + 5000;
   while (alive(pid) && Date.now() < until) spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},200)']);
   assert.equal(alive(pid), false, 'grandchild was killed with the tree');
+});
+
+test('killTree on Windows falls back to child.kill() when taskkill errors or exits non-zero', () => {
+  const calls = [];
+  const makeChild = () => {
+    const killed = [];
+    return { pid: 4242, killed, kill: (...a) => killed.push(a) };
+  };
+
+  // taskkill errors (e.g. ENOENT/EACCES in a sandbox): falls back to child.kill().
+  const cErr = makeChild();
+  killTree(cErr, {
+    platform: 'win32',
+    runSync: (cmd, args, opts) => {
+      calls.push({ cmd, args, opts });
+      return { error: Object.assign(new Error('EACCES'), { code: 'EACCES' }), status: null };
+    },
+  });
+  assert.deepStrictEqual(calls[0], { cmd: 'taskkill', args: ['/pid', '4242', '/T', '/F'], opts: { stdio: 'ignore', shell: false } });
+  assert.deepStrictEqual(cErr.killed, [[]]);
+
+  // taskkill exits non-zero: falls back to child.kill().
+  const cNonZero = makeChild();
+  killTree(cNonZero, { platform: 'win32', runSync: () => ({ status: 128 }) });
+  assert.deepStrictEqual(cNonZero.killed, [[]]);
+
+  // runSync throws: falls back to child.kill() exactly once.
+  const cThrow = makeChild();
+  killTree(cThrow, {
+    platform: 'win32',
+    runSync: () => {
+      throw new Error('spawnSync failed');
+    },
+  });
+  assert.deepStrictEqual(cThrow.killed, [[]]);
+
+  // taskkill succeeds (status 0, no error): does not call child.kill().
+  const cOk = makeChild();
+  killTree(cOk, { platform: 'win32', runSync: () => ({ status: 0 }) });
+  assert.deepStrictEqual(cOk.killed, []);
+
+  // Non-Windows: kills process group, falls back to child.kill('SIGKILL') on throw.
+  const cPosix = makeChild();
+  killTree(cPosix, {
+    platform: 'linux',
+    killProcess: () => {
+      throw new Error('ESRCH');
+    },
+  });
+  assert.deepStrictEqual(cPosix.killed, [['SIGKILL']]);
 });
 
 // ---------- hooks ----------
@@ -1016,6 +1068,9 @@ test('help: every dispatched command has a help entry, and every entry is a comm
     if (c !== 'help') assert.equal((await run([c, '--help'])).out, one.out, c);
   }
   assert.match((await run(['install', '--help'])).out, /--board-repo <dir> +the Orc-Dashboard checkout/);
+  const modelsHelp = (await run(['help', 'models'])).out;
+  assert.match(modelsHelp, /--family <name>/);
+  assert.doesNotMatch(modelsHelp, /Flash slugs only/i);
   assert.equal((await run(['help', 'nope'])).code, 1);
   const nope = await run(['nope']);
   assert.equal(nope.code, 1);
