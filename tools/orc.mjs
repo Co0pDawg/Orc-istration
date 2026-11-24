@@ -448,6 +448,10 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   }
   const queueOnly = ['label', 'author', 'max', 'until', 'model', 'allow', 'state', 'issue'].filter((k) => opt[k] !== undefined);
   if (queueOnly.length && cmd !== 'queue') return fail(`${queueOnly.map((k) => `--${k}`).join(', ')} apply to queue only`);
+  const benchOnly = ['variant', 'models', 'runs', 'keep', 'keep-output'].filter((k) => opt[k] !== undefined);
+  if (benchOnly.length && cmd !== 'bench') return fail(`${benchOnly.map((k) => `--${k}`).join(', ')} apply to bench only`);
+  if (opt['budget-usd'] !== undefined && !['bench', 'queue'].includes(cmd)) return fail('--budget-usd applies to bench and queue only');
+  if (opt['dry-run'] && cmd === 'queue') return fail('queue takes no --dry-run: queue run without --apply is the dry run');
   if (opt['no-profile'] && opt.profile) return fail('pass --profile or --no-profile, not both');
   if (opt['no-board'] && (opt.board || opt['board-repo'])) return fail('pass --board or --no-board, not both');
   try {
@@ -1241,7 +1245,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const sub = opt._[1];
     if (!['list', 'run'].includes(sub) || opt._.length !== 2) return fail(QUEUE_USAGE);
     try {
-      return await runQueue({ sub, models: loadModels(repo, { local: false }), opt, cwd: io.cwd ? io.cwd() : process.cwd() }, io);
+      return await runQueue({ sub, models: loadModels(repo), opt, cwd: io.cwd ? io.cwd() : process.cwd() }, io);
     } catch (e) {
       return fail(e.message.startsWith('queue:') ? e.message : `queue: ${e.message}`);
     }

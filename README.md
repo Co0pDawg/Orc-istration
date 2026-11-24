@@ -145,7 +145,7 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `models.json` | Tier to model, per tool; `models.local.json` (untracked) overrides |
 | `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
 | `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `bench`, `queue`, `hooks`, `standards`; review panel: `calibration`, `corpus`, `metrics`; `help` |
-| `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them), install, check, tooling, standards and review-panel tool tests, and the sprint tests (theme tokens and contrast, the theme picker, `make-story.mjs` and the story page) |
+| `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them), install, check, tooling, standards and review-panel tool tests, the `bench` tests (`tests/bench.test.mjs`, over the replay cases in `tests/fixtures/bench/`) and the `queue` tests (`tests/queue.test.mjs`), and the sprint tests (theme tokens and contrast, the theme picker, `make-story.mjs` and the story page) |
 | `CONTRIBUTING.md` | How to change this repo: sources vs generated files, the edit loop, traps |
 | `LICENSE` | MIT |
 | `docs/cli.md` | The full command reference |
@@ -200,7 +200,7 @@ Every command is `node tools/orc.mjs <command>`. Options: `node tools/orc.mjs he
 | `metrics` | Capture or report per-run review metrics from Claude Code transcripts |
 | `dispatch` | Run one role headlessly at its tier (Antigravity and Claude Code) |
 | `bench` | Replay benchmark: run the builder and refuter on fixed cases (Claude Code), score them with tokens and cost, and compare variants |
-| `queue` | Unattended issue queue: run labelled GitHub issues by an allowed author headlessly (Claude Code), one worktree each; the script pushes and opens a draft PR (dry run without `--apply`) |
+| `queue` | Unattended issue queue: run labelled GitHub issues by an allowed author headlessly (Claude Code) in one dedicated worktree, cleaned for each issue; the script pushes and opens a draft PR (dry run without `--apply`) |
 | `hooks` | Merge the example hooks into `settings.json` (dry run without `--apply`) |
 | `standards` | List, show or detect archive coding standards, or compose a project's `STANDARDS.md` (dry run without `--apply`) |
 | `help` | List the commands, or one command's options |

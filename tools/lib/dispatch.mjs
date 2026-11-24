@@ -26,12 +26,18 @@ export function resolveExecutable(name, toolId, env = process.env) {
   return { command: name, pre: [], missing: true, shim };
 }
 
+// The model and effort for one tool and tier: the tier's headless slug first, then its model; the role's effort
+// first, then the tier's. Shared by dispatch and the queue.
+export function tierSettings(models, toolId, tier, roleEffort) {
+  const tiers = models[toolId] ?? {};
+  const base = tiers[tier] ?? {};
+  return { model: tiers.headless?.[tier] ?? base.model, effort: roleEffort ?? base.effort };
+}
+
 // `briefText` is the decoded brief (tools/lib/text.mjs), read once by the caller.
 export function dispatchPlan(adapter, role, models, briefText, env = process.env) {
   if (typeof adapter.headless !== 'function') return { error: `no headless recipe for ${adapter.id}` };
-  const tiers = models[adapter.id] ?? {};
-  const base = tiers[role.tier] ?? {};
-  const tierModel = { model: tiers.headless?.[role.tier] ?? base.model, effort: role.effort ?? base.effort };
+  const tierModel = tierSettings(models, adapter.id, role.tier, role.effort);
   if (!tierModel.model) return { error: `no ${role.tier} model for ${adapter.id} in models.json` };
   const spec = adapter.headless(role, tierModel, briefText);
   const exe = resolveExecutable(spec.command, adapter.id, env);
@@ -105,7 +111,8 @@ export function runTool(plan, { timeoutSec, err = console.error, capture = false
     if (captureStderr) child.stderr.on('data', (c) => errChunks.push(c));
     let timedOut = false;
     let signalled = null;
-    // Ctrl-C or a kill of orc must not leave a detached agent running: kill the tree, then exit 128+signal.
+    // Ctrl-C or a kill of orc must not leave a detached agent running: kill the tree, then resolve with 128+signal
+    // (dispatch exits with that code; bench and queue record the stop and exit 1).
     const CODES = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129, SIGBREAK: 149 };
     const signals = process.platform === 'win32' ? ['SIGINT', 'SIGBREAK'] : ['SIGINT', 'SIGTERM', 'SIGHUP'];
     const onSignal = (sig) => {
