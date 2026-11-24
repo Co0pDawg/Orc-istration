@@ -154,6 +154,25 @@ test('install: a plain install whose write fails part way records what it wrote,
   assert.deepEqual(tree(home), ['.claude/tools'], 'only the file in the way is left');
 });
 
+test('install: a re-install that fails part way keeps every entry the earlier manifest recorded, so uninstall still deletes them', async () => {
+  const home = tempDir('mf-partial-re');
+  const claude = path.join(home, '.claude');
+  assert.equal((await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board'])).code, 0);
+  const manifestFile = path.join(claude, '.orc-manifest.claude-code.json');
+  const first = Object.keys(JSON.parse(fs.readFileSync(manifestFile, 'utf8')).files).sort();
+  assert.ok(first.some((rel) => rel.startsWith('.claude/tools/')), 'the first install recorded the hook scripts');
+  // The hook scripts' folder becomes a file, so the re-install stops before it reaches them.
+  fs.rmSync(path.join(claude, 'tools'), { recursive: true });
+  fs.writeFileSync(path.join(claude, 'tools'), 'in the way\n');
+  const re = await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board']);
+  assert.equal(re.code, 1, re.out);
+  assert.match(re.err, /install stopped: /);
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(manifestFile, 'utf8')).files).sort(), first, 'no earlier entry is dropped');
+  const un = await run(['uninstall', '--tool', 'claude-code', '--home', home, '--apply']);
+  assert.equal(un.code, 0, un.err);
+  assert.deepEqual(tree(home), ['.claude/tools'], 'every recorded file is deleted; only the file in the way is left');
+});
+
 test('install: a manifest write that fails says the files were written but not recorded', async () => {
   const home = tempDir('mf-nowrite');
   const file = path.join(home, '.gemini', '.orc-manifest.antigravity.json');

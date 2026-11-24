@@ -989,7 +989,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       }
       for (const [p, why] of left) io.out(`left: ${p} (${why})`);
     }
-    if (!Object.keys(manifest.files).length) {
+    // Only when this uninstall undoes nothing at all: a kit's settings.json step or restores are work it does.
+    if (!Object.keys(manifest.files).length && !settingsStep && !Object.keys(kitRec?.restore ?? {}).length) {
       io.out('nothing recorded to delete: files that were already in place at install are not in the manifest; delete them by hand if they are orc\'s');
     }
     if (opt.apply) {
@@ -998,7 +999,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       // Only directories install created, deepest first, and only when empty.
       for (const rel of [...manifest.dirs].sort((x, y) => y.length - x.length)) {
         const d = safeRel(home, rel, adapter.home.root);
-        if (fs.existsSync(d) && !fs.readdirSync(d).length) {
+        // A recorded directory something else has since replaced (a file) is left alone, not read.
+        if (fs.existsSync(d) && fs.lstatSync(d).isDirectory() && !fs.readdirSync(d).length) {
           fs.rmdirSync(d);
           io.out(`removed empty directory: ${d}`);
         }
