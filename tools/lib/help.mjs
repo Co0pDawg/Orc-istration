@@ -80,7 +80,7 @@ export const HELP = {
     options: {
       '--tool antigravity': 'the only supported tool',
       '--from-stdin': 'read the model list from stdin',
-      '--family <name>': 'pick this family\'s -low, -medium and -high slugs (without it, picks the Flash slugs as before)',
+      '--family <name>': 'pick this family\'s -low, -medium and -high slugs (without it, picks the slugs containing flash); name a family listed in more than one generation with its version, for example --family 4-neon',
     },
   },
   brief: {

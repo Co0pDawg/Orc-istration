@@ -266,6 +266,7 @@ export function buildTool(adapter, roles, models, agentsMd, { extraNotes = [], p
       continue;
     }
     for (const t of tools) if (!allowed.has(t)) errors.push(`${adapter.id}: ${f.path} emits unknown tool ${t}`);
+    if (adapter.limits?.nonEmptyTools && tools.length === 0) errors.push(`${adapter.id}: ${f.path} has an empty tools list; give the role a capability that maps to a tool`);
     const role = roles.find((r) => r.name === f.role);
     if (role.access === 'read-only') {
       for (const t of tools) if (editTools.has(t)) errors.push(`${adapter.id}: read-only ${role.name} gets ${t}`);
@@ -413,6 +414,14 @@ export function parseAgyModels(text, family) {
   }
   const missing = ['low', 'mid', 'high'].filter((t) => !found[t]);
   if (missing.length) return { error: `cannot tell the ${missing.join(', ')} ${label} slug(s) from this list` };
+  if (family !== undefined) {
+    const stems = new Set([found.low.slice(0, -'-low'.length), found.mid.slice(0, -'-medium'.length), found.high.slice(0, -'-high'.length)]);
+    if (stems.size > 1) {
+      // The list was readable, so the caller must not add its "paste the output" hint to this one.
+      const example = found.high.slice(0, -'-high'.length).replace(/^gemini-/, '');
+      return { error: `--family ${label} picks slugs from more than one model (${found.low}, ${found.mid}, ${found.high}); name one model, for example --family ${example}`, readable: true };
+    }
+  }
   return { fragment: { antigravity: { headless: { low: found.low, mid: found.mid, high: found.high } } } };
 }
 
@@ -1119,8 +1128,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
 
   if (cmd === 'models') {
     if (opt.tool !== 'antigravity' || !opt['from-stdin']) return fail('usage: models --tool antigravity --from-stdin [--family <name>]');
-    const { fragment, error } = parseAgyModels(decodeText(io.stdin()), opt.family);
-    if (error) return fail(`${error}; paste the output of "agy models"`);
+    const { fragment, error, readable } = parseAgyModels(decodeText(io.stdin()), opt.family);
+    if (error) return fail(readable ? error : `${error}; paste the output of "agy models"`);
     io.out(JSON.stringify(fragment, null, 2));
     return 0;
   }

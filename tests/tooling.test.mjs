@@ -4,13 +4,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, ChildProcess } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { main, loadModels } from '../tools/orc.mjs';
 import { parseMarchingOrders, briefTemplate, lintBrief } from '../tools/lib/brief.mjs';
 import { classify } from '../tools/lib/reviewtier.mjs';
 import { costlog, dispatchRows } from '../tools/lib/costlog.mjs';
 import { mergeHooks, formatLike } from '../tools/lib/hooks.mjs';
-import { killTree } from '../tools/lib/dispatch.mjs';
+import { killTree, runDispatch } from '../tools/lib/dispatch.mjs';
 import { run as reminder } from '../tools/board-reminder.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -424,17 +425,20 @@ test('dispatch honours the timeout and kills the child tree', () => {
   assert.equal(alive(pid), false, 'grandchild was killed with the tree');
 });
 
-test('killTree on Windows falls back to child.kill() when taskkill errors or exits non-zero', () => {
+test('killTree on Windows falls back to child.kill() and says so when taskkill errors or exits non-zero', () => {
   const calls = [];
   const makeChild = () => {
     const killed = [];
-    return { pid: 4242, killed, kill: (...a) => killed.push(a) };
+    const lines = [];
+    return { pid: 4242, killed, lines, err: (s) => lines.push(s), kill: (...a) => killed.push(a) };
   };
+  const partial = (why) => [`dispatch: taskkill failed (${why}); killed only pid 4242, its child processes may still be running`];
 
   // taskkill errors (e.g. ENOENT/EACCES in a sandbox): falls back to child.kill().
   const cErr = makeChild();
   killTree(cErr, {
     platform: 'win32',
+    err: cErr.err,
     runSync: (cmd, args, opts) => {
       calls.push({ cmd, args, opts });
       return { error: Object.assign(new Error('EACCES'), { code: 'EACCES' }), status: null };
@@ -442,26 +446,38 @@ test('killTree on Windows falls back to child.kill() when taskkill errors or exi
   });
   assert.deepStrictEqual(calls[0], { cmd: 'taskkill', args: ['/pid', '4242', '/T', '/F'], opts: { stdio: 'ignore', shell: false } });
   assert.deepStrictEqual(cErr.killed, [[]]);
+  assert.deepStrictEqual(cErr.lines, partial('EACCES'));
 
-  // taskkill exits non-zero: falls back to child.kill().
+  // taskkill exits non-zero (other than 128): falls back to child.kill().
   const cNonZero = makeChild();
-  killTree(cNonZero, { platform: 'win32', runSync: () => ({ status: 128 }) });
+  killTree(cNonZero, { platform: 'win32', err: cNonZero.err, runSync: () => ({ status: 1 }) });
   assert.deepStrictEqual(cNonZero.killed, [[]]);
+  assert.deepStrictEqual(cNonZero.lines, partial('exit status 1'));
 
   // runSync throws: falls back to child.kill() exactly once.
   const cThrow = makeChild();
   killTree(cThrow, {
     platform: 'win32',
+    err: cThrow.err,
     runSync: () => {
-      throw new Error('spawnSync failed');
+      throw Object.assign(new Error('spawnSync failed'), { code: 'EPERM' });
     },
   });
   assert.deepStrictEqual(cThrow.killed, [[]]);
+  assert.deepStrictEqual(cThrow.lines, partial('EPERM'));
 
-  // taskkill succeeds (status 0, no error): does not call child.kill().
-  const cOk = makeChild();
-  killTree(cOk, { platform: 'win32', runSync: () => ({ status: 0 }) });
-  assert.deepStrictEqual(cOk.killed, []);
+  // taskkill succeeds (status 0, no error) or the process was already gone (128): no child.kill(), no line.
+  for (const status of [0, 128]) {
+    const c = makeChild();
+    killTree(c, { platform: 'win32', err: c.err, runSync: () => ({ status }) });
+    assert.deepStrictEqual(c.killed, [], `status ${status}`);
+    assert.deepStrictEqual(c.lines, [], `status ${status}`);
+  }
+
+  // Without an err function the fallback still kills and writes nothing.
+  const cQuiet = makeChild();
+  killTree(cQuiet, { platform: 'win32', runSync: () => ({ status: 1 }) });
+  assert.deepStrictEqual(cQuiet.killed, [[]]);
 
   // Non-Windows: kills process group, falls back to child.kill('SIGKILL') on throw.
   const cPosix = makeChild();
@@ -472,6 +488,25 @@ test('killTree on Windows falls back to child.kill() when taskkill errors or exi
     },
   });
   assert.deepStrictEqual(cPosix.killed, [['SIGKILL']]);
+});
+
+test('runDispatch: an error after the timeout kill began is a failed kill, and the run still exits 124', async (t) => {
+  let child = null;
+  t.mock.method(ChildProcess.prototype, 'on', function (ev, fn) {
+    child ??= this;
+    return EventEmitter.prototype.on.call(this, ev, fn);
+  });
+  const lines = [];
+  const err = (s) => {
+    lines.push(s);
+    // Runs before killTree, so the error lands while the kill is under way.
+    if (s.startsWith('dispatch: timed out')) child.emit('error', new Error('kill EPERM'));
+  };
+  const plan = { exe: { command: process.execPath }, argv: ['-e', 'setTimeout(() => {}, 30000)'], stdin: null, toolId: 'antigravity' };
+  const code = await runDispatch(plan, { timeoutSec: 1, err });
+  assert.strictEqual(code, 124);
+  assert.ok(lines.includes('dispatch: kill failed: kill EPERM'), lines.join('\n'));
+  assert.ok(!lines.some((l) => l.startsWith('dispatch: cannot start')), lines.join('\n'));
 });
 
 // ---------- hooks ----------

@@ -156,11 +156,11 @@ Optional, when you want them: the skills in `skills/` (copy into `~/.claude/skil
 node tools/orc.mjs check
 node tools/orc.mjs install --tool antigravity                 # dry run
 node tools/orc.mjs install --tool antigravity --apply --board http://localhost:8377/ --board-repo <path to Orc-Dashboard>
-agy models | node tools/orc.mjs models --tool antigravity --from-stdin           # Flash slugs as before
+agy models | node tools/orc.mjs models --tool antigravity --from-stdin           # Flash slugs
 agy models | node tools/orc.mjs models --tool antigravity --from-stdin --family neon
 ```
 
-Save the output as `models.local.json`. Without `--family`, the helper picks the Flash slugs as before; with `--family <name>`, it picks that family's first `-low`, `-medium` and `-high` slugs. To mix families across tiers or pick a model without all three tiers, edit the file's `headless` block by hand. Then, in each project, run the standards setup in [`orchestration/standards.md`](orchestration/standards.md); `install` prints this pointer too, and writes this clone's path into the rulebook as the setup checkout. The rest: [Install and Quick Start](https://github.com/Co0pDawg/Orc-istration/wiki/Install-And-Quick-Start).
+Save the output as `models.local.json`. Without `--family`, it picks the first slugs whose name contains `flash` and ends in `-low`, `-medium` or `-high` (so a `flash-lite` slug matches); with `--family <name>`, it picks that family's first `-low`, `-medium` and `-high` slugs. A family listed in more than one generation is named with its version, for example `--family 4-neon`. To mix families across tiers or pick a model without all three tiers, edit the file's `headless` block by hand. Then, in each project, run the standards setup in [`orchestration/standards.md`](orchestration/standards.md); `install` prints this pointer too, and writes this clone's path into the rulebook as the setup checkout. The rest: [Install and Quick Start](https://github.com/Co0pDawg/Orc-istration/wiki/Install-And-Quick-Start).
 
 ## Repository layout
 

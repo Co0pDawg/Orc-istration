@@ -202,7 +202,6 @@ test('antigravity emits only agy 1.5.16 tools, no deprecated tools, read-only ha
   const [res] = await buildGolden(REPO, 'antigravity');
   assert.deepStrictEqual(res.errors, []);
   assert.ok(res.rulebook && res.rulebook.size < 24000, `rulebook size ${res.rulebook?.size} under 24000`);
-  const allowed = new Set(['read_file', 'write_file', 'edit_file', 'run_command', 'search_web']);
   const deprecated = ['find_by_name', 'grep_search', 'list_dir', 'view_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content', 'read_url_content'];
   for (const f of res.files) {
     for (const d of deprecated) {
@@ -215,10 +214,6 @@ test('antigravity emits only agy 1.5.16 tools, no deprecated tools, read-only ha
     const role = roles.find((r) => r.name === f.role);
     const { data } = parse(f.content);
     assert.ok(Array.isArray(data.tools), `${f.path} tools array`);
-    for (const t of data.tools) assert.ok(allowed.has(t), `${f.path} emits unsupported tool ${t}`);
-    if (role.access === 'read-only') {
-      assert.ok(!data.tools.includes('write_file') && !data.tools.includes('edit_file'), `${role.name} must not get edit tools`);
-    }
     const want = role.access === 'write'
       ? ['read_file', 'run_command', 'write_file', 'edit_file', 'search_web']
       : role.capabilities.includes('web-search')
@@ -316,6 +311,71 @@ test('models helper reads agy models output and supports --family', async () => 
   // Empty or whitespace-only explicit family returns the empty-family error.
   assert.deepStrictEqual(parseAgyModels(FULL_AGY_MODELS, ''), { error: 'family name must not be empty' });
   assert.deepStrictEqual(parseAgyModels(FULL_AGY_MODELS, '   '), { error: 'family name must not be empty' });
+});
+
+test('models --family refuses slugs from two generations; a version in the name picks one', async () => {
+  const neon4 = { antigravity: { headless: { low: 'gemini-4-neon-low', mid: 'gemini-4-neon-medium', high: 'gemini-4-neon-high' } } };
+  const v4 = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', '4-neon'], FULL_AGY_MODELS);
+  assert.strictEqual(v4.code, 0, v4.err);
+  assert.deepStrictEqual(JSON.parse(v4.out), neon4);
+
+  // The first generation lacks a low slug, so the first match per tier mixes 4 and 3.9.
+  const mixed = FULL_AGY_MODELS.replace('gemini-4-neon-low\tGemini 4 Neon (Low)\n', '') + 'gemini-3.9-neon-low\tGemini 3.9 Neon (Low)\n';
+  const m = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', 'neon'], mixed);
+  assert.strictEqual(m.code, 1, m.out);
+  assert.strictEqual(m.out, '');
+  assert.match(m.err, /gemini-3\.9-neon-low, gemini-4-neon-medium, gemini-4-neon-high\); name one model, for example --family 4-neon$/);
+  // The list was readable, so this error does not ask for the "agy models" output again; a missing tier does.
+  assert.doesNotMatch(m.err, /paste the output/);
+  const m4 = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', '4-neon'], mixed);
+  assert.strictEqual(m4.code, 1);
+  assert.match(m4.err, /cannot tell the low 4-neon slug\(s\)/);
+
+  // A consistent first generation still wins over a later one listed in full.
+  const twoFull = FULL_AGY_MODELS + ['gemini-3.9-neon-high\tOld', 'gemini-3.9-neon-medium\tOld', 'gemini-3.9-neon-low\tOld'].join('\n') + '\n';
+  const first = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', 'neon'], twoFull);
+  assert.strictEqual(first.code, 0, first.err);
+  assert.deepStrictEqual(JSON.parse(first.out), neon4);
+
+  // Without --family nothing changed: mixed flash generations still give the first match per tier.
+  const mixedFlash = FULL_AGY_MODELS.replace('gemini-3.8-flash-low\tGemini 3.8 Flash (Low)\n', '') + 'gemini-3.5-flash-low\tGemini 3.5 Flash (Low)\n';
+  const legacy = await run(['models', '--tool', 'antigravity', '--from-stdin'], mixedFlash);
+  assert.strictEqual(legacy.code, 0, legacy.err);
+  assert.deepStrictEqual(JSON.parse(legacy.out), {
+    antigravity: { headless: { low: 'gemini-3.5-flash-low', mid: 'gemini-3.8-flash-medium', high: 'gemini-3.8-flash-high' } },
+  });
+});
+
+test('models: the default and --family flash agree on the full list, and differ on flash-lite', async () => {
+  const dflt = await run(['models', '--tool', 'antigravity', '--from-stdin'], FULL_AGY_MODELS);
+  const flash = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', 'flash'], FULL_AGY_MODELS);
+  assert.strictEqual(dflt.code, 0, dflt.err);
+  assert.strictEqual(flash.code, 0, flash.err);
+  assert.strictEqual(flash.out, dflt.out);
+
+  const lite = ['gemini-2.5-flash-lite-low', 'gemini-2.5-flash-lite-medium', 'gemini-2.5-flash-lite-high'].map((s) => `${s}\tLite`).join('\n') + '\n';
+  const liteDefault = await run(['models', '--tool', 'antigravity', '--from-stdin'], lite);
+  assert.strictEqual(liteDefault.code, 0, liteDefault.err);
+  assert.deepStrictEqual(JSON.parse(liteDefault.out).antigravity.headless, {
+    low: 'gemini-2.5-flash-lite-low', mid: 'gemini-2.5-flash-lite-medium', high: 'gemini-2.5-flash-lite-high',
+  });
+  const liteFamily = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', 'flash'], lite);
+  assert.strictEqual(liteFamily.code, 1);
+  assert.match(liteFamily.err, /cannot tell the low, mid, high flash slug\(s\)/);
+});
+
+test('antigravity build refuses a role whose capabilities map to no tool; every real role has tools', async () => {
+  const { roles, models, adapters } = await buildRepo();
+  const agy = adapters.find((a) => a.id === 'antigravity');
+  const lister = parseRole('---\nname: lister\ndescription: lists\ntier: low\naccess: read-only\ncapabilities: [list, search, web-fetch]\n---\nbody\n');
+  const { errors } = buildTool(agy, [lister], models, 'x');
+  assert.deepStrictEqual(errors, ['antigravity: .gemini/config/agents/lister.md has an empty tools list; give the role a capability that maps to a tool']);
+
+  const real = buildTool(agy, roles, models, 'x');
+  assert.deepStrictEqual(real.errors, []);
+  const agents = real.files.filter((f) => f.role);
+  assert.strictEqual(agents.length, 11);
+  for (const f of agents) assert.ok(parse(f.content).data.tools.length > 0, f.path);
 });
 
 test('AGENTS.md hygiene', () => {
@@ -605,6 +665,13 @@ test('install warns about two rulebooks in a shared ~/.gemini', async () => {
   const home5 = tempDir('gemini5');
   const cleanAgy = await run(['install', '--tool', 'antigravity', '--home', home5]);
   assert.doesNotMatch(cleanAgy.err, /GEMINI\.md/);
+
+  // The other tool's rulebook path is a directory, not a file: no warning about it.
+  const home6 = tempDir('gemini6');
+  fs.mkdirSync(path.join(home6, '.gemini', 'GEMINI.md'), { recursive: true });
+  const dirAgy = await run(['install', '--tool', 'antigravity', '--home', home6]);
+  assert.strictEqual(dirAgy.code, 0, dirAgy.err);
+  assert.doesNotMatch(dirAgy.err, /GEMINI\.md/);
 });
 
 test('install backups never collide within one second', async () => {
