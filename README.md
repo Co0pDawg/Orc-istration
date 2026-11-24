@@ -10,7 +10,7 @@
 
 It is not an autonomous swarm. A person stays in charge: a spec is written before any code, each built change gets an independent review, and nothing counts as done until the orchestrator has read the final diff.
 
-> **Status: developed and used on Claude Code; early on other tools.** The full loop has run live only on Claude Code, on the files generated from this repo since 2026-11-18. Antigravity CLI has had one live run of a generated agent, and the other five adapters are verified by tests against each tool's documented format. See [Limits](#limits).
+> **Status: developed and used on Claude Code; early on other tools.** The full loop runs day to day only on Claude Code, on the files generated from this repo since 2026-11-18. Codex CLI has completed a live builder, refuter, rework and accept loop, launched both generated roles by name, and passed a native Windows workspace-write probe with MXC. Antigravity CLI has had one live run of a generated agent, and the other four adapters are verified by tests against each tool's documented format. See [Limits](#limits).
 
 Full documentation lives in the [wiki](https://github.com/Co0pDawg/Orc-istration/wiki).
 
@@ -36,6 +36,26 @@ flowchart LR
   D --> P["Pre-PR review"]
   P --> PR["Pull request"]
 ```
+
+## A real catch
+
+From building this repo's own installer (2026-11-15, the cost log behind [`3799303`](https://github.com/Co0pDawg/Orc-istration/commit/3799303)):
+
+1. **The spec** said "`--home` overrides the home dir", so a test install never touches your real `~/.claude`.
+2. **The builder** shipped it, then a rework round fixed a review finding (a `--home` with no value fell back to the real home). 25 tests, all green.
+3. **The refuter** (a Mid-tier model that had not written the code) did not trust the green run. It ran the installer itself against an isolated home and returned:
+   > REWORK: `--home=<dir>` ignored (reproduced in an isolated HOME)
+
+   The option parser did not know the `=` form, so it read `--home=<dir>` as an unknown flag named `home=<dir>`. `--home` stayed unset, and the install fell back to the real home directory. The builder's 25 tests and an earlier High-tier refuter had both missed it.
+4. **The fix** parses `--key=value`, makes an unknown option an error instead of a silent flag, and adds tests for both:
+   ```diff
+   -      } else out[key] = true;
+   +    } else if (FLAG_OPTIONS.includes(key) && eq < 0) out[key] = true;
+   +    else throw new Error(`unknown option ${a}`);
+   ```
+5. **The spec miss went into the record:** "any installer spec should state: never fall back to the real home when a home option was attempted."
+
+That refuter pass cost about 91k tokens and 12 minutes. Without it, a test install typed with `=` would have gone into the user's live `~/.claude` instead of the test folder. [Evidence](#evidence) has the counts across every task since.
 
 ## What is in the box
 
@@ -87,6 +107,16 @@ Six more roles (`review-*`) make up the [review panel](#review-panel) the Full r
 
 The first cost review ([`orchestration/README.md`](orchestration/README.md), 13 records) covered about 14.5M subagent tokens over about 110 dispatches. Of those the review labelled, 80 were earned, 9 marginal and 4 waste. The High tier took about 75% of the spend. Scouts were half marginal, and all four wastes were rate-limit failures or a dispatch in the wrong folder. The rules changed because of it: a cap of three High-tier agents in flight, scouts limited to locations, a data-precondition item in the marching orders, and a mandatory orchestrator-context line in each record.
 
+**How often does the refuter catch something?** A tally of the cost records from 2026-11-15 to 2026-11-23 (20 tasks that used a refuter, in this repo, its board and private projects):
+
+- 19 of the 20 tasks had at least one REWORK. Of 61 recorded refuter verdicts, 42 were REWORK and 19 ACCEPT.
+- The records name 72 defects behind those REWORKs: 32 logic or behaviour bugs, 17 missing or weak tests (mostly mutants no test killed), 8 doc inaccuracies, 2 spec defects, 2 other and 11 of unrecorded kind.
+- One must-fix was rejected as wrong; 12 records say none were.
+- Refuters took about 21% of subagent tokens (3.5M of 16.8M, over the 18 records that separate them).
+- The refuter is not the last line: in at least 7 tasks the pre-PR review still found real issues after the refuter rounds, and CI, a live install or the owner caught a few more. That is why the pre-PR tiers exist.
+
+Limits of the tally: only 4 records state outright that the builder's own tests were green when the refuter found its defect (the rest show a passing builder row just before the REWORK); the Escaped defects line exists only since 2026-11-19, so escapes are a lower bound; and no task has yet been run twice, with and without the refuter, to compare. The per-record table is not published, because most records name private projects.
+
 Every change that goes through the build loop gets an independent adversarial review before a person sees it; only small inline fixes (a one-line change, anything under about five tool calls) skip it. The refuter reruns the tests itself and mutation-checks them (it breaks the code and confirms a test fails). The incidents behind each rule are recorded in [`docs/rulebook-notes.md`](docs/rulebook-notes.md).
 
 ## Works with
@@ -96,7 +126,7 @@ Every change that goes through the build loop gets an independent adversarial re
 | Claude Code | `CLAUDE.md` + `agents/*.md` + the review panel's `commands/*.md` in `~/.claude` | Live: sessions run on the generated files since 2026-11-18 | Builder and debugger keep MCP tools (no allowlist) |
 | Antigravity CLI | `~/.gemini/AGENTS.md` + `config/agents/` | One headless live run of the scout (2026-11-15) | Models only `flash` or `pro`; no per-agent effort |
 | Gemini CLI | `~/.gemini/GEMINI.md` + `agents/` | Golden-file tests against documented formats | No nested or documented parallel subagents |
-| Codex CLI | `~/.codex/AGENTS.md` + `agents/*.toml` | Golden-file tests against documented formats | No tool allowlist; Windows through WSL2 |
+| Codex CLI | `~/.codex/AGENTS.md` + `agents/*.toml` | Golden-file tests, a live practice build, and [named-role and MXC workspace-write trials](docs/example-prompts.md#native-windows-execution-checks) | No per-role tool allowlist. Windows results cover the MXC configuration tested. |
 | Cursor | Project `AGENTS.md` + `~/.cursor/agents/` | Golden-file tests against documented formats | No global rulebook; model ids must be set |
 | GitHub Copilot CLI | `copilot-instructions.md` + `agents/*.agent.md` | Golden-file tests against documented formats | Model ids must be set; coarse tool aliases |
 | OpenCode | `~/.config/opencode/AGENTS.md` + `agents/` | Golden-file tests against documented formats | One documented model id for every tier |
@@ -107,14 +137,18 @@ Details per tool: [Supported Tools](https://github.com/Co0pDawg/Orc-istration/wi
 
 Requires Node 22 or later. No dependencies.
 
-**Claude Code.** Either check this repo out as `~/.claude` (see "Restore on a new machine"), or develop in a separate clone and install from it with `node tools/orc.mjs install --tool claude-code --home <your home>` (a dry run; add `--apply`), as [CONTRIBUTING.md](CONTRIBUTING.md#development-clone-vs-the-live-setup) describes. On a borrowed machine for a timed build, install the sprint kit instead: `node tools/orc.mjs install --tool claude-code --sprint-kit --stack dotnet|node|python --home <your home>` (a dry run; add `--apply`; the preset pre-approves the stack's build, test, run and package-restore commands, and no git commands), as [`docs/interview-machine.md`](docs/interview-machine.md) describes. After editing `AGENTS.md`, `roles/` or `adapters/`:
+**Claude Code.** Clone the repo anywhere except `~/.claude`, then install from it:
 
 ```
-node tools/orc.mjs sync      # regenerates CLAUDE.md, agents/*.md and the generated commands/*.md
-npm test                     # golden files, install tests, and check
+git clone https://github.com/Co0pDawg/Orc-istration.git
+cd Orc-istration
+node tools/orc.mjs install --tool claude-code --home "$HOME"           # dry run: lists what it would write
+node tools/orc.mjs install --tool claude-code --home "$HOME" --apply   # backs up anything it replaces
 ```
 
-Then, in each project, set up its coding standards with the `repo-standards` skill ([`orchestration/standards.md`](orchestration/standards.md)). The skill is there when `~/.claude` is this checkout; from a separate clone, copy `skills/` into `~/.claude/skills` by hand, or follow the procedure with that clone as `<setup>` (`ORC_HOME`, or the "Setup checkout" line `install` writes).
+That writes the rulebook (`~/.claude/CLAUDE.md` and `AGENTS.md`), the roster and review-panel agents, the review commands and the hook scripts. It warns that no board address is set; the loop runs without a board. `uninstall` with the same options takes it all out again. Then open Claude Code in a project and give it a real task, such as a bug with a clear expected behaviour. The session becomes the orchestrator: it writes the marching orders, dispatches a builder, sends a refuter at the diff and reads the result itself before it reports done. Ask it to "use the build loop" if it starts to edit inline. The first build in a repo without a `STANDARDS.md` asks you which coding standards to adopt.
+
+Optional, when you want them: the skills in `skills/` (copy into `~/.claude/skills`), the hooks including the [git guard](#the-git-guard) (`node tools/orc.mjs hooks --home "$HOME"`), and a live board ([Orc-Dashboard](https://github.com/Co0pDawg/Orc-Dashboard)). For a timed build on a borrowed machine, install the sprint kit instead ([`docs/interview-machine.md`](docs/interview-machine.md)). To keep the whole setup under version control, check the repo out as `~/.claude` (see "Restore on a new machine").
 
 **Antigravity CLI.** From a clone of this repo:
 
@@ -146,8 +180,10 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them), install, check, tooling, standards and review-panel tool tests, and the sprint tests (theme tokens and contrast, the theme picker, `make-story.mjs` and the story page) |
 | `CONTRIBUTING.md` | How to change this repo: sources vs generated files, the edit loop, traps |
 | `LICENSE` | MIT |
+| `STANDARDS.md` | This repo's own coding standards (TypeScript/JavaScript and PowerShell), composed by `standards apply` |
+| `CODEOWNERS` | Every change needs the owner's review |
 | `docs/cli.md` | The full command reference |
-| `docs/interview-machine.md`, `docs/example-prompts.md` | Installing and removing the sprint kit on a borrowed machine, and example prompts including its starter prompt |
+| `docs/interview-machine.md`, `docs/example-prompts.md` | Installing and removing the sprint kit on a borrowed machine, and example prompts including its starter prompt and the Codex practice exercise |
 | `orchestration/README.md` | Cost-log format and review questions; the anomaly log and its promotion table |
 | `standards/`, `orchestration/standards.md`, `skills/repo-standards/` | The coding-standards archive (format in `standards/README.md`), the tool-neutral setup procedure, and its Claude Code skill |
 | `orchestration/sprint.md`, `skills/sprint/` | Sprint mode: a timeboxed build (default 45 minutes) that waives the board, standards setup, review panel and cost log for one task, and its Claude Code skill, the story-page template with its `make-story.mjs` filler, and the shared theme |
@@ -160,13 +196,13 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `tools/board-reminder.ps1`, `tools/board-reminder.mjs`, `tools/peon/` | Claude Code hooks: board reminder (PowerShell or Node), sound alert while input is pending and when a turn finishes |
 | `tools/guard.ps1`, `tools/guard.mjs` | Claude Code hook: the git guard (PowerShell or Node; see "The git guard") |
 | `tools/worklog/` | A Windows-only example of time tracking on the hooks (one ticket format, Azure DevOps); not part of the method |
-| `.github/workflows/` | CI: tests and `check` on Ubuntu and Windows |
+| `.github/workflows/`, `.github/pull_request_template.md` | CI: tests and `check` on Ubuntu and Windows; the PR template with its Docs checklist |
 
 ## Limits
 
-- The full loop has run live only on Claude Code (on the files generated from this repo since 2026-11-18). Antigravity CLI has had one headless run of the generated scout.
+- The full loop runs day to day only on Claude Code (on the files generated from this repo since 2026-11-18). The [Codex trials](docs/example-prompts.md#native-windows-execution-checks) cover named-role dispatch and workspace-write with MXC on native Windows. The bundled and legacy sandbox configurations tested on that host failed at shell startup. Antigravity CLI has had one headless run of the generated scout.
 - Slash commands, skills and review metrics are Claude Code only; other tools follow `review/PROCEDURE.md`, `workflows/*.md` and the `orchestration/` procedures by hand. `dispatch` runs headlessly on Antigravity and Claude Code only.
-- Gemini CLI, Codex, Cursor, Copilot and OpenCode are verified by tests against documented formats only.
+- Gemini CLI, Cursor, Copilot and OpenCode are verified by tests against documented formats only.
 - Cursor and Copilot need model ids set in `models.local.json`; until then they use `inherit` or the default model.
 - Hooks, the worklog and sound alerts are Claude Code extras. On other tools the board update after each report is a build-loop step.
 - The artifact board backend can be written only from Claude Code; other tools use the local board.
@@ -295,7 +331,12 @@ If git reports "dubious ownership", run `git config --global --add safe.director
 
 ## Contributing
 
-Agents and people changing this repo: start with [CONTRIBUTING.md](CONTRIBUTING.md).
+Agents and people changing this repo: start with [CONTRIBUTING.md](CONTRIBUTING.md). After editing `AGENTS.md`, `roles/` or `adapters/`:
+
+```
+node tools/orc.mjs sync      # regenerates CLAUDE.md, agents/*.md and the generated commands/*.md
+npm test                     # golden files, install tests, and check
+```
 
 Push a branch and open a pull request against `main`. Report bugs and ideas in [Issues](https://github.com/Co0pDawg/Orc-istration/issues).
 
