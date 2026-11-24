@@ -82,6 +82,56 @@ test('manifest: a removed role is deleted on re-install, kept when edited; statu
   assert.ok(fs.existsSync(path.join(agents, 'researcher.md')));
 });
 
+test('install (#30): an identical file already in place and in no manifest is the owner\'s; not recorded, uninstall leaves it', async () => {
+  // A generated agent copied by hand before the first install: take its content from an install elsewhere.
+  const source = tempDir('mf-owner-src');
+  assert.equal((await run(['install', '--tool', 'antigravity', '--home', source, '--apply'])).code, 0);
+  const home = tempDir('mf-owner');
+  const scout = path.join(home, '.gemini', 'config', 'agents', 'scout.md');
+  fs.mkdirSync(path.dirname(scout), { recursive: true });
+  fs.copyFileSync(path.join(source, '.gemini', 'config', 'agents', 'scout.md'), scout);
+  const ap = await run(['install', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.equal(ap.code, 0, ap.err);
+  assert.match(ap.out, /applied unchanged: .*scout\.md \(already there and not installed by orc: not recorded, uninstall leaves it\)/);
+  const mf = JSON.parse(fs.readFileSync(path.join(home, '.gemini', '.orc-manifest.antigravity.json'), 'utf8'));
+  assert.ok(!('.gemini/config/agents/scout.md' in mf.files), Object.keys(mf.files).join(','));
+  assert.ok('.gemini/config/agents/builder.md' in mf.files, 'the files it wrote are recorded');
+  const st = await run(['status', '--tool', 'antigravity', '--home', home]);
+  assert.equal(st.code, 0, st.out);
+  const un = await run(['uninstall', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.equal(un.code, 0, un.err);
+  assert.ok(fs.existsSync(scout), 'the owner\'s copy stays');
+  assert.ok(!fs.existsSync(path.join(home, '.gemini', 'config', 'agents', 'builder.md')), 'the installed files go');
+});
+
+test('install (#30): a hand-copied hook script identical to the shipped one stays the owner\'s on a plain claude-code install', async () => {
+  const home = tempDir('mf-owner-hook');
+  const guard = path.join(home, '.claude', 'tools', 'guard.mjs');
+  fs.mkdirSync(path.dirname(guard), { recursive: true });
+  fs.writeFileSync(guard, fs.readFileSync(path.join(REPO, 'tools', 'guard.mjs'), 'utf8').replace(/\r\n/g, '\n'));
+  const ap = await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board']);
+  assert.equal(ap.code, 0, ap.err);
+  assert.match(ap.out, /applied unchanged: .*guard\.mjs \(already there and not installed by orc/);
+  const mf = JSON.parse(fs.readFileSync(path.join(home, '.claude', '.orc-manifest.claude-code.json'), 'utf8'));
+  assert.ok(!('.claude/tools/guard.mjs' in mf.files));
+  assert.equal((await run(['status', '--tool', 'claude-code', '--home', home])).code, 0);
+  assert.equal((await run(['uninstall', '--tool', 'claude-code', '--home', home, '--apply'])).code, 0);
+  assert.ok(fs.existsSync(guard), 'the owner\'s hook script stays');
+});
+
+test('install (#30): a file a previous install recorded keeps its manifest entry on a re-install, and uninstall deletes it', async () => {
+  const home = tempDir('mf-reinstall');
+  assert.equal((await run(['install', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
+  const again = await run(['install', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.equal(again.code, 0, again.err);
+  assert.match(again.out, /applied unchanged: .*scout\.md$/m);
+  assert.doesNotMatch(again.out, /not installed by orc/);
+  const mf = JSON.parse(fs.readFileSync(path.join(home, '.gemini', '.orc-manifest.antigravity.json'), 'utf8'));
+  assert.ok('.gemini/config/agents/scout.md' in mf.files);
+  assert.equal((await run(['uninstall', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
+  assert.ok(!fs.existsSync(path.join(home, '.gemini', 'config', 'agents', 'scout.md')));
+});
+
 test('status: one extra file alone makes it out of date and says not installed by orc', async () => {
   const home = tempDir('mf-extra');
   assert.equal((await run(['install', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);

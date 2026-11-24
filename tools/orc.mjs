@@ -761,9 +761,9 @@ export async function main(argv, io = { out: console.log, err: console.error, st
           io.out(`${opt.apply ? 'kept' : 'would keep'} (hand-copied hook script, differs; --force replaces it, with a backup): ${target}`);
           continue;
         }
-        // A file the kit finds already in place, identical and in no manifest, is the owner's: not recorded, so
-        // uninstall leaves it.
-        const ownerCopy = kit && state === 'unchanged' && !recorded[f.path];
+        // A file any install finds already in place, identical and in no manifest, is the owner's: not recorded, so
+        // uninstall leaves it (#30).
+        const ownerCopy = state === 'unchanged' && !recorded[f.path];
         if (opt.apply && state !== 'unchanged') {
           for (let d = path.dirname(target), rel = path.posix.dirname(f.path); !fs.existsSync(d); d = path.dirname(d), rel = path.posix.dirname(rel)) {
             if (safeRel(home, rel, adapter.home.root) && !next.dirs.includes(rel)) next.dirs.push(rel);
