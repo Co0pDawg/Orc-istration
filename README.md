@@ -183,7 +183,7 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `STANDARDS.md` | This repo's own coding standards (TypeScript/JavaScript and PowerShell), composed by `standards apply` |
 | `CODEOWNERS` | Every change needs the owner's review |
 | `docs/cli.md` | The full command reference |
-| `docs/interview-machine.md`, `docs/example-prompts.md` | Installing and removing the sprint kit on a borrowed machine, and example prompts including its starter prompt |
+| `docs/interview-machine.md`, `docs/example-prompts.md` | Installing and removing the sprint kit on a borrowed machine, and example prompts including its starter prompt and the Codex practice exercise |
 | `orchestration/README.md` | Cost-log format and review questions; the anomaly log and its promotion table |
 | `standards/`, `orchestration/standards.md`, `skills/repo-standards/` | The coding-standards archive (format in `standards/README.md`), the tool-neutral setup procedure, and its Claude Code skill |
 | `orchestration/sprint.md`, `skills/sprint/` | Sprint mode: a timeboxed build (default 45 minutes) that waives the board, standards setup, review panel and cost log for one task, and its Claude Code skill, the story-page template with its `make-story.mjs` filler, and the shared theme |

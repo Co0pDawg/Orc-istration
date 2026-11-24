@@ -18,6 +18,23 @@ Given on 2026-11-21 in a session on a job-search app. It asks for a spec first, 
 
 What the orchestrator asked before speccing (one several-question prompt): which repo the onboarding link points at, where practice exercises come from, what the prompt record should hold, and where to save it.
 
+## Codex practice exercise
+
+This standalone Node.js 22 exercise adapts the practice-project request above into a local CLI. Use the following brief in a disposable project.
+
+> Build a CLI that records practice sprint attempts in a local JSON file. Use Node.js built-ins. Support `node sprint.mjs add "API exercise" 25 completed` and `node sprint.mjs summary`.
+>
+> - AC-1: Record a title, elapsed whole minutes (positive), and completed or incomplete outcome.
+> - AC-2: Records persist across CLI invocations.
+> - AC-3: Summary reports total attempts, completed attempts, and average elapsed minutes to one decimal place. No attempts reports zero.
+> - AC-4: Invalid input exits nonzero and leaves the store unchanged.
+>
+> Keep the exercise to the CLI and local storage. Write tests in `sprint.test.mjs` and run `node --test sprint.test.mjs`.
+
+From the Orc-istration checkout, run `node tools/orc.mjs build --tool codex`. For the tested setup, use the instructions from `dist/codex/.codex/agents/builder.toml` in a Codex CLI session with the brief. In a fresh Codex CLI session, give the refuter the instructions from `dist/codex/.codex/agents/refuter.toml`, the same brief, and the implementation diff. Ask the refuter to run the tests, check each acceptance criterion, and return `ACCEPT` or `REWORK` with evidence. After any fixes, rerun the independent review and read the final diff.
+
+In the trial, all three initial tests passed. The refuter reproduced an AC-2 failure where overlapping saves could both exit successfully while one attempt disappeared. The builder serialized writes and added a concurrency regression test. The refuter returned `ACCEPT`, all four tests passed, and a replay against a store seeded with 100,000 attempts verified that all eight overlapping saves persisted. The trial used separate Codex CLI sessions with the generated role instructions. Native dispatch by role name remains unverified in that environment.
+
 ## Starter prompt: interview machine
 
 The prompt to paste into Claude Code on a machine that has only an editor and the Claude app. Claude follows [`interview-machine.md`](interview-machine.md): it checks the prerequisites, clones the repo to `<clone>`, runs `node "<clone>/tools/orc.mjs" install --tool claude-code --sprint-kit --home "<home>"` from the exercise folder (so it detects the stack; or with `--stack`) as a dry run and then with `--apply`, and verifies with `status`. Without Node it takes the doc's no-Node path instead.
