@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { main, loadRoles, loadModels, buildTool } from '../tools/orc.mjs';
 import { parse } from '../tools/lib/frontmatter.mjs';
-import { parseVerdict, benchReport, variantStats, rate, tokensOf, redact, listBenchCases, scoreDefects } from '../tools/lib/bench.mjs';
+import { parseVerdict, benchReport, variantStats, rate, tokensOf, redact, listBenchCases, scoreDefects, makeScratchRepo } from '../tools/lib/bench.mjs';
 import { parseExpected } from '../tools/lib/corpus.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -33,6 +33,11 @@ const mode = process.env.STUB_MODE ?? 'ok';
 if (process.env.STUB_SOLVE) fs.cpSync(process.env.STUB_SOLVE, '.', { recursive: true });
 if (mode === 'sleep') setTimeout(() => {}, 60000);
 else if (mode === 'garbage') { process.stdout.write('this is not json\\n'); process.exit(0); }
+else if (mode === 'nulls') {
+  process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, num_turns: null, result: process.env.STUB_TEXT ?? 'done', total_cost_usd: null,
+    usage: { input_tokens: 100, cache_creation_input_tokens: null, cache_read_input_tokens: 300, output_tokens: 50 } }) + '\\n');
+  process.exit(0);
+}
 else {
   const text = (process.env.STUB_TEXT ?? 'done').replaceAll('{cwd}', process.cwd());
   const budget = mode === 'budget';
@@ -305,6 +310,94 @@ test('a non-zero exit, a budget stop and unparseable output are errors; the next
   }
 });
 
+test('explicit null cost, turns and token counters are recorded as unknown, and the report flags them', () => {
+  const r = bench(['run', '--case', 'test-asserts-nothing'], { STUB_MODE: 'nulls', STUB_TEXT: 'VERDICT: REWORK' });
+  const res = result(r, 'test-asserts-nothing');
+  assert.strictEqual(res.costUsd, null);
+  assert.strictEqual(res.turns, null);
+  assert.strictEqual(res.tokens, null);
+  assert.match(r.out, /tokens n\/a; cost n\/a/);
+  const report = benchReport([res]);
+  assert.match(report, /\(\+1 unknown\)/);
+});
+
+test('scratch repos ignore a global hooks path, commit signing and init template', () => {
+  const home = tempDir('bench-gitglobal');
+  const hooks = path.join(home, 'hooks');
+  fs.mkdirSync(hooks);
+  fs.writeFileSync(path.join(hooks, 'pre-commit'), '#!/bin/sh\necho blocked by a global hook >&2\nexit 1\n', { mode: 0o755 });
+  fs.mkdirSync(path.join(home, 'template', 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'template', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const globalFile = path.join(home, 'gitconfig');
+  fs.writeFileSync(globalFile, `[core]\n\thooksPath = ${hooks.replace(/\\/g, '/')}\n[commit]\n\tgpgsign = true\n[tag]\n\tgpgsign = true\n[gpg]\n\tprogram = orc-bench-no-gpg\n[init]\n\ttemplateDir = ${path.join(home, 'template').replace(/\\/g, '/')}\n`);
+  const saved = process.env.GIT_CONFIG_GLOBAL;
+  process.env.GIT_CONFIG_GLOBAL = globalFile;
+  try {
+    for (const c of listBenchCases(CASES).filter((x) => ['test-asserts-nothing', 'csv-quoted-fields'].includes(x.id))) {
+      const dir = makeScratchRepo(c);
+      try {
+        assert.ok(spawnSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).status === 0, `${c.id}: committed`);
+        assert.ok(!fs.existsSync(path.join(dir, '.git', 'hooks', 'pre-commit')), `${c.id}: no template hook copied`);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  } finally {
+    if (saved === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = saved;
+  }
+});
+
+test('an error that names a path is written with the path redacted', () => {
+  const repo = tempDir('bench-redact');
+  for (const d of ['roles', 'adapters', 'tools']) fs.cpSync(path.join(REPO, d), path.join(repo, d), { recursive: true });
+  fs.copyFileSync(path.join(REPO, 'models.json'), path.join(repo, 'models.json'));
+  const caseDir = path.join(repo, 'tests', 'fixtures', 'bench', 'test-asserts-nothing');
+  fs.cpSync(path.join(CASES, 'test-asserts-nothing'), caseDir, { recursive: true });
+  const abs = path.join(os.tmpdir(), 'orc-bench-redact-probe').replace(/\\/g, '/');
+  fs.writeFileSync(path.join(caseDir, 'change.patch'), `diff --git a/${abs}/x.js b/${abs}/x.js\n--- a/${abs}/x.js\n+++ b/${abs}/x.js\n@@ -1 +1 @@\n-a\n+b\n`);
+  const r = bench(['run', '--repo', repo, '--case', 'test-asserts-nothing']);
+  assert.strictEqual(r.code, 1);
+  assert.deepStrictEqual(r.calls, [], 'the scratch repo failed before the agent started');
+  const res = result(r, 'test-asserts-nothing');
+  assert.strictEqual(res.outcome, 'error');
+  assert.match(res.error, /^git apply failed: error: <temp>\/orc-bench-redact-probe\/x\.js: No such file or directory$/);
+  assertNoPaths(r.results['test-asserts-nothing.json']);
+});
+
+test('a signal stops the run early: the next case does not start, the tally says so, exit 1', async () => {
+  const dir = tempDir('bench-signal');
+  const out = path.join(dir, 'out');
+  const saved = process.env.ORC_TOOL_BIN_CLAUDE_CODE;
+  process.env.ORC_TOOL_BIN_CLAUDE_CODE = stub(dir);
+  process.env.STUB_MODE = 'sleep';
+  const before = process.listeners('SIGINT');
+  const lines = [];
+  try {
+    const running = main(['bench', 'run', '--case', 'retry-backoff', '--case', 'test-asserts-nothing', '--out', out], { out: (s) => lines.push(s), err: (s) => lines.push(s) });
+    const calls = path.join(dir, 'calls.jsonl');
+    for (let i = 0; i < 300 && !fs.existsSync(calls); i++) await new Promise((r) => setTimeout(r, 100));
+    assert.ok(fs.existsSync(calls), 'the first case started');
+    // Only the handler the run registered gets the signal, so the test runner's own handlers stay out of it.
+    for (const l of before) process.off('SIGINT', l);
+    try {
+      process.emit('SIGINT', 'SIGINT');
+    } finally {
+      for (const l of before) process.on('SIGINT', l);
+    }
+    const code = await running;
+    assert.strictEqual(code, 1);
+    assert.strictEqual(fs.readFileSync(calls, 'utf8').trim().split('\n').length, 1, 'the second case never started');
+    const text = lines.join('\n');
+    assert.match(text, /retry-backoff: error \(stopped by SIGINT\)/);
+    assert.match(text, /1 run\(s\): 0 pass, 0 fail, 1 error \(stopped early\)/);
+  } finally {
+    delete process.env.STUB_MODE;
+    if (saved === undefined) delete process.env.ORC_TOOL_BIN_CLAUDE_CODE;
+    else process.env.ORC_TOOL_BIN_CLAUDE_CODE = saved;
+  }
+});
+
 test('a run past --timeout is killed and recorded as an error', () => {
   const t0 = Date.now();
   const r = bench(['run', '--case', 'retry-backoff', '--timeout', '2'], { STUB_MODE: 'sleep' });
@@ -345,6 +438,8 @@ test('tokensOf prefers the per-model totals, and redact leaves no path behind', 
     { input: 6, cacheWrite: 3, cacheRead: 10, output: 3 },
   );
   assert.strictEqual(tokensOf({}), null);
+  assert.strictEqual(tokensOf({ usage: { input_tokens: 1, output_tokens: null } }), null, 'an explicit null counter is unknown, not 0');
+  assert.strictEqual(tokensOf({ modelUsage: { a: { inputTokens: 5, outputTokens: '7' } } }), null, 'so is a counter that is not a number');
   const t = redact('git apply failed: error in C:\\Temp\\orc-bench-1\\a.js and /var/tmp/x', [['C:\\Temp\\orc-bench-1', '<scratch>']]);
   assert.strictEqual(t, 'git apply failed: error in <scratch>\\a.js and <path>');
 });

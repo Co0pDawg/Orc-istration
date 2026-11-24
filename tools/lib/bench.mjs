@@ -17,7 +17,8 @@ export const BENCH_USAGE =
 const CASE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const VARIANT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 export const ROLE_OF = { build: 'builder', refute: 'refuter' };
-// The tools each role may use without a prompt; anything else is denied in a headless run.
+// The tools each role may use without a prompt. Anything else is denied in a headless run unless the user's or the
+// project's settings allow it, since those allow rules still apply.
 export const ALLOWED_TOOLS = {
   builder: ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash(node:*)', 'Bash(npm:*)', 'Bash(git:*)'],
   refuter: ['Read', 'Glob', 'Grep', 'Bash(node:*)', 'Bash(npm:*)', 'Bash(git:*)'],
@@ -142,22 +143,32 @@ export function parseResultJson(stdout) {
 }
 
 // Tokens as the result JSON reports them: the per-model `modelUsage` totals when present (they include side calls
-// on other models), else the top-level `usage`.
+// on other models), else the top-level `usage`. A counter that is absent counts 0; one that is present but not a
+// number (an explicit null) makes the whole figure unknown (null), so the report flags it instead of adding 0.
 export function tokensOf(r) {
-  const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  let unknown = false;
+  const n = (v) => {
+    if (v === undefined) return 0;
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    unknown = true;
+    return 0;
+  };
   const per = r?.modelUsage && typeof r.modelUsage === 'object' ? Object.values(r.modelUsage).filter((m) => m && typeof m === 'object') : [];
+  let t = null;
   if (per.length) {
-    return per.reduce(
-      (t, m) => ({ input: t.input + n(m.inputTokens), cacheWrite: t.cacheWrite + n(m.cacheCreationInputTokens), cacheRead: t.cacheRead + n(m.cacheReadInputTokens), output: t.output + n(m.outputTokens) }),
+    t = per.reduce(
+      (s, m) => ({ input: s.input + n(m.inputTokens), cacheWrite: s.cacheWrite + n(m.cacheCreationInputTokens), cacheRead: s.cacheRead + n(m.cacheReadInputTokens), output: s.output + n(m.outputTokens) }),
       { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 },
     );
-  }
-  if (r?.usage && typeof r.usage === 'object') {
+  } else if (r?.usage && typeof r.usage === 'object') {
     const u = r.usage;
-    return { input: n(u.input_tokens), cacheWrite: n(u.cache_creation_input_tokens), cacheRead: n(u.cache_read_input_tokens), output: n(u.output_tokens) };
+    t = { input: n(u.input_tokens), cacheWrite: n(u.cache_creation_input_tokens), cacheRead: n(u.cache_read_input_tokens), output: n(u.output_tokens) };
   }
-  return null;
+  return unknown ? null : t;
 }
+
+// A figure from the result JSON: a finite number, else unknown (null). An explicit null is unknown, never 0.
+const figure = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -204,8 +215,13 @@ export function scoreDefects(expected, text) {
   return expected.map((e) => ({ id: e.id, found: found.has(e.id) }));
 }
 
-const git = (cwd, args, input) => {
-  const r = spawnSync('git', ['-c', 'core.autocrlf=false', ...args], { cwd, input, encoding: 'utf8', shell: false, windowsHide: true });
+const GIT_TIMEOUT_MS = 120000;
+
+// Scratch-repo git: no signing, no hooks (an empty hooks folder) and no autocrlf, whatever the user's global config
+// says, and a timeout so a hung call fails the run instead of stalling it.
+const git = (cwd, args, input, noHooks) => {
+  const r = spawnSync('git', ['-c', 'core.autocrlf=false', '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', '-c', `core.hooksPath=${noHooks}`, ...args], { cwd, input, encoding: 'utf8', shell: false, windowsHide: true, timeout: GIT_TIMEOUT_MS });
+  if (r.error?.code === 'ETIMEDOUT') throw new Error(`git ${args[0]} timed out after ${GIT_TIMEOUT_MS / 1000}s`);
   if (r.error || r.status !== 0) throw new Error(`git ${args[0]} failed: ${(r.stderr || r.error?.message || '').trim().split('\n')[0]}`);
   return r.stdout;
 };
@@ -230,23 +246,28 @@ function copyLf(from, to) {
 // stays checked out.
 export function makeScratchRepo(c) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orc-bench-'));
+  // An empty folder serves as both the init template and the hooks path, so no user template or hook applies.
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'orc-bench-empty-'));
+  const g = (args, input) => git(dir, args, input, empty);
   try {
     copyLf(path.join(c.dir, 'seed'), dir);
-    git(dir, ['init', '-q', '-b', 'base']);
-    git(dir, ['config', 'core.autocrlf', 'false']);
-    git(dir, ['config', 'user.name', 'orc bench']);
-    git(dir, ['config', 'user.email', 'bench@example.invalid']);
-    git(dir, ['add', '-A']);
-    git(dir, ['commit', '-q', '-m', 'seed']);
+    g(['init', '-q', `--template=${empty}`, '-b', 'base']);
+    g(['config', 'core.autocrlf', 'false']);
+    g(['config', 'user.name', 'orc bench']);
+    g(['config', 'user.email', 'bench@example.invalid']);
+    g(['add', '-A']);
+    g(['commit', '-q', '-m', 'seed']);
     if (c.kind === 'refute') {
-      git(dir, ['checkout', '-q', '-b', 'change']);
-      git(dir, ['apply', '-'], readText(path.join(c.dir, 'change.patch')).replace(/\r\n/g, '\n'));
-      git(dir, ['add', '-A']);
-      git(dir, ['commit', '-q', '-m', 'change']);
+      g(['checkout', '-q', '-b', 'change']);
+      g(['apply', '-'], readText(path.join(c.dir, 'change.patch')).replace(/\r\n/g, '\n'));
+      g(['add', '-A']);
+      g(['commit', '-q', '-m', 'change']);
     }
   } catch (e) {
     removeDir(dir);
     throw e;
+  } finally {
+    removeDir(empty);
   }
   return dir;
 }
@@ -333,8 +354,8 @@ async function runOne(c, plan, o, ctx, io) {
     const json = parseResultJson(r.stdout);
     if (json) {
       result.tokens = tokensOf(json);
-      result.costUsd = Number.isFinite(Number(json.total_cost_usd)) ? Number(json.total_cost_usd) : null;
-      result.turns = Number.isFinite(Number(json.num_turns)) ? Number(json.num_turns) : null;
+      result.costUsd = figure(json.total_cost_usd);
+      result.turns = figure(json.num_turns);
       if (typeof json.result === 'string') text = json.result;
     }
     // What the result JSON says went wrong: a non-success subtype by name, or `is_error` under any other subtype.

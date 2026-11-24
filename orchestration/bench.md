@@ -40,7 +40,7 @@ A new case must be sound without a model: for `build`, the `Accept:` command fai
 
 1. **Dry run.** `node tools/orc.mjs bench run --dry-run` prints each case's command and starts nothing.
 2. **Run.** `node tools/orc.mjs bench run [--case <id>]... [--variant <label>] [--models <file>] [--runs <n>] [--budget-usd <n>] [--timeout <seconds>]`. Each case run:
-   - creates a scratch repo in a fresh temp folder: `git init -b base` (never `main`, `master` or `develop`, which the git guard protects), the seed committed on `base`; for `refute`, branch `change` with `change.patch` applied and committed, left checked out;
+   - creates a scratch repo in a fresh temp folder: `git init -b base` with no init template, every setup call run with commit and tag signing off, an empty hooks path and a timeout, so the user's global git config cannot break it (never `main`, `master` or `develop`, which the git guard protects), the seed committed on `base`; for `refute`, branch `change` with `change.patch` applied and committed, left checked out;
    - runs the role there: `claude -p --agent <role> --agents <json> --model <m> --effort <e> --output-format json --permission-mode acceptEdits --allowedTools <list> --max-budget-usd <n> --no-session-persistence`, the brief on stdin, never through a shell. The `--agents` definition is the agent file `build --tool claude-code` would write for the checkout's `roles/<role>.md`, so a role edit on a branch is measured without installing it. Model and effort come from `models.json` merged with `--models <file>` (the `models.local.json` shape, validated as `check` validates that file); `models.local.json` itself is not read, so a run depends only on the checkout and the flags. Allowed tools: builder `Read Edit Write Glob Grep Bash(node:*) Bash(npm:*) Bash(git:*)`, refuter the same without `Edit` and `Write`;
    - scores the run, writes `<out>/<runId>/<case>.json` (`<case>.<n>.json` with `--runs` above 1), and deletes the scratch repo (`--keep` keeps it and prints its path).
    The default out folder is `<repo top of the current folder>/.orc/bench`; `runId` is `<UTC yyyyMMddTHHmmssZ>-<variant>`. A failed run is still a result (below); the command goes on to the next case and exits 1 at the end if any run errored. `ORC_TOOL_BIN_CLAUDE_CODE` points at the executable, as for `dispatch`.
@@ -79,8 +79,8 @@ The figures come from the CLI's `--output-format json` result, whose fields were
 | `startedAt` | when the run started (ISO 8601, UTC) |
 | `outcome`, `error` | `pass`, `fail` or `error`; the reason for an error, else `null` |
 | `verdict`, `expect`, `defects` | refute only: `ACCEPT`, `REWORK` or `null`; the case's `Expect:`; `[{id, found}]`, one per `expected.md` row (empty for `Expect: ACCEPT`) |
-| `tokens` | `{input, cacheWrite, cacheRead, output}` from the result JSON: the per-model `modelUsage` totals when present, else the top-level `usage`; `null` with no result JSON |
-| `costUsd`, `turns` | the result JSON's `total_cost_usd` and `num_turns`, or `null` |
+| `tokens` | `{input, cacheWrite, cacheRead, output}` from the result JSON: the per-model `modelUsage` totals when present, else the top-level `usage` (an absent counter counts 0); `null` with no result JSON, or when a counter is present but not a number (an explicit `null`) |
+| `costUsd`, `turns` | the result JSON's `total_cost_usd` and `num_turns` when each is a number, else `null` (an explicit `null` is unknown, never 0) |
 | `wallClockSeconds` | from scratch repo to score, one decimal |
 | `gitHead`, `gitDirty` | the checkout's `HEAD` and whether it had uncommitted changes (`null` outside a git repo) |
 | `claudeVersion` | from `claude --version`, or `null` |
