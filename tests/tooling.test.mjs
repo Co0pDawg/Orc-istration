@@ -658,10 +658,15 @@ test('a tool whose tiers share a model in models.json has a gap naming those tie
 
 test('review-tier: prompts count as product; uncommitted changes warn', async () => {
   for (const p of ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'roles/scout.md', 'agents/scout.md', '.claude/x.md', '.agents/x.md', '.codex/AGENTS.md',
-    '.cursor/agents/a.md', '.gemini/GEMINI.md', 'profiles/p.md', 'adapters/codex.notes.md', 'skills/x/SKILL.md', 'a/b.agent.md']) {
+    '.cursor/agents/a.md', '.gemini/GEMINI.md', 'profiles/p.md', 'adapters/codex.notes.md', 'skills/x/SKILL.md', 'a/b.agent.md',
+    'review/PROCEDURE.md', 'review/lanes/code-reviewer.md', 'workflows/start.md', 'commands/start.md']) {
     assert.equal(classify([p]).tier, 'Full', p);
   }
   assert.equal(classify(['README.md', 'docs/rulebook-notes.md', 'tests/a.test.mjs']).tier, 'Light-eligible');
+  // Every tracked file in the prompt folders counts as product, not only the samples above.
+  const tracked = spawnSync('git', ['ls-files', 'review', 'workflows', 'commands'], { cwd: REPO, encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
+  for (const dir of ['review/', 'workflows/', 'commands/']) assert.ok(tracked.some((p) => p.startsWith(dir)), `tracked files under ${dir}`);
+  for (const p of tracked) assert.equal(classify([p]).tier, 'Full', p);
   const start = { 'README.md': 'r\n' };
   const dir = repoWith(start);
   commit(dir, (d) => fs.writeFileSync(path.join(d, 'README.md'), 'r2\n'));
