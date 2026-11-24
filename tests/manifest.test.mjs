@@ -92,7 +92,7 @@ test('install (#30): an identical file already in place and in no manifest is th
   fs.copyFileSync(path.join(source, '.gemini', 'config', 'agents', 'scout.md'), scout);
   const ap = await run(['install', '--tool', 'antigravity', '--home', home, '--apply']);
   assert.equal(ap.code, 0, ap.err);
-  assert.match(ap.out, /applied unchanged: .*scout\.md \(already there and not installed by orc: not recorded, uninstall leaves it\)/);
+  assert.match(ap.out, /applied unchanged: .*scout\.md \(already there and in no orc manifest: not recorded, uninstall leaves it\)/);
   const mf = JSON.parse(fs.readFileSync(path.join(home, '.gemini', '.orc-manifest.antigravity.json'), 'utf8'));
   assert.ok(!('.gemini/config/agents/scout.md' in mf.files), Object.keys(mf.files).join(','));
   assert.ok('.gemini/config/agents/builder.md' in mf.files, 'the files it wrote are recorded');
@@ -111,7 +111,7 @@ test('install (#30): a hand-copied hook script identical to the shipped one stay
   fs.writeFileSync(guard, fs.readFileSync(path.join(REPO, 'tools', 'guard.mjs'), 'utf8').replace(/\r\n/g, '\n'));
   const ap = await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board']);
   assert.equal(ap.code, 0, ap.err);
-  assert.match(ap.out, /applied unchanged: .*guard\.mjs \(already there and not installed by orc/);
+  assert.match(ap.out, /applied unchanged: .*guard\.mjs \(already there and in no orc manifest/);
   const mf = JSON.parse(fs.readFileSync(path.join(home, '.claude', '.orc-manifest.claude-code.json'), 'utf8'));
   assert.ok(!('.claude/tools/guard.mjs' in mf.files));
   assert.equal((await run(['status', '--tool', 'claude-code', '--home', home])).code, 0);
@@ -125,11 +125,85 @@ test('install (#30): a file a previous install recorded keeps its manifest entry
   const again = await run(['install', '--tool', 'antigravity', '--home', home, '--apply']);
   assert.equal(again.code, 0, again.err);
   assert.match(again.out, /applied unchanged: .*scout\.md$/m);
-  assert.doesNotMatch(again.out, /not installed by orc/);
+  assert.doesNotMatch(again.out, /in no orc manifest/);
   const mf = JSON.parse(fs.readFileSync(path.join(home, '.gemini', '.orc-manifest.antigravity.json'), 'utf8'));
   assert.ok('.gemini/config/agents/scout.md' in mf.files);
   assert.equal((await run(['uninstall', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
   assert.ok(!fs.existsSync(path.join(home, '.gemini', 'config', 'agents', 'scout.md')));
+});
+
+const NOTHING_RECORDED = /^nothing recorded to delete: files that were already in place at install are not in the manifest; delete them by hand if they are orc's$/m;
+
+test('install: a plain install whose write fails part way records what it wrote, and uninstall --apply deletes it', async () => {
+  const home = tempDir('mf-partial');
+  const claude = path.join(home, '.claude');
+  fs.mkdirSync(claude, { recursive: true });
+  // A file where the hook scripts' folder goes: the rulebook and agents are written, then the first hook script fails.
+  fs.writeFileSync(path.join(claude, 'tools'), 'in the way\n');
+  const ap = await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board']);
+  assert.equal(ap.code, 1, ap.out);
+  assert.match(ap.err, /install stopped: .*\.orc-manifest\.claude-code\.json records what was written, so uninstall --apply undoes it/);
+  const mf = JSON.parse(fs.readFileSync(path.join(claude, '.orc-manifest.claude-code.json'), 'utf8'));
+  const written = Object.keys(mf.files);
+  assert.ok(written.includes('.claude/CLAUDE.md') && written.includes('.claude/agents/builder.md'), written.join(','));
+  assert.ok(!written.some((rel) => rel.startsWith('.claude/tools/')), 'nothing past the failure is recorded');
+  for (const rel of written) assert.ok(fs.existsSync(path.join(home, ...rel.split('/'))), rel);
+  const un = await run(['uninstall', '--tool', 'claude-code', '--home', home, '--apply']);
+  assert.equal(un.code, 0, un.err);
+  for (const rel of written) assert.ok(!fs.existsSync(path.join(home, ...rel.split('/'))), `${rel} deleted`);
+  assert.deepEqual(tree(home), ['.claude/tools'], 'only the file in the way is left');
+});
+
+test('install: a manifest write that fails says the files were written but not recorded', async () => {
+  const home = tempDir('mf-nowrite');
+  const file = path.join(home, '.gemini', '.orc-manifest.antigravity.json');
+  fs.mkdirSync(`${file}.tmp-${process.pid}`, { recursive: true });
+  const ap = await run(['install', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.equal(ap.code, 1, ap.out);
+  assert.match(ap.err, /the files were written but not recorded: cannot write .*\.orc-manifest\.antigravity\.json \(/);
+  assert.ok(!fs.existsSync(file));
+  assert.ok(fs.existsSync(path.join(home, '.gemini', 'config', 'agents', 'scout.md')));
+});
+
+test('uninstall: a manifest that records no files (deleted, then re-installed) says nothing was recorded to delete', async () => {
+  const home = tempDir('mf-lost');
+  const file = path.join(home, '.gemini', '.orc-manifest.antigravity.json');
+  assert.equal((await run(['install', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
+  fs.rmSync(file);
+  assert.equal((await run(['install', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).files, {});
+  const dry = await run(['uninstall', '--tool', 'antigravity', '--home', home]);
+  assert.equal(dry.code, 0, dry.err);
+  assert.match(dry.out, NOTHING_RECORDED);
+  const un = await run(['uninstall', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.equal(un.code, 0, un.err);
+  assert.match(un.out, NOTHING_RECORDED);
+  assert.ok(!fs.existsSync(file), 'the manifest is removed');
+  assert.ok(fs.existsSync(path.join(home, '.gemini', 'config', 'agents', 'scout.md')), 'the files stay');
+});
+
+test('uninstall: a manifest that records files does not say nothing was recorded', async () => {
+  const home = tempDir('mf-recorded');
+  assert.equal((await run(['install', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
+  const un = await run(['uninstall', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.equal(un.code, 0, un.err);
+  assert.doesNotMatch(un.out, NOTHING_RECORDED);
+});
+
+test('status: a differing hand-copied hook script with no manifest entry says --force replaces it; other differences keep their advice', async () => {
+  const home = tempDir('mf-kept-hook');
+  const guard = path.join(home, '.claude', 'tools', 'guard.mjs');
+  fs.mkdirSync(path.dirname(guard), { recursive: true });
+  fs.writeFileSync(guard, `${fs.readFileSync(path.join(REPO, 'tools', 'guard.mjs'), 'utf8').replace(/\r\n/g, '\n')}// the owner's older copy\n`);
+  const ap = await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board']);
+  assert.equal(ap.code, 0, ap.err);
+  assert.match(ap.out, /kept \(hand-copied hook script, differs; --force replaces it, with a backup\): .*guard\.mjs/);
+  const builder = path.join(home, '.claude', 'agents', 'builder.md');
+  fs.appendFileSync(builder, 'edited\n');
+  const st = await run(['status', '--tool', 'claude-code', '--home', home]);
+  assert.equal(st.code, 1, st.out);
+  assert.match(st.out, /^differs \(first difference at line \d+; a hand-copied hook script, which install --apply keeps: install --apply --force replaces it, with a backup\): .*guard\.mjs$/m);
+  assert.match(st.out, /^edited since install, differs \(first difference at line \d+\): .*builder\.md$/m);
 });
 
 test('status: one extra file alone makes it out of date and says not installed by orc', async () => {

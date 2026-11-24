@@ -782,7 +782,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
           next.files[f.path] = { sha256: sha256(bytes) };
         } else if (opt.apply && !ownerCopy) next.files[f.path] = { sha256: diskHash(target) };
         const sep = refusedStates.includes(state) ? '' : ':';
-        io.out(`${opt.apply ? 'applied' : 'would'} ${state}${sep} ${target}${ownerCopy ? ' (already there and not installed by orc: not recorded, uninstall leaves it)' : ''}`);
+        io.out(`${opt.apply ? 'applied' : 'would'} ${state}${sep} ${target}${ownerCopy ? ' (already there and in no orc manifest: not recorded, uninstall leaves it)' : ''}`);
       }
       for (const s of stale) {
         if (s.state === 'gone') continue;
@@ -825,13 +825,21 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         };
       }
     } catch (e) {
-      if (!(kit && opt.apply)) throw e;
-      // A kit stopped part way still leaves a manifest naming every file written so far and each owner file's
-      // backup, so uninstall can undo it; the settings record is the new one only if settings.json was written.
-      writeManifest(loaded.file, withKit({ ...next, files: { ...recorded, ...next.files } }));
+      if (!opt.apply) throw e;
+      // An install stopped part way still leaves a manifest naming every file written so far (and, for a kit, each
+      // owner file's backup), so uninstall can undo it; a kit's settings record is the new one only if settings.json
+      // was written.
+      const partial = { ...next, files: { ...recorded, ...next.files } };
+      writeManifest(loaded.file, kit ? withKit(partial) : partial);
       return fail(`install stopped: ${e instanceof Error ? e.message : String(e)}; ${loaded.file} records what was written, so uninstall --apply undoes it`);
     }
-    if (opt.apply) writeManifest(loaded.file, kit ? withKit(next) : next);
+    if (opt.apply) {
+      try {
+        writeManifest(loaded.file, kit ? withKit(next) : next);
+      } catch (e) {
+        return fail(`the files were written but not recorded: cannot write ${loaded.file} (${e instanceof Error ? e.message : String(e)}), so uninstall cannot undo this install`);
+      }
+    }
     if (adapter.installNote) io.out(adapter.installNote);
     if (!opt.apply) {
       io.out(`dry run for ${adapter.id}; add --apply to write`);
@@ -981,6 +989,9 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       }
       for (const [p, why] of left) io.out(`left: ${p} (${why})`);
     }
+    if (!Object.keys(manifest.files).length) {
+      io.out('nothing recorded to delete: files that were already in place at install are not in the manifest; delete them by hand if they are orc\'s');
+    }
     if (opt.apply) {
       const keep = Object.keys(kept).length > 0;
       if (!keep) fs.rmSync(file);
@@ -1036,7 +1047,10 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       else {
         const line = firstDiffLine(read(target), normalizeEol(f.content));
         if (line && recorded?.[f.path] && diskHash(target) !== recorded[f.path].sha256) state = `edited since install, differs (first difference at line ${line})`;
-        else if (line) state = `differs (first difference at line ${line})`;
+        // A hand-copied hook script with no manifest entry is one install keeps: only --force replaces it.
+        else if (line && f.hookScript && !recorded?.[f.path] && !isGenerated(read(target))) {
+          state = `differs (first difference at line ${line}; a hand-copied hook script, which install --apply keeps: install --apply --force replaces it, with a backup)`;
+        } else if (line) state = `differs (first difference at line ${line})`;
       }
       if (state !== 'same') clean = false;
       io.out(`${state}: ${target}`);
