@@ -390,7 +390,7 @@ test('install copies the hook scripts for claude-code; status reports them; a ha
   const st = await run(['status', '--tool', 'claude-code', '--home', home, '--no-board']);
   assert.equal(st.code, 1, 'the kept copy differs');
   assert.match(st.out, /same: .*guard\.mjs/);
-  assert.match(st.out, /differs \(first difference at line 1\): .*board-reminder\.ps1/);
+  assert.match(st.out, /differs \(first difference at line 1; a hand-copied hook script, which install --apply keeps: install --apply --force replaces it, with a backup\): .*board-reminder\.ps1/);
   // The installed Node guard runs on its own, outside the checkout.
   const repo = path.join(home, 'r');
   fs.mkdirSync(repo);

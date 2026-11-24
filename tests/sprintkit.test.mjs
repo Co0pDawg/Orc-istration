@@ -432,8 +432,8 @@ test('sprint kit: an identical file already in place (a hand-copied skill and wi
   fs.writeFileSync(path.join(claude, 'settings.json'), text);
   const r = await kit(home, '--stack', 'node', '--apply');
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /applied unchanged: .*SKILL\.md \(already there and not installed by orc: not recorded, uninstall leaves it\)/);
-  assert.match(r.out, /applied unchanged: .*guard\.mjs \(already there and not installed by orc/);
+  assert.match(r.out, /applied unchanged: .*SKILL\.md \(already there and in no orc manifest: not recorded, uninstall leaves it\)/);
+  assert.match(r.out, /applied unchanged: .*guard\.mjs \(already there and in no orc manifest/);
   assert.doesNotMatch(r.out, /added to settings\.json PreToolUse/, 'the owner\'s guard is wired and on disk');
   const files = Object.keys(manifestOf(home).files);
   assert.ok(!files.includes('.claude/skills/sprint/SKILL.md') && !files.includes('.claude/tools/guard.mjs'), files.join(','));
