@@ -337,13 +337,16 @@ async function runOne(c, plan, o, ctx, io) {
       result.turns = Number.isFinite(Number(json.num_turns)) ? Number(json.num_turns) : null;
       if (typeof json.result === 'string') text = json.result;
     }
-    const subtype = json && (json.is_error === true || (json.subtype && json.subtype !== 'success')) ? String(json.subtype ?? 'is_error') : null;
+    // What the result JSON says went wrong: a non-success subtype by name, or `is_error` under any other subtype.
+    let cliError = null;
+    if (json && json.subtype && json.subtype !== 'success') cliError = `${json.subtype}${/budget/i.test(json.subtype) ? ' (budget stop)' : ''}`;
+    else if (json?.is_error === true) cliError = `an error (is_error with subtype ${json.subtype ?? 'none'})`;
     if (r.signalled) result.error = `stopped by ${r.signalled}`;
     else if (r.timedOut) result.error = `timed out after ${o.timeoutSec}s`;
     else if (r.code === 127) result.error = 'the tool could not start (exit 127)';
-    else if (r.code !== 0) result.error = `exit code ${r.code}${subtype ? ` (${subtype})` : ''}`;
+    else if (r.code !== 0) result.error = `exit code ${r.code}${cliError ? ` (the CLI reported ${cliError})` : ''}`;
     else if (!json) result.error = 'the output is not the CLI result JSON';
-    else if (subtype) result.error = `the CLI reported ${subtype}${/budget/i.test(subtype) ? ' (budget stop)' : ''}`;
+    else if (cliError) result.error = `the CLI reported ${cliError}`;
     else if (text === null) result.error = 'the result JSON has no result text';
     if (c.kind === 'refute' && text !== null) {
       result.verdict = parseVerdict(text);
@@ -444,18 +447,24 @@ export function rate(k, n) {
   return `${Math.round((100 * k) / n)}% (${k}/${n})`;
 }
 
-const sumTokens = (rs) => rs.reduce((t, r) => t + (r.tokens ? Object.values(r.tokens).reduce((a, b) => a + Number(b || 0), 0) : 0), 0);
+const hasTokens = (r) => Boolean(r.tokens && typeof r.tokens === 'object');
+const sumTokens = (rs) => rs.reduce((t, r) => t + (hasTokens(r) ? Object.values(r.tokens).reduce((a, b) => a + Number(b || 0), 0) : 0), 0);
 const sumCost = (rs) => rs.reduce((t, r) => t + (Number.isFinite(r.costUsd) ? r.costUsd : 0), 0);
-const unknownCost = (rs) => rs.filter((r) => !Number.isFinite(r.costUsd)).length;
-const money = (v) => v.toFixed(2);
+// A run with no token or cost figure counts as 0 in the sums; every cell built on such a sum says how many.
+const unknownFlag = (n) => (n ? ` (+${n} unknown)` : '');
+const tokensCell = (rs, value) => `${value}${unknownFlag(rs.filter((r) => !hasTokens(r)).length)}`;
+const costCell = (rs, value) => `${value.toFixed(2)}${unknownFlag(rs.filter((r) => !Number.isFinite(r.costUsd)).length)}`;
 
 // The variant figures; see orchestration/bench.md "Scoring rules" for each denominator.
 export function variantStats(rs) {
   const build = rs.filter((r) => r.kind === 'build');
   const refute = rs.filter((r) => r.kind === 'refute');
   const wantRework = refute.filter((r) => r.expect === 'REWORK');
-  const wantAccept = refute.filter((r) => r.expect === 'ACCEPT');
-  const defects = wantRework.flatMap((r) => r.defects ?? []);
+  // An errored run's verdict (read from partial text) is not one: the false-verdict rates count finished runs only.
+  const finishedRework = wantRework.filter((r) => r.outcome !== 'error');
+  const finishedAccept = refute.filter((r) => r.expect === 'ACCEPT' && r.outcome !== 'error');
+  // An errored run's planted defects count as expected and not found.
+  const defects = wantRework.flatMap((r) => (r.defects ?? []).map((d) => (r.outcome === 'error' ? { ...d, found: false } : d)));
   const passes = rs.filter((r) => r.outcome === 'pass').length;
   const tokens = sumTokens(rs);
   const cost = sumCost(rs);
@@ -464,13 +473,13 @@ export function variantStats(rs) {
     errors: rs.filter((r) => r.outcome === 'error').length,
     buildPass: rate(build.filter((r) => r.outcome === 'pass').length, build.length),
     verdictRight: rate(refute.filter((r) => r.outcome === 'pass').length, refute.length),
-    falseAccept: rate(wantRework.filter((r) => r.verdict === 'ACCEPT').length, wantRework.filter((r) => r.verdict).length),
-    falseRework: rate(wantAccept.filter((r) => r.verdict === 'REWORK').length, wantAccept.filter((r) => r.verdict).length),
+    falseAccept: rate(finishedRework.filter((r) => r.verdict === 'ACCEPT').length, finishedRework.length),
+    falseRework: rate(finishedAccept.filter((r) => r.verdict === 'REWORK').length, finishedAccept.length),
     defects: defects.length ? `${defects.filter((d) => d.found).length}/${defects.length}` : 'n/a',
-    tokens,
-    cost: `${money(cost)}${unknownCost(rs) ? ` (+${unknownCost(rs)} unknown)` : ''}`,
-    tokensPerPass: passes ? String(Math.round(tokens / passes)) : 'n/a',
-    costPerPass: passes ? money(cost / passes) : 'n/a',
+    tokens: tokensCell(rs, tokens),
+    cost: costCell(rs, cost),
+    tokensPerPass: passes ? tokensCell(rs, Math.round(tokens / passes)) : 'n/a',
+    costPerPass: passes ? costCell(rs, cost / passes) : 'n/a',
   };
 }
 
@@ -491,7 +500,7 @@ export function benchReport(results, skipped = []) {
       const rs = results.filter((r) => r.case === c && r.variant === v);
       if (!rs.length) continue;
       const outcomes = ['pass', 'fail', 'error'].map((k) => [k, rs.filter((r) => r.outcome === k).length]).filter(([, n]) => n).map(([k, n]) => `${n} ${k}`).join(', ');
-      out.push(`| ${c} | ${v} | ${outcomes} | ${sumTokens(rs)} | ${money(sumCost(rs))}${unknownCost(rs) ? ` (+${unknownCost(rs)} unknown)` : ''} |`);
+      out.push(`| ${c} | ${v} | ${outcomes} | ${tokensCell(rs, sumTokens(rs))} | ${costCell(rs, sumCost(rs))} |`);
     }
   }
   if (skipped.length) out.push('', '## Skipped files', '', ...skipped.map((s) => `- ${s}`));

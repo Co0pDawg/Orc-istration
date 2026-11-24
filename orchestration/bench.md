@@ -2,6 +2,8 @@
 
 A small set of fixed, invented cases that the checkout's builder and refuter roles run headlessly, each scored with what it cost. The review corpus (`review/corpus.md`) shows when the review panel misses something; the bench shows what a change to a role, a rule or a model tier does to the build loop: whether builders still finish the job, how far an unattended refuter ACCEPT can be trusted, and what each passing run costs. `node tools/orc.mjs bench` lists the cases, runs them and reports on the results. It runs on Claude Code only.
 
+The cases are invented for the bench, each built around one mechanism a builder or refuter is known to get wrong; they are not replays of real past tasks, and no project's code or history is in them. "Replay" means every variant gets the same fixed case.
+
 ## When to run it
 
 Run every case, as a baseline and as a variant, before keeping any of these changes:
@@ -28,7 +30,7 @@ A case is a folder `tests/fixtures/bench/<id>/` in the setup checkout, where `<i
 | E1 | src/paginate.js | 7-10 | <one-line defect> |
 ```
 
-**Lines** follows `review/corpus.md`: a range in the changed file's numbering, one line, or a comma list. Make the patch with real git (seed, edit, `git diff`) and check the ranges against the changed file.
+**Lines** follows `review/corpus.md`: a range in the changed file's numbering, one line, or a comma list. Make the patch with real git (seed, edit, `git diff`) and check the ranges against the changed file. List every real defect in the change, a weak test included: an unlisted one lets a REWORK look right for the wrong reason, and one in an `Expect: ACCEPT` case makes a correct refuter look wrong. A defect that is something missing has no line of its own, so its row names the place a reviewer would cite: `spec-requirement-dropped` E1 is the function the dropped rule belongs in, so it measures "cited the function", not "named the missing rule".
 
 A new case must be sound without a model: for `build`, the `Accept:` command fails on the bare seed and passes after a reference solution is applied by hand (never committed); for `refute`, `git apply --check change.patch` succeeds on the seed, and the seed's and the change's own tests pass, so the planted defect is not caught by the case's tests.
 
@@ -50,19 +52,22 @@ A new case must be sound without a model: for `build`, the `Accept:` command fai
 - **Build:** after the agent finishes, `accept/` is copied in and the `Accept:` command runs in the scratch repo, with no shell: it is split on spaces (no quoting), and a leading `node` is the Node running orc. Exit 0 is `pass`, anything else `fail`.
 - **Refute verdict:** the last line of the agent's final text in the refuter report format (`roles/refuter.md`: `VERDICT: ACCEPT` or `VERDICT: REWORK`, at the start of the line; `**` or backtick decoration is allowed). The template line itself (`VERDICT: ACCEPT | REWORK`) and a bare `ACCEPT` or `REWORK` are not verdicts. No verdict is an `error`. A refute run is `pass` when the verdict equals `Expect:`, else `fail`; defects found are reported apart and do not change the outcome.
 - **Defects:** for `Expect: REWORK`, each `expected.md` row is `found` when the final text anywhere cites `path:line` (or `path:a-b`) in the row's file with the first line inside one of its ranges, using the corpus matching (`review/corpus.md`). The scratch repo's own path is removed first, so an absolute citation counts.
-- **Errors:** a non-zero exit, a timeout (`--timeout`, default 900 seconds, kills the process tree), a budget stop or any other error the CLI's result JSON reports, output that is not the result JSON, a tool that cannot start and a scratch repo that cannot be set up are each recorded with `outcome: "error"` and the reason. An error is never a pass. Its tokens and cost are still recorded when the result JSON carries them, since the money was spent; for a refute case its verdict and defects are still read from any final text.
+- **Errors:** a non-zero exit, a timeout (`--timeout`, default 900 seconds, kills the process tree), a budget stop or any other error the CLI's result JSON reports (a non-success `subtype`, or `is_error`), output that is not the result JSON, a tool that cannot start and a scratch repo that cannot be set up are each recorded with `outcome: "error"` and the reason. An error is never a pass. Its tokens and cost are still recorded when the result JSON carries them, since the money was spent. For a refute case the result file still records the verdict and defects read from any final text, for diagnosis, but the report gives them no weight (below).
 - **Report columns**, per variant over all its runs:
   - **Runs** and **Errors**.
   - **Build pass**: passing build runs over all build runs, errors included.
   - **Verdict right**: passing refute runs over all refute runs, errors included.
-  - **False ACCEPT**: `Expect: REWORK` runs where the refuter said ACCEPT, over the `Expect: REWORK` runs that returned a verdict. This is the number that says how far an unattended ACCEPT can be trusted. Errored runs are left out of it (an error is not an ACCEPT, and counting it would lower the rate); they show in **Errors**.
-  - **False REWORK**: `Expect: ACCEPT` runs where the refuter said REWORK, over the `Expect: ACCEPT` runs that returned a verdict.
-  - **Defects found**: found rows over expected rows, over every `Expect: REWORK` run, errors included (a run with no final text finds none).
-  - **Tokens** (input, cache write, cache read and output added up) and **Cost (USD)**; `(+n unknown)` counts runs with no cost.
+  - **False ACCEPT**: `Expect: REWORK` runs where the refuter said ACCEPT, over the `Expect: REWORK` runs that finished (outcome `pass` or `fail`). This is the number that says how far an unattended ACCEPT can be trusted. Errored runs are left out of it, even when their partial text holds a verdict: an error is not a verdict, and counting one would move the rate either way. They show in **Errors**.
+  - **False REWORK**: `Expect: ACCEPT` runs where the refuter said REWORK, over the `Expect: ACCEPT` runs that finished.
+  - **Defects found**: found rows over expected rows, over every `Expect: REWORK` run. An errored run's rows count as expected and not found, whatever its partial text cited, so errors lower this figure rather than vanish from it.
+  - **Tokens** (input, cache write, cache read and output added up) and **Cost (USD)**. Tokens are dominated by cache reads (one high-tier refuter run on a small case was about 360k tokens, most of them cache reads, for about $0.70), so compare variants on Cost; Tokens shows where the volume went.
   - **Tokens per pass** and **Cost per pass**: the variant's total over its passing runs (build and refute), so failed and errored runs count in the price of a pass; `n/a` when none pass.
+  - A run with no token or no cost figure counts as 0 in a sum, and every cell built on that sum (Tokens, Cost, the per-pass cells and the per-case table) ends `(+n unknown)` with the number of such runs, so a missing figure never reads as cheap.
 - A rate over fewer than 5 runs is printed as its count (`2/3`), not a bare percentage; with 5 or more it is a percentage with its count; `n/a` when no run applies.
 
 ## Result schema
+
+The figures come from the CLI's `--output-format json` result, whose fields were checked on a real run (Claude Code 2.1.331, Windows): `result` (the final text), `total_cost_usd`, `num_turns`, `is_error`, `subtype` and `modelUsage` (per-model counters in camelCase: `inputTokens`, `cacheCreationInputTokens`, `cacheReadInputTokens`, `outputTokens`). The same run confirmed that the inline `--agents` JSON and the comma-joined `--allowedTools` value work.
 
 `schemaVersion` 1. One JSON file per case run:
 
@@ -85,6 +90,7 @@ A new case must be sound without a model: for `build`, the `Accept:` command fai
 ## What it does not measure
 
 - **Isolation.** A headless run loads the machine's Claude Code setup: the user's `~/.claude/CLAUDE.md`, settings, hooks (the git guard among them) and MCP servers. Compare variants on one machine with one setup. `--strict-mcp-config` and `--permission-prompts none` exist for a stricter run but are not passed.
+- **A sandbox.** The scratch repo is the working folder, not a jail. The agent runs with `--permission-mode acceptEdits` and `Bash(node:*)`, `Bash(npm:*)` and `Bash(git:*)` allowed, so a command it runs can read or write outside the scratch repo (a `node -e` script, an `npm` lifecycle script, a `git -C <path>`). Run the bench as a user and on a machine where that is acceptable.
 - **The loop.** Each case is one role, one run: no REWORK round, no orchestrator, no board. A refuter case measures a verdict on a fixed diff, not the refuter's effect on a builder.
 - **Scale.** The cases are small on purpose; a role that does well here can still fail on a large change.
 - **Other tools.** Only Claude Code has a bench recipe; `--tool` with any other id exits 1.

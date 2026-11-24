@@ -9,7 +9,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { main, loadRoles, loadModels, buildTool } from '../tools/orc.mjs';
 import { parse } from '../tools/lib/frontmatter.mjs';
-import { parseVerdict, benchReport, variantStats, rate, tokensOf, redact, listBenchCases } from '../tools/lib/bench.mjs';
+import { parseVerdict, benchReport, variantStats, rate, tokensOf, redact, listBenchCases, scoreDefects } from '../tools/lib/bench.mjs';
+import { parseExpected } from '../tools/lib/corpus.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORC = path.join(REPO, 'tools', 'orc.mjs');
@@ -35,7 +36,7 @@ else if (mode === 'garbage') { process.stdout.write('this is not json\\n'); proc
 else {
   const text = (process.env.STUB_TEXT ?? 'done').replaceAll('{cwd}', process.cwd());
   const budget = mode === 'budget';
-  process.stdout.write(JSON.stringify({ type: 'result', subtype: budget ? 'error_max_budget_usd' : 'success', is_error: budget, num_turns: 7, result: text, total_cost_usd: 0.25,
+  process.stdout.write(JSON.stringify({ type: 'result', subtype: budget ? 'error_max_budget_usd' : 'success', is_error: budget || mode === 'iserror', num_turns: 7, result: text, total_cost_usd: 0.25,
     usage: { input_tokens: 100, cache_creation_input_tokens: 20, cache_read_input_tokens: 300, output_tokens: 50 } }) + '\\n');
   process.exit(mode === 'exit' ? 3 : 0);
 }
@@ -266,7 +267,7 @@ test('a wrong verdict fails: ACCEPT on a planted defect, REWORK on a clean chang
   const res = result(r, 'save-rewrites-file');
   assert.strictEqual(res.outcome, 'fail');
   assert.strictEqual(res.verdict, 'ACCEPT');
-  assert.deepStrictEqual(res.defects, [{ id: 'E1', found: false }]);
+  assert.deepStrictEqual(res.defects, [{ id: 'E1', found: false }, { id: 'E2', found: false }]);
   const clean = result(bench(['run', '--case', 'accept-clean-change'], { STUB_TEXT: 'VERDICT: REWORK\n1. src/slug.js:6 — nit' }), 'accept-clean-change');
   assert.strictEqual(clean.outcome, 'fail');
   assert.deepStrictEqual(clean.defects, []);
@@ -285,7 +286,12 @@ test('a report with no verdict line is an error and the command exits 1', () => 
 // ---------- failed runs ----------
 
 test('a non-zero exit, a budget stop and unparseable output are errors; the next case still runs; exit 1', () => {
-  for (const [mode, reason] of [['exit', /^exit code 3$/], ['budget', /^the CLI reported error_max_budget_usd \(budget stop\)$/], ['garbage', /^the output is not the CLI result JSON$/]]) {
+  for (const [mode, reason] of [
+    ['exit', /^exit code 3$/],
+    ['budget', /^the CLI reported error_max_budget_usd \(budget stop\)$/],
+    ['iserror', /^the CLI reported an error \(is_error with subtype success\)$/],
+    ['garbage', /^the output is not the CLI result JSON$/],
+  ]) {
     const r = bench(['run', '--case', 'csv-quoted-fields', '--case', 'test-asserts-nothing'], { STUB_MODE: mode, STUB_TEXT: 'VERDICT: REWORK', STUB_SOLVE: csvSolution() });
     assert.strictEqual(r.code, 1, mode);
     assert.strictEqual(r.calls.length, 2, `${mode}: the second case ran`);
@@ -368,11 +374,12 @@ test('report maths: false-ACCEPT rate, tokens and cost per pass, n/a, and the sm
   assert.strictEqual(s.verdictRight, '60% (3/5)', 'errors count against accuracy');
   assert.strictEqual(s.buildPass, '1/2');
   assert.strictEqual(s.defects, '2/8');
-  assert.strictEqual(s.tokens, 140);
+  assert.strictEqual(s.tokens, '140');
   assert.strictEqual(s.cost, '3.00 (+1 unknown)');
   assert.strictEqual(s.tokensPerPass, '35', 'all tokens over the 4 passing runs');
-  assert.strictEqual(s.costPerPass, '0.75');
+  assert.strictEqual(s.costPerPass, '0.75 (+1 unknown)', 'a run with no cost is flagged in the per-pass figure too');
   const cheap = variantStats(results.filter((r) => r.variant === 'cheap'));
+  assert.strictEqual(cheap.tokens, '20 (+1 unknown)');
   assert.strictEqual(cheap.tokensPerPass, 'n/a');
   assert.strictEqual(cheap.costPerPass, 'n/a');
   assert.strictEqual(cheap.falseAccept, 'n/a');
@@ -382,16 +389,62 @@ test('report maths: false-ACCEPT rate, tokens and cost per pass, n/a, and the sm
   assert.strictEqual(rate(2, 3), '2/3');
   assert.strictEqual(rate(1, 5), '20% (1/5)');
   const md = benchReport(results, ['x/broken.json (schemaVersion undefined)']);
-  assert.match(md, /^\| baseline \| 7 \| 1 \| 1\/2 \| 60% \(3\/5\) \| 1\/3 \| 0\/1 \| 2\/8 \| 140 \| 3\.00 \(\+1 unknown\) \| 35 \| 0\.75 \|$/m);
-  assert.match(md, /^\| cheap \| 2 \| 1 \| 0\/2 \| n\/a \| n\/a \| n\/a \| n\/a \| 20 \| 1\.00 \| n\/a \| n\/a \|$/m);
+  assert.match(md, /^\| baseline \| 7 \| 1 \| 1\/2 \| 60% \(3\/5\) \| 1\/3 \| 0\/1 \| 2\/8 \| 140 \| 3\.00 \(\+1 unknown\) \| 35 \| 0\.75 \(\+1 unknown\) \|$/m);
+  assert.match(md, /^\| cheap \| 2 \| 1 \| 0\/2 \| n\/a \| n\/a \| n\/a \| n\/a \| 20 \(\+1 unknown\) \| 1\.00 \| n\/a \| n\/a \|$/m);
   assert.match(md, /^\| r \| baseline \| 2 pass, 1 fail, 1 error \| 80 \| 2\.00 \|$/m);
+  assert.match(md, /^\| b \| cheap \| 1 fail, 1 error \| 20 \(\+1 unknown\) \| 1\.00 \|$/m);
   assert.match(md, /^- x\/broken\.json \(schemaVersion undefined\)$/m);
+});
+
+test('an errored run neither counts in the false-verdict rates nor earns defect credit, whatever its partial text said', () => {
+  const rework = (verdict, outcome, found) => run({ case: 'r', kind: 'refute', variant: 'baseline', expect: 'REWORK', verdict, outcome, defects: [{ id: 'E1', found }] });
+  const results = [
+    rework('ACCEPT', 'fail', false),
+    rework('ACCEPT', 'fail', false),
+    rework('REWORK', 'error', true),
+    rework('REWORK', 'error', true),
+    rework('REWORK', 'error', true),
+    run({ case: 'a', kind: 'refute', variant: 'baseline', expect: 'ACCEPT', verdict: 'REWORK', outcome: 'error', defects: [] }),
+  ];
+  const s = variantStats(results);
+  assert.strictEqual(s.falseAccept, '2/2', 'not 2/5');
+  assert.strictEqual(s.falseRework, 'n/a', 'the only ACCEPT-expected run errored');
+  assert.strictEqual(s.defects, '0/5', 'an errored run finds nothing');
+  assert.strictEqual(s.errors, 4);
+  assert.strictEqual(s.verdictRight, '0% (0/6)');
+});
+
+test('runs with no token or cost figure flag every sum and per-pass cell built on them', () => {
+  const results = [
+    run({ case: 'b', kind: 'build', variant: 'baseline', outcome: 'pass', tokens: { input: 40, cacheWrite: 0, cacheRead: 50, output: 10 }, costUsd: 1 }),
+    run({ case: 'b', kind: 'build', variant: 'baseline', outcome: 'error', tokens: null, costUsd: null }),
+    run({ case: 'b', kind: 'build', variant: 'baseline', outcome: 'error', tokens: null, costUsd: null }),
+  ];
+  const s = variantStats(results);
+  assert.strictEqual(s.tokens, '100 (+2 unknown)');
+  assert.strictEqual(s.tokensPerPass, '100 (+2 unknown)');
+  assert.strictEqual(s.cost, '1.00 (+2 unknown)');
+  assert.strictEqual(s.costPerPass, '1.00 (+2 unknown)');
+  const md = benchReport(results);
+  assert.doesNotMatch(md, /\| 100 \|/, 'no bare 100 anywhere');
+  assert.match(md, /^\| b \| baseline \| 1 pass, 2 error \| 100 \(\+2 unknown\) \| 1\.00 \(\+2 unknown\) \|$/m);
+});
+
+test('a citation one line past an expected range is not found', () => {
+  const expected = parseExpected(fs.readFileSync(path.join(CASES, 'test-asserts-nothing', 'expected.md'), 'utf8'));
+  const e1 = (text) => scoreDefects(expected, text).find((d) => d.id === 'E1').found;
+  assert.strictEqual(e1('src/paginate.js:10 — off by one'), true);
+  assert.strictEqual(e1('src/paginate.js:7-8 — off by one'), true);
+  assert.strictEqual(e1('src/paginate.js:11 — off by one'), false);
+  assert.strictEqual(e1('src/paginate.js:6 — off by one'), false);
+  assert.strictEqual(e1('test/paginate.test.mjs:9 — wrong file'), false);
 });
 
 test('bench report reads the result files, lists unreadable ones, and --out refuses to overwrite without --force', async () => {
   const dir = tempDir('bench-results');
   fs.mkdirSync(path.join(dir, '20261124T000000Z-baseline'));
   fs.writeFileSync(path.join(dir, '20261124T000000Z-baseline', 'b.json'), JSON.stringify(run({ case: 'b', kind: 'build', variant: 'baseline', outcome: 'pass' })));
+  fs.writeFileSync(path.join(dir, '20261124T000000Z-baseline', 'e.json'), JSON.stringify(run({ case: 'e', kind: 'build', variant: 'baseline', outcome: 'error', error: 'exit code 1' })));
   fs.writeFileSync(path.join(dir, '20261124T000000Z-baseline', 'c.json'), '{not json');
   fs.writeFileSync(path.join(dir, '20261124T000000Z-baseline', 'b.output.md'), 'VERDICT: ACCEPT\n');
   const io = () => {
@@ -400,7 +453,8 @@ test('bench report reads the result files, lists unreadable ones, and --out refu
   };
   const [o1, io1] = io();
   assert.strictEqual(await main(['bench', 'report', '--dir', dir], io1), 0, o1.err.join('\n'));
-  assert.match(o1.out.join('\n'), /^\| baseline \| 1 \| 0 \| 1\/1 \|/m);
+  assert.match(o1.out.join('\n'), /^\| baseline \| 2 \| 1 \| 1\/2 \|/m, 'the errored run is in Runs, Errors and the pass rate');
+  assert.match(o1.out.join('\n'), /^\| e \| baseline \| 1 error \|/m);
   assert.match(o1.out.join('\n'), /^- 20261124T000000Z-baseline\/c\.json \(/m);
   const file = path.join(dir, 'report.md');
   fs.writeFileSync(file, 'keep me');
