@@ -73,17 +73,19 @@ export async function runDispatch(plan, { timeoutSec, err = console.error } = {}
 }
 
 // The spawn, timeout, kill-tree and signal handling behind runDispatch. With `capture`, stdout is collected and
-// returned instead of streamed; `cwd` sets the working folder; `label` prefixes the messages. Resolves to
-// {code, stdout, timedOut, signalled}: code is the exit code, 124 after a timeout kill, 128+signal after Ctrl-C or a
-// kill of orc, 127 when the tool cannot start.
-export function runTool(plan, { timeoutSec, err = console.error, capture = false, cwd, label = 'dispatch' } = {}) {
+// returned instead of streamed, and `captureStderr` does the same for stderr; `cwd` sets the working folder; `env`
+// replaces the environment; `label` prefixes the messages. Resolves to {code, stdout, stderr, timedOut, signalled}:
+// code is the exit code, 124 after a timeout kill, 128+signal after Ctrl-C or a kill of orc, 127 when the tool cannot
+// start.
+export function runTool(plan, { timeoutSec, err = console.error, capture = false, captureStderr = false, cwd, env, label = 'dispatch' } = {}) {
   return new Promise((resolve) => {
     const chunks = [];
+    const errChunks = [];
     const cannot = (e) => {
       const hint = e.code === 'ENOENT' ? `: ${plan.exe.command} is not installed or not on PATH; set ${binEnv(plan.toolId)} to its full path` : `: ${e.message}`;
       err(`${label}: cannot start ${plan.exe.command}${hint}`);
     };
-    const done = (code, extra = {}) => resolve({ code, stdout: Buffer.concat(chunks).toString('utf8'), timedOut: false, signalled: null, ...extra });
+    const done = (code, extra = {}) => resolve({ code, stdout: Buffer.concat(chunks).toString('utf8'), stderr: Buffer.concat(errChunks).toString('utf8'), timedOut: false, signalled: null, ...extra });
     let child;
     try {
       child = spawn(plan.exe.command, plan.argv, {
@@ -91,7 +93,8 @@ export function runTool(plan, { timeoutSec, err = console.error, capture = false
         windowsHide: true,
         detached: process.platform !== 'win32',
         ...(cwd ? { cwd } : {}),
-        stdio: [plan.stdin == null ? 'ignore' : 'pipe', capture ? 'pipe' : 'inherit', 'inherit'],
+        ...(env ? { env } : {}),
+        stdio: [plan.stdin == null ? 'ignore' : 'pipe', capture ? 'pipe' : 'inherit', captureStderr ? 'pipe' : 'inherit'],
       });
     } catch (e) {
       cannot(e);
@@ -99,6 +102,7 @@ export function runTool(plan, { timeoutSec, err = console.error, capture = false
       return;
     }
     if (capture) child.stdout.on('data', (c) => chunks.push(c));
+    if (captureStderr) child.stderr.on('data', (c) => errChunks.push(c));
     let timedOut = false;
     let signalled = null;
     // Ctrl-C or a kill of orc must not leave a detached agent running: kill the tree, then exit 128+signal.

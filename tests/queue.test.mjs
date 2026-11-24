@@ -8,7 +8,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { allowProblem, buildPrompt, classify, prBody, parseGithubRemote, BASE_TOOLS, FOOTER } from '../tools/lib/queue.mjs';
+import { main } from '../tools/orc.mjs';
+import { allowProblem, buildPrompt, classify, prBody, parseGithubRemote, untilDeadline, sessionEnv, BASE_TOOLS, DENY_TOOLS, FOOTER } from '../tools/lib/queue.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORC = path.join(REPO, 'tools', 'orc.mjs');
@@ -35,6 +36,10 @@ if (argv[0] === 'api' && argv[1] === 'user') {
   if (!sc.user) { process.stderr.write('You are not logged into any GitHub hosts. To log in, run: gh auth login\\n'); process.exit(4); }
   out({ login: sc.user, id: 1, type: 'User' });
 }
+if (argv[0] === 'api' && /^repos\\/owner\\/repo\\/branches\\//.test(argv[1])) {
+  if (sc.protected === 'fail') { process.stderr.write('HTTP 403: Resource not accessible\\n'); process.exit(1); }
+  out({ name: argv[1].split('/').pop(), protected: sc.protected ?? true });
+}
 if (argv[0] === 'repo' && argv[1] === 'view') out({ defaultBranchRef: { name: sc.defaultBranch ?? 'main' } });
 if (argv[0] === 'issue' && argv[1] === 'list') out(pick(sc.issues ?? []));
 if (argv[0] === 'pr' && argv[1] === 'list') out(pick(sc.prs ?? []));
@@ -47,9 +52,10 @@ process.stderr.write('stub gh: unexpected call ' + argv.join(' ') + '\\n');
 process.exit(2);
 `;
 
-// claude stub: reads the prompt on stdin, records the call (argv, prompt, branch, the push-blocking environment,
-// whether a leftover from an earlier run is visible) and acts out the mode set for its issue.
+// claude stub: reads the prompt on stdin, records the call (argv, prompt, branch, the push routes it tried, whether a
+// leftover from an earlier session is visible) and acts out the mode set for its issue.
 const CLAUDE_STUB = `import fs from 'node:fs';
+import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 const stdin = await new Promise((r) => { let s = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (c) => (s += c)); process.stdin.on('end', () => r(s)); });
 const git = (...a) => spawnSync('git', a, { encoding: 'utf8' });
@@ -57,28 +63,48 @@ const branch = git('symbolic-ref', '--short', 'HEAD').stdout.trim();
 const n = Number(branch.split('-').pop());
 const mode = JSON.parse(process.env.QUEUE_MODES ?? '{}')[n] ?? 'done';
 const commit = () => { fs.writeFileSync('change-' + n + '.txt', 'change ' + n + '\\n'); git('add', '-A'); git('commit', '-q', '-m', 'Issue ' + n); };
-const call = { argv: process.argv.slice(2), stdin, branch, mode, leftover: fs.existsSync('leftover.txt'), readme: fs.readFileSync('README.md', 'utf8'),
+const call = { argv: process.argv.slice(2), stdin, branch, mode, leftover: fs.existsSync('leftover.txt'), planted: fs.existsSync('planted.local'), readme: fs.readFileSync('README.md', 'utf8'),
   ghToken: process.env.GH_TOKEN ?? null, ghConfigDir: process.env.GH_CONFIG_DIR ?? null };
-const result = (o, code = 0) => { fs.appendFileSync(process.env.QUEUE_CLAUDE_LOG, JSON.stringify(call) + '\\n');
-  process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, num_turns: 4, total_cost_usd: 0.5, usage: { input_tokens: 10, output_tokens: 5 }, ...o }) + '\\n'); process.exit(code); };
-if (mode === 'done') { commit(); call.pushExit = git('push', 'origin', 'HEAD:refs/heads/model-push').status; result({ result: 'QUEUE RESULT: done\\nAdded the change. @someone said so.\\nFiles: change-' + n + '.txt\\nTests: node --test (pass)' }); }
+const hooksPath = git('config', 'core.hooksPath').stdout.trim();
+call.blockHook = hooksPath && fs.existsSync(path.join(hooksPath, 'pre-push')) ? fs.readFileSync(path.join(hooksPath, 'pre-push'), 'utf8') : null;
+const log = () => fs.appendFileSync(process.env.QUEUE_CLAUDE_LOG, JSON.stringify(call) + '\\n');
+const result = (o, code = 0) => { log(); process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, num_turns: 4, total_cost_usd: 0.5, usage: { input_tokens: 10, output_tokens: 5 }, ...o }) + '\\n'); process.exit(code); };
+const bare = process.env.QUEUE_BARE;
+const tryPush = () => ({
+  origin: git('push', 'origin', 'HEAD:refs/heads/model-origin').status,
+  noVerify: git('push', '--no-verify', 'origin', 'HEAD:refs/heads/model-noverify').status,
+  upstream: git('push', '--no-verify', 'upstream', 'HEAD:refs/heads/model-upstream').status,
+  url: git('push', '--no-verify', bare, 'HEAD:refs/heads/model-url').status,
+  fileUrl: git('push', '--no-verify', 'file:///' + bare.replace(/^\\//, ''), 'HEAD:refs/heads/model-file').status,
+  overrideProtocol: git('-c', 'protocol.allow=always', 'push', '--no-verify', 'upstream', 'HEAD:refs/heads/model-override').status,
+});
+if (mode === 'done') { commit(); call.push = tryPush(); result({ result: 'QUEUE RESULT: done\\nAdded the change. @someone said so.\\nFiles: change-' + n + '.txt\\nTests: node --test (pass)' }); }
+if (mode === 'plant') {
+  commit();
+  const hooks = path.resolve(git('rev-parse', '--git-common-dir').stdout.trim(), 'hooks');
+  fs.writeFileSync(path.join(hooks, 'pre-push'), '#!/bin/sh\\necho planted > "' + process.env.QUEUE_HOOK_FLAG.replace(/\\\\/g, '/') + '"\\nexit 1\\n', { mode: 0o755 });
+  result({ result: 'QUEUE RESULT: done\\nPlanted.' });
+}
 if (mode === 'blocked') result({ result: 'QUEUE RESULT: blocked\\nThe issue is unclear.' });
 if (mode === 'nocommit') result({ result: 'QUEUE RESULT: done\\nNothing to change.' });
-if (mode === 'dirty') { commit(); fs.writeFileSync('leftover.txt', 'x\\n'); fs.appendFileSync('README.md', 'edited\\n'); result({ result: 'QUEUE RESULT: done\\nDone.' }); }
+if (mode === 'dirty') { commit(); fs.writeFileSync('leftover.txt', 'x\\n'); fs.writeFileSync('planted.local', 'ignored\\n'); fs.appendFileSync('README.md', 'edited\\n'); result({ result: 'QUEUE RESULT: done\\nDone.' }); }
+if (mode === 'otherbranch') { git('switch', '-q', '-c', 'elsewhere-' + n); commit(); result({ result: 'QUEUE RESULT: done\\nDone.' }); }
+if (mode === 'detached') { commit(); git('checkout', '-q', '--detach'); result({ result: 'QUEUE RESULT: done\\nDone.' }); }
 if (mode === 'exit') result({ subtype: 'error_during_execution', is_error: true, result: '' }, 3);
 if (mode === 'budget') result({ subtype: 'error_max_budget_usd', is_error: true, result: '' });
 if (mode === 'noline') result({ result: 'All done, I think.' });
 if (mode === 'limit') { commit(); result({ is_error: true, result: "You've hit your session limit · resets 3:45pm" }, 1); }
 if (mode === 'limit429') result({ is_error: true, api_error_status: 429, result: 'API Error: 429 rate_limit_error' }, 1);
-if (mode === 'garbage') { fs.appendFileSync(process.env.QUEUE_CLAUDE_LOG, JSON.stringify(call) + '\\n'); process.stdout.write('this is not json\\n'); process.exit(0); }
-if (mode === 'sleep') { fs.appendFileSync(process.env.QUEUE_CLAUDE_LOG, JSON.stringify(call) + '\\n'); setTimeout(() => {}, 120000); }
+if (mode === 'limitstderr') { log(); process.stderr.write("Error: request failed\\nYou've hit your weekly limit · resets Mon 12:00am\\n"); process.stdout.write('not json\\n'); process.exit(1); }
+if (mode === 'garbage') { log(); process.stdout.write('this is not json\\n'); process.exit(0); }
+if (mode === 'sleep') { log(); setTimeout(() => {}, 120000); }
 `;
 
 const issue = (number, extra = {}) => ({ number, title: `Invented change ${number}`, body: `Make invented change ${number}.`, author: { login: 'example-user', id: 'U1', is_bot: false, name: 'Example' }, ...extra });
 
-// A developer checkout on branch `feature` with an uncommitted edit and an untracked file, a bare origin with `main`,
-// and the stubs.
-function setup({ issues = [issue(1)], prs = [], user = 'example-user', prCreateFail = false } = {}) {
+// A developer checkout on branch `feature` with an uncommitted edit and an untracked file; a bare origin with `main`
+// (origin has its own pushurl, and a second remote `upstream` points at the same bare repo); and the stubs.
+function setup({ issues = [issue(1)], prs = [], user = 'example-user', prCreateFail = false, protectedBase = true } = {}) {
   const root = tempDir('queue');
   const bare = path.join(root, 'origin.git');
   const dev = path.join(root, 'dev');
@@ -86,10 +112,13 @@ function setup({ issues = [issue(1)], prs = [], user = 'example-user', prCreateF
   git(root, 'init', '-q', '-b', 'main', dev);
   for (const [k, v] of [['user.name', 'orc queue test'], ['user.email', 'queue@example.invalid'], ['core.autocrlf', 'false']]) git(dev, 'config', k, v);
   fs.writeFileSync(path.join(dev, 'README.md'), 'seed\n');
+  fs.writeFileSync(path.join(dev, '.gitignore'), '*.local\n');
   git(dev, 'add', '-A');
   git(dev, 'commit', '-q', '-m', 'seed');
   git(dev, 'remote', 'add', 'origin', 'https://github.com/owner/repo.git');
   git(dev, 'config', `url.${slash(bare)}.insteadOf`, 'https://github.com/owner/repo.git');
+  git(dev, 'config', 'remote.origin.pushurl', 'https://github.com/owner/repo.git');
+  git(dev, 'remote', 'add', 'upstream', slash(bare));
   git(dev, 'push', '-q', 'origin', 'main');
   git(dev, 'switch', '-q', '-c', 'feature');
   fs.writeFileSync(path.join(dev, 'README.md'), 'seed\nmy uncommitted edit\n');
@@ -99,24 +128,50 @@ function setup({ issues = [issue(1)], prs = [], user = 'example-user', prCreateF
   fs.writeFileSync(path.join(stubs, 'gh.mjs'), GH_STUB);
   fs.writeFileSync(path.join(stubs, 'claude.mjs'), CLAUDE_STUB);
   const scenario = path.join(stubs, 'scenario.json');
-  fs.writeFileSync(scenario, JSON.stringify({ user, issues, prs, prCreateFail }));
-  return { root, bare, dev, stubs, scenario, state: path.join(root, 'state'), home: tempDir('queue-home') };
+  const s = { root, bare, dev, stubs, scenario, state: path.join(root, 'state'), home: tempDir('queue-home'), hookFlag: path.join(root, 'hook-ran.txt') };
+  s.write = (extra = {}) => fs.writeFileSync(scenario, JSON.stringify({ user, issues, prs, prCreateFail, protected: protectedBase, ...extra }));
+  s.write();
+  return s;
 }
 
 function readLines(file) {
   return fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
 }
 
+function stubEnv(s, modes, logs) {
+  return { HOME: s.home, USERPROFILE: s.home, ORC_TOOL_BIN_GH: path.join(s.stubs, 'gh.mjs'), ORC_TOOL_BIN_CLAUDE_CODE: path.join(s.stubs, 'claude.mjs'),
+    QUEUE_GH: s.scenario, QUEUE_GH_LOG: logs.gh, QUEUE_CLAUDE_LOG: logs.claude, QUEUE_MODES: JSON.stringify(modes), QUEUE_BARE: slash(s.bare), QUEUE_HOOK_FLAG: s.hookFlag, GH_TOKEN: 'invented-token' };
+}
+const newLogs = (s) => ({ gh: path.join(s.stubs, `gh-${Date.now()}-${Math.random()}.jsonl`), claude: path.join(s.stubs, `claude-${Date.now()}-${Math.random()}.jsonl`) });
+
 function queue(s, argv, { modes = {}, state = true, repoDir = s.dev } = {}) {
-  const ghLog = path.join(s.stubs, `gh-${Date.now()}-${Math.random()}.jsonl`);
-  const claudeLog = path.join(s.stubs, `claude-${Date.now()}-${Math.random()}.jsonl`);
-  const env = { ...process.env, HOME: s.home, USERPROFILE: s.home, ORC_TOOL_BIN_GH: path.join(s.stubs, 'gh.mjs'), ORC_TOOL_BIN_CLAUDE_CODE: path.join(s.stubs, 'claude.mjs'),
-    QUEUE_GH: s.scenario, QUEUE_GH_LOG: ghLog, QUEUE_CLAUDE_LOG: claudeLog, QUEUE_MODES: JSON.stringify(modes), GH_TOKEN: 'invented-token' };
+  const logs = newLogs(s);
+  const env = { ...process.env, ...stubEnv(s, modes, logs) };
   delete env.ORC_TOOL_BIN_GIT;
   delete env.NODE_TEST_CONTEXT;
   const full = [ORC, 'queue', ...argv, '--repo-dir', repoDir, ...(state ? ['--state', s.state] : [])];
   const r = spawnSync(process.execPath, full, { cwd: s.dev, env, encoding: 'utf8', timeout: 180000 });
-  return { code: r.status, out: r.stdout, err: r.stderr, gh: readLines(ghLog), claude: readLines(claudeLog) };
+  return { code: r.status, out: r.stdout, err: r.stderr, gh: readLines(logs.gh), claude: readLines(logs.claude) };
+}
+
+// In process, so the clock can be set: `times` are what io.now returns, in order (the run start, then one per issue).
+async function queueAt(s, argv, times, { modes = {} } = {}) {
+  const logs = newLogs(s);
+  const set = stubEnv(s, modes, logs);
+  const saved = Object.fromEntries(Object.keys(set).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, set);
+  const out = [];
+  const err = [];
+  let i = 0;
+  try {
+    const code = await main(['queue', ...argv, '--repo-dir', s.dev, '--state', s.state], { out: (x) => out.push(x), err: (x) => err.push(x), now: () => times[Math.min(i++, times.length - 1)] });
+    return { code, out: out.join('\n'), err: err.join('\n'), claude: readLines(logs.claude) };
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
 }
 
 const remoteHeads = (s) => git(s.dev, 'ls-remote', '--heads', 'origin').trim().split('\n').map((l) => l.split('\t')[1]).sort();
@@ -125,17 +180,25 @@ const marker = (s, n) => {
   return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : null;
 };
 const devSnapshot = (s) => ({ branch: git(s.dev, 'branch', '--show-current').trim(), status: git(s.dev, 'status', '--porcelain'), readme: fs.readFileSync(path.join(s.dev, 'README.md'), 'utf8'), notes: fs.readFileSync(path.join(s.dev, 'notes.txt'), 'utf8') });
-const localQueueBranches = (s) => git(s.dev, 'branch', '--list', 'queue/*').trim();
+const localQueueBranches = (s) => git(s.dev, 'branch', '--list', 'queue/*').trim().split('\n').map((l) => l.replace(/^[*+ ]+/, '').trim()).filter(Boolean);
 
 // ---------- pure helpers ----------
 
-test('allowed tools: the base list holds no push, gh or bare Bash rule, and --allow refuses anything that reaches them', () => {
+test('allowed tools: the base list passes the --allow check, and --allow refuses push, gh, shells, runners, broad git and break-outs', () => {
   for (const t of BASE_TOOLS) assert.strictEqual(allowProblem(t), null, t);
   assert.ok(!BASE_TOOLS.some((t) => t === 'Bash' || /push|\bgh\b|Bash\(git:\*\)/.test(t)));
-  for (const bad of ['Bash', 'Bash(*)', 'Bash(git push:*)', 'Bash(git push origin main)', 'Bash(git:*)', 'Bash(git *)', 'Bash(g*)', 'Bash(gh:*)', 'Bash(gh pr create:*)', 'Bash(git -C . push:*)', 'Bash(git remote:*)', 'Bash(git config:*)', 'Read,Bash', 'Bash(npm ci:*),Bash', '']) {
-    assert.ok(allowProblem(bad), `refused: ${bad}`);
-  }
-  for (const ok of ['Bash(npm ci:*)', 'Bash(git show:*)', 'WebFetch', 'Edit(src/**)']) assert.strictEqual(allowProblem(ok), null, ok);
+  const refused = [
+    'Bash', 'Bash(*)', 'Bash(git push:*)', 'Bash(git push origin main)', 'Bash(git:*)', 'Bash(git *)', 'Bash(g*)', 'Bash(gh:*)', 'Bash(gh pr create:*)', 'Bash(git -C . push:*)',
+    'Bash(git remote:*)', 'Bash(git config:*)', 'Read,Bash', 'Bash(npm ci:*),Bash', '',
+    'Bash(npm ci) Bash(gh pr create)', 'Bash(npm ci) Bash(gh auth token)', 'Bash(npm ci) Bash(git remote add x y)', 'Read Bash',
+    'Bash(git send-pack:*)', 'Bash(git submodule:*)', 'Bash(git rebase:*)', 'Bash(git fetch:*)', 'Bash(git -c x=y status)',
+    'Bash(sh:*)', 'Bash(SH -c x)', 'Bash(bash:*)', 'Bash(zsh:*)', 'Bash(pwsh:*)', 'Bash(pwsh.exe:*)', 'Bash(powershell:*)', 'Bash(PowerShell.EXE -c x)', 'Bash(cmd:*)', 'Bash(cmd.exe /c x)',
+    'Bash(npx:*)', 'Bash(npx.exe:*)', 'Bash(env:*)', 'Bash(xargs:*)', 'Bash(/bin/sh:*)', 'Bash(gh.exe:*)',
+    'PowerShell', 'WebFetch', 'mcp__github__create_pull_request', 'Edit(src/**)',
+  ];
+  for (const bad of refused) assert.ok(allowProblem(bad), `refused: ${bad}`);
+  for (const ok of ['Bash(npm ci:*)', 'Bash(git show:*)', 'Bash(git restore:*)', 'NotebookEdit']) assert.strictEqual(allowProblem(ok), null, ok);
+  for (const d of ['Bash(git push:*)', 'Bash(gh:*)', 'Bash(sh:*)', 'Bash(pwsh.exe:*)', 'Bash(npx:*)', 'Bash(env:*)', 'Bash(xargs:*)', 'PowerShell', 'WebFetch', 'WebSearch', 'mcp__*']) assert.ok(DENY_TOOLS.includes(d), `denied: ${d}`);
 });
 
 test('prompt: the issue sits last in a fenced data block that its text cannot close, after the rules and the result format', () => {
@@ -156,11 +219,14 @@ test('prompt: the issue sits last in a fenced data block that its text cannot cl
   assert.notStrictEqual(buildPrompt({ number: 1, title: 't', body: 'b' }, { branch: 'x' }).fence, buildPrompt({ number: 1, title: 't', body: 'b' }, { branch: 'x' }).fence, 'the fence is random per run');
 });
 
-test('classify: a usage limit wins over its error exit; a QUEUE RESULT that quotes the limit text is not a limit', () => {
+test('classify: a usage limit wins over its error exit, also on stderr; a QUEUE RESULT that quotes the limit text is not a limit', () => {
   const limit = classify({ code: 1, stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: "You've hit your weekly limit · resets Mon 12:00am" }) }, 10);
   assert.strictEqual(limit.outcome, 'limit');
   assert.match(limit.reason, /resets Mon 12:00am/);
   assert.strictEqual(classify({ code: 1, stdout: JSON.stringify({ is_error: true, api_error_status: 429, result: 'x' }) }, 10).outcome, 'limit');
+  const stderr = classify({ code: 1, stdout: 'not json', stderr: "Error\nYou've hit your Sonnet limit · resets 4pm\n" }, 10);
+  assert.strictEqual(stderr.outcome, 'limit');
+  assert.match(stderr.reason, /Sonnet limit · resets 4pm/);
   const quoted = classify({ code: 0, stdout: JSON.stringify({ subtype: 'success', is_error: false, result: "QUEUE RESULT: done\nYou've hit your Opus limit is the message I added." }) }, 10);
   assert.strictEqual(quoted.outcome, 'done');
   assert.strictEqual(classify({ code: 0, timedOut: true, stdout: '' }, 10).outcome, 'failed');
@@ -183,6 +249,26 @@ test('GitHub remotes: https, ssh and scp forms parse; anything else does not', (
   for (const u of ['C:/temp/origin.git', 'https://gitlab.com/owner/repo.git', '', 'https://github.com/owner']) assert.strictEqual(parseGithubRemote(u), null, u);
 });
 
+test('the session environment: no transport, a failing pre-push hook, no credential helper, nothing prompts, no GitHub token', () => {
+  const env = sessionEnv({ PATH: 'p', gh_token: 'x', GitHub_Token: 'y', GH_ENTERPRISE_TOKEN: 'z', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'n', GIT_CONFIG_KEY_7: 'a.b', HOME: 'h' }, { blockHooks: 'B', ghDir: 'G' });
+  assert.deepStrictEqual(env, {
+    PATH: 'p', HOME: 'h',
+    GIT_CONFIG_COUNT: '3',
+    GIT_CONFIG_KEY_0: 'core.hooksPath', GIT_CONFIG_VALUE_0: 'B',
+    GIT_CONFIG_KEY_1: 'credential.helper', GIT_CONFIG_VALUE_1: '',
+    GIT_CONFIG_KEY_2: 'protocol.allow', GIT_CONFIG_VALUE_2: 'never',
+    GIT_ALLOW_PROTOCOL: 'orc-queue-none', GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: 'orc-queue-no-askpass', SSH_ASKPASS: 'orc-queue-no-askpass', GCM_INTERACTIVE: 'never',
+    GH_CONFIG_DIR: 'G', GH_PROMPT_DISABLED: '1',
+  });
+});
+
+test('--until: the deadline is the next HH:mm at or after the run started', () => {
+  const at = (d, h, m) => new Date(2030, 0, d, h, m);
+  assert.strictEqual(untilDeadline(at(10, 23, 0), { h: 6, m: 0 }).getTime(), at(11, 6, 0).getTime());
+  assert.strictEqual(untilDeadline(at(10, 5, 0), { h: 6, m: 0 }).getTime(), at(10, 6, 0).getTime());
+  assert.strictEqual(untilDeadline(at(10, 6, 0), { h: 6, m: 0 }).getTime(), at(10, 6, 0).getTime(), 'started exactly at the time: nothing runs');
+});
+
 test('the queue options are refused by every other command (bench run --model is not --models)', () => {
   for (const argv of [['bench', 'run', '--dry-run', '--model', 'x'], ['dispatch', '--tool', 'claude-code', '--role', 'builder', '--brief', 'b.md', '--state', 's'], ['review-tier', '--max', '1']]) {
     const r = spawnSync(process.execPath, [ORC, ...argv], { encoding: 'utf8' });
@@ -195,21 +281,24 @@ test('the queue options are refused by every other command (bench run --model is
 
 test('list: each eligibility reason, the default author is the gh user, and comments are never requested', () => {
   const s = setup({
-    issues: [issue(5), issue(1), issue(2, { author: { login: 'other-user' } }), issue(3), issue(4)],
+    issues: [issue(5), issue(1), issue(2, { author: { login: 'other-user' } }), issue(3), issue(4), issue(6)],
     prs: [{ number: 50, headRefName: 'queue/issue-5', url: 'https://github.com/owner/repo/pull/50' }],
   });
   fs.mkdirSync(s.state, { recursive: true });
   fs.writeFileSync(path.join(s.state, 'issue-3.json'), JSON.stringify({ issue: 3, outcome: 'blocked' }));
   git(s.dev, 'push', '-q', 'origin', 'main:refs/heads/queue/issue-4');
+  git(s.dev, 'branch', 'queue/issue-6', 'main');
   const r = queue(s, ['list']);
   assert.strictEqual(r.code, 0, r.err);
   const lines = r.out.trim().split('\n');
-  assert.deepStrictEqual(lines.map((l) => l.split(/\s{2}/)[0]), ['#1', '#2', '#3', '#4', '#5'], 'oldest first');
+  assert.deepStrictEqual(lines.map((l) => l.split(/\s{2}/)[0]), ['#1', '#2', '#3', '#4', '#5', '#6'], 'oldest first');
   assert.match(lines[0], /^#1 {2}eligible {2}Invented change 1$/);
   assert.match(lines[1], /skipped: author other-user is not allowed/);
   assert.match(lines[2], /skipped: marker \(blocked\)/);
   assert.match(lines[3], /skipped: branch queue\/issue-4 exists on origin/);
   assert.match(lines[4], /skipped: an open PR has head queue\/issue-5/);
+  assert.match(lines[5], /skipped: a local branch queue\/issue-6 exists that the queue did not leave/);
+  assert.deepStrictEqual(localQueueBranches(s), ['queue/issue-6'], 'a branch that is not the queue\'s is never deleted');
   const list = r.gh.find((c) => c.argv[0] === 'issue');
   assert.deepStrictEqual(list.argv.slice(0, 2), ['issue', 'list']);
   assert.strictEqual(list.argv[list.argv.indexOf('--json') + 1], 'number,title,body,author');
@@ -224,7 +313,7 @@ test('list: each eligibility reason, the default author is the gh user, and comm
   assert.match(other.out, /^#2 {2}eligible/m);
 });
 
-test('run without --apply is a dry run: it prints the plan and changes nothing', () => {
+test('run without --apply is a dry run: it prints the plan with the deny list and changes nothing', () => {
   const s = setup({ issues: [issue(1), issue(2)] });
   const before = { dev: devSnapshot(s), heads: remoteHeads(s), refs: git(s.dev, 'for-each-ref') };
   const r = queue(s, ['run', '--max', '5', '--allow', 'Bash(npm ci:*)']);
@@ -232,9 +321,11 @@ test('run without --apply is a dry run: it prints the plan and changes nothing',
   assert.match(r.out, /would run issue #1: Invented change 1/);
   assert.match(r.out, /would run issue #2/);
   assert.match(r.out, /worktree: .*wt \(detached at origin\/main, then branch queue\/issue-1\)/);
-  assert.match(r.out, /-p --output-format json --permission-mode acceptEdits --max-budget-usd 5 --no-session-persistence --model \S+ --allowedTools "Read,Edit,Write,Glob,Grep,Agent,Bash\(git status:\*\),Bash\(git diff:\*\),Bash\(git log:\*\),Bash\(git add:\*\),Bash\(git commit:\*\),Bash\(node:\*\),Bash\(npm test:\*\),Bash\(npm run:\*\),Bash\(npm ci:\*\)"/);
+  assert.match(r.out, /-p --output-format json --permission-mode acceptEdits --max-budget-usd 5 --no-session-persistence --strict-mcp-config --model \S+ --allowedTools "Read,Edit,Write,Glob,Grep,Agent,Bash\(git status:\*\),Bash\(git diff:\*\),Bash\(git log:\*\),Bash\(git add:\*\),Bash\(git commit:\*\),Bash\(node:\*\),Bash\(npm test:\*\),Bash\(npm run:\*\),Bash\(npm ci:\*\)" --disallowedTools /);
+  assert.ok(r.out.includes(`--disallowedTools ${JSON.stringify(DENY_TOOLS.join(','))}`), '--allow leaves the deny list whole');
   assert.doesNotMatch(r.out, /--bare/);
   assert.match(r.out, /dry run: nothing changed/);
+  assert.doesNotMatch(r.err, /WARN/, 'a protected base gives no warning');
   assert.deepStrictEqual(r.claude, []);
   assert.ok(!r.gh.some((c) => c.argv[1] === 'create'));
   assert.ok(!fs.existsSync(s.state), 'no state folder, marker or lock');
@@ -242,6 +333,25 @@ test('run without --apply is a dry run: it prints the plan and changes nothing',
   assert.deepStrictEqual(remoteHeads(s), before.heads);
   assert.strictEqual(git(s.dev, 'for-each-ref'), before.refs, 'no fetch, no branch');
   assert.strictEqual(git(s.dev, 'worktree', 'list').trim().split('\n').length, 1, 'no worktree');
+});
+
+test('an unprotected base, or one that cannot be checked, is a WARN in the dry run and the real run, never a refusal', () => {
+  const s = setup({ protectedBase: false });
+  const dry = queue(s, ['run']);
+  assert.strictEqual(dry.code, 0, dry.err);
+  assert.match(dry.err, /WARN queue: main is not protected on GitHub/);
+  assert.ok(dry.gh.some((c) => c.argv[0] === 'api' && c.argv[1] === 'repos/owner/repo/branches/main'));
+  const real = queue(s, ['run', '--apply']);
+  assert.strictEqual(real.code, 0, real.err);
+  assert.match(real.err, /WARN queue: main is not protected on GitHub/);
+  assert.strictEqual(real.claude.length, 1);
+  const idle = queue(s, ['run', '--apply']);
+  assert.match(idle.out, /no eligible issue/);
+  assert.match(idle.err, /WARN queue: main is not protected on GitHub/, 'also when there is no work');
+  const u = setup({ protectedBase: 'fail' });
+  const unknown = queue(u, ['run']);
+  assert.strictEqual(unknown.code, 0, unknown.err);
+  assert.match(unknown.err, /WARN queue: could not check whether main is protected on GitHub \(HTTP 403/);
 });
 
 // ---------- runs ----------
@@ -254,18 +364,19 @@ test('a done run pushes exactly queue/issue-<n>, opens a draft PR with Refs and 
   assert.strictEqual(r.claude.length, 1, '--max defaults to 1');
   const c = r.claude[0];
   assert.strictEqual(c.branch, 'queue/issue-1');
-  assert.deepStrictEqual(c.argv.slice(0, 9), ['-p', '--output-format', 'json', '--permission-mode', 'acceptEdits', '--max-budget-usd', '5', '--no-session-persistence', '--model']);
-  const tools = c.argv[c.argv.indexOf('--allowedTools') + 1].split(',');
-  assert.deepStrictEqual(tools, BASE_TOOLS);
+  assert.deepStrictEqual(c.argv.slice(0, 10), ['-p', '--output-format', 'json', '--permission-mode', 'acceptEdits', '--max-budget-usd', '5', '--no-session-persistence', '--strict-mcp-config', '--model']);
+  assert.deepStrictEqual(c.argv[c.argv.indexOf('--allowedTools') + 1].split(','), BASE_TOOLS);
+  assert.deepStrictEqual(c.argv[c.argv.indexOf('--disallowedTools') + 1].split(','), DENY_TOOLS);
   assert.ok(!c.argv.includes('--bare'));
   assert.match(c.stdin, /BEGIN ISSUE-DATA-[0-9a-f]+\nIssue #1\nTitle: --draft=false -x\n/);
-  assert.notStrictEqual(c.pushExit, 0, 'the model\'s own git push is blocked');
+  for (const [route, code] of Object.entries(c.push)) assert.notStrictEqual(code, 0, `the session's ${route} push is blocked`);
+  assert.match(c.blockHook ?? '', /^#!\/bin\/sh\n.*\nexit 1\n$/s, 'the session\'s hooks path holds a failing pre-push hook');
   assert.strictEqual(c.ghToken, null, 'no GitHub token reaches the model');
   assert.ok(c.ghConfigDir, 'gh config points at an empty folder');
-  assert.deepStrictEqual(remoteHeads(s), ['refs/heads/main', 'refs/heads/queue/issue-1']);
+  assert.deepStrictEqual(remoteHeads(s), ['refs/heads/main', 'refs/heads/queue/issue-1'], 'only the script\'s push landed');
   const create = r.gh.find((x) => x.argv[1] === 'create');
   const a = create.argv;
-  for (const f of ['--draft']) assert.ok(a.includes(f));
+  assert.ok(a.includes('--draft'));
   assert.strictEqual(a[a.indexOf('--base') + 1], 'main');
   assert.strictEqual(a[a.indexOf('--head') + 1], 'queue/issue-1');
   assert.strictEqual(a[a.indexOf('--title') + 1], 'Issue #1: --draft=false -x', 'the title is one argument after its flag');
@@ -276,6 +387,7 @@ test('a done run pushes exactly queue/issue-<n>, opens a draft PR with Refs and 
   assert.match(create.body, /Cost: \$0\.50; turns: 4\./);
   assert.deepStrictEqual(marker(s, 1), { ...marker(s, 1), issue: 1, outcome: 'handled', prUrl: 'https://github.com/owner/repo/pull/101' });
   assert.strictEqual(marker(s, 6), null);
+  assert.deepStrictEqual(localQueueBranches(s), [], 'the local branch is deleted after the push');
   assert.match(fs.readFileSync(path.join(s.state, 'queue.log'), 'utf8'), /issue #1 done cost \$0\.50 turns 4 https:\/\/github\.com\/owner\/repo\/pull\/101/);
   const runFile = fs.readdirSync(s.state).find((f) => /^run-1-\d{8}T\d{6}Z\.json$/.test(f));
   assert.ok(runFile);
@@ -291,7 +403,17 @@ test('a done run pushes exactly queue/issue-<n>, opens a draft PR with Refs and 
   assert.deepStrictEqual(devSnapshot(s), before);
 });
 
-test('blocked and done-without-commit push nothing and write blocked markers', () => {
+test('a pre-push hook the session plants in .git/hooks never runs on the script\'s push', () => {
+  const s = setup();
+  const r = queue(s, ['run', '--apply'], { modes: { 1: 'plant' } });
+  assert.strictEqual(r.code, 0, r.err);
+  assert.ok(fs.existsSync(path.join(s.dev, '.git', 'hooks', 'pre-push')), 'the hook was planted');
+  assert.ok(!fs.existsSync(s.hookFlag), 'the planted hook did not run');
+  assert.deepStrictEqual(remoteHeads(s), ['refs/heads/main', 'refs/heads/queue/issue-1']);
+  assert.strictEqual(marker(s, 1).outcome, 'handled');
+});
+
+test('blocked and done-without-commit push nothing, write blocked markers and keep the local branch', () => {
   const s = setup({ issues: [issue(1), issue(2)] });
   const r = queue(s, ['run', '--apply', '--max', '2'], { modes: { 1: 'blocked', 2: 'nocommit' } });
   assert.strictEqual(r.code, 0, r.err);
@@ -301,33 +423,32 @@ test('blocked and done-without-commit push nothing and write blocked markers', (
   assert.strictEqual(marker(s, 1).outcome, 'blocked');
   assert.strictEqual(marker(s, 2).outcome, 'blocked');
   assert.match(marker(s, 2).reason, /no commit/);
+  assert.deepStrictEqual(localQueueBranches(s), ['queue/issue-1', 'queue/issue-2']);
 });
 
-test('each failed cause writes a failed marker, exits 1, and a dirty worktree is cleaned before the next issue', () => {
-  const modes = { 1: 'dirty', 2: 'exit', 3: 'garbage', 4: 'budget', 5: 'noline', 6: 'sleep' };
-  const s = setup({ issues: [1, 2, 3, 4, 5, 6].map((n) => issue(n)) });
-  const r = queue(s, ['run', '--apply', '--max', '6', '--timeout', '3'], { modes });
+test('each failed cause writes a failed marker, exits 1, and leftovers (ignored files too) are cleaned before the next issue', () => {
+  const modes = { 1: 'dirty', 2: 'exit', 3: 'garbage', 4: 'budget', 5: 'noline', 6: 'otherbranch', 7: 'detached', 8: 'sleep' };
+  const s = setup({ issues: [1, 2, 3, 4, 5, 6, 7, 8].map((n) => issue(n)) });
+  const r = queue(s, ['run', '--apply', '--max', '8', '--timeout', '3'], { modes });
   assert.strictEqual(r.code, 1, r.out + r.err);
-  assert.strictEqual(r.claude.length, 6);
+  assert.strictEqual(r.claude.length, 8);
   const reasons = {
-    1: /uncommitted changes/, 2: /exit code 3 \(error_during_execution\)/, 3: /not the CLI result JSON/, 4: /error_max_budget_usd/, 5: /no QUEUE RESULT first line/, 6: /timed out after 3s/,
+    1: /uncommitted changes/, 2: /exit code 3 \(error_during_execution\)/, 3: /not the CLI result JSON/, 4: /error_max_budget_usd/, 5: /no QUEUE RESULT first line/,
+    6: /left HEAD on elsewhere-6, not queue\/issue-6/, 7: /left HEAD on a detached commit/, 8: /timed out after 3s/,
   };
   for (const [n, re] of Object.entries(reasons)) {
     assert.strictEqual(marker(s, n)?.outcome, 'failed', `issue ${n}`);
     assert.match(marker(s, n).reason, re, `issue ${n}`);
   }
   assert.strictEqual(r.claude[1].leftover, false, 'the untracked leftover was cleaned');
+  assert.strictEqual(r.claude[1].planted, false, 'the ignored file was cleaned');
   assert.strictEqual(r.claude[1].readme, 'seed\n', 'the edited tracked file was reset');
-  assert.deepStrictEqual(remoteHeads(s), ['refs/heads/main']);
+  assert.deepStrictEqual(remoteHeads(s), ['refs/heads/main'], 'nothing pushed, not from another branch or a detached HEAD');
   assert.ok(!r.gh.some((c) => c.argv[1] === 'create'));
+  assert.ok(localQueueBranches(s).includes('queue/issue-2'), 'a failed issue keeps its local branch for inspection');
 });
 
-test('a push failure and a gh pr create failure are failed markers', () => {
-  const s = setup({ issues: [issue(1)], prCreateFail: true });
-  const r = queue(s, ['run', '--apply']);
-  assert.strictEqual(r.code, 1);
-  assert.strictEqual(marker(s, 1).outcome, 'failed');
-  assert.match(marker(s, 1).reason, /gh pr create failed/);
+test('a push failure is a failed marker; a PR failure after the push is recoverable with --issue, which opens the PR only', () => {
   const p = setup({ issues: [issue(2)] });
   fs.writeFileSync(path.join(p.bare, 'hooks', 'pre-receive'), '#!/bin/sh\necho rejected by test >&2\nexit 1\n');
   fs.chmodSync(path.join(p.bare, 'hooks', 'pre-receive'), 0o755);
@@ -336,6 +457,36 @@ test('a push failure and a gh pr create failure are failed markers', () => {
   assert.strictEqual(marker(p, 2).outcome, 'failed');
   assert.match(marker(p, 2).reason, /git push failed/);
   assert.ok(!q.gh.some((c) => c.argv[1] === 'create'));
+
+  const s = setup({ issues: [issue(1)], prCreateFail: true });
+  const r = queue(s, ['run', '--apply']);
+  assert.strictEqual(r.code, 1);
+  const m = marker(s, 1);
+  assert.strictEqual(m.outcome, 'failed');
+  assert.match(m.reason, /gh pr create failed/);
+  const sha = git(s.dev, 'ls-remote', 'origin', 'refs/heads/queue/issue-1').split('\t')[0];
+  assert.strictEqual(m.pushed.sha, sha);
+  assert.strictEqual(m.prTitle, 'Issue #1: Invented change 1');
+  assert.strictEqual(m.prBody.split('\n').at(-1), FOOTER);
+  assert.match(queue(s, ['run', '--apply']).out, /no eligible issue/, 'not retried without --issue');
+  s.write({ prCreateFail: false });
+  const dry = queue(s, ['run', '--issue', '1']);
+  assert.match(dry.out, /would open the draft PR for issue #1 from the branch pushed earlier/);
+  const retry = queue(s, ['run', '--apply', '--issue', '1']);
+  assert.strictEqual(retry.code, 0, retry.err);
+  assert.deepStrictEqual(retry.claude, [], 'no model run');
+  const create = retry.gh.find((c) => c.argv[1] === 'create');
+  assert.strictEqual(create.argv[create.argv.indexOf('--title') + 1], 'Issue #1: Invented change 1');
+  assert.strictEqual(create.body.trim(), m.prBody.trim());
+  assert.strictEqual(marker(s, 1).outcome, 'handled');
+
+  const moved = setup({ issues: [issue(3)], prCreateFail: true });
+  queue(moved, ['run', '--apply']);
+  git(moved.dev, 'push', '-q', '--force', 'origin', 'main:refs/heads/queue/issue-3');
+  moved.write({ prCreateFail: false });
+  const refused = queue(moved, ['run', '--apply', '--issue', '3']);
+  assert.strictEqual(refused.code, 1);
+  assert.match(refused.err, /no longer the commit the marker recorded/);
 });
 
 test('a usage limit writes no marker, deletes the local branch, stops before the next issue and exits 0', () => {
@@ -345,27 +496,41 @@ test('a usage limit writes no marker, deletes the local branch, stops before the
   assert.strictEqual(r.claude.length, 1, 'issue 2 never started');
   assert.match(r.out, /usage limit reached: You've hit your session limit · resets 3:45pm/);
   assert.strictEqual(marker(s, 1), null);
-  assert.strictEqual(localQueueBranches(s), '', 'the local branch is deleted');
+  assert.deepStrictEqual(localQueueBranches(s), [], 'the local branch is deleted');
   assert.deepStrictEqual(remoteHeads(s), ['refs/heads/main']);
   assert.match(fs.readFileSync(path.join(s.state, 'queue.log'), 'utf8'), /issue #1 limit .*resets 3:45pm/);
   const again = queue(s, ['run', '--apply'], { modes: { 1: 'limit429' } });
   assert.strictEqual(again.code, 0, again.err);
   assert.strictEqual(again.claude[0].branch, 'queue/issue-1', 'retried next run');
   assert.strictEqual(marker(s, 1), null);
+  const stderr = queue(s, ['run', '--apply', '--max', '2'], { modes: { 1: 'limitstderr' } });
+  assert.strictEqual(stderr.code, 0, stderr.err);
+  assert.strictEqual(stderr.claude.length, 1);
+  assert.match(stderr.out, /usage limit reached: You've hit your weekly limit · resets Mon 12:00am/);
+  assert.strictEqual(marker(s, 1), null);
 });
 
-test('--until in the past starts nothing; --max is respected', () => {
+test('--until: a run started at 23:00 with --until 06:00 starts issues at 23:30 and 05:59 the next day, none at 06:00', async () => {
   const s = setup({ issues: [issue(1), issue(2), issue(3)] });
-  const r = queue(s, ['run', '--apply', '--max', '3', '--until', '00:00']);
+  const at = (d, h, m) => new Date(2030, 0, d, h, m);
+  const r = await queueAt(s, ['run', '--apply', '--max', '3', '--until', '06:00'], [at(10, 23, 0), at(10, 23, 30), at(11, 5, 59), at(11, 6, 0)]);
   assert.strictEqual(r.code, 0, r.err);
-  assert.match(r.out, /at or after 00:00; no new issue is started/);
-  assert.deepStrictEqual(r.claude, []);
+  assert.deepStrictEqual(r.claude.map((c) => c.branch), ['queue/issue-1', 'queue/issue-2']);
+  assert.match(r.out, /it is at or after 06:00 .*; no new issue is started/);
+  const t = setup({ issues: [issue(1), issue(2)] });
+  const early = await queueAt(t, ['run', '--apply', '--max', '2', '--until', '06:00'], [at(10, 5, 0), at(10, 5, 30), at(10, 6, 0)]);
+  assert.strictEqual(early.code, 0, early.err);
+  assert.deepStrictEqual(early.claude.map((c) => c.branch), ['queue/issue-1'], 'started at 05:00: the deadline is today\'s 06:00');
+});
+
+test('--max is respected', () => {
+  const s = setup({ issues: [issue(1), issue(2), issue(3)] });
   const two = queue(s, ['run', '--apply', '--max', '2']);
   assert.strictEqual(two.code, 0, two.err);
   assert.deepStrictEqual(two.claude.map((c) => c.branch), ['queue/issue-1', 'queue/issue-2']);
 });
 
-test('the lock: a live holder refuses the run; a stale one is taken over with a note', () => {
+test('the lock is taken before the survey: a live holder refuses the run, a takeover in progress refuses it, a stale lock is taken over', () => {
   const s = setup();
   fs.mkdirSync(s.state, { recursive: true });
   const lock = path.join(s.state, 'queue.lock');
@@ -373,23 +538,44 @@ test('the lock: a live holder refuses the run; a stale one is taken over with a 
   const held = queue(s, ['run', '--apply']);
   assert.strictEqual(held.code, 1);
   assert.match(held.err, /another queue run holds .*queue\.lock/);
+  assert.deepStrictEqual(held.gh, [], 'no survey while another run holds the lock');
   assert.deepStrictEqual(held.claude, []);
   assert.ok(fs.existsSync(lock), 'a live lock is left alone');
   const dead = spawnSync(process.execPath, ['-e', 'process.exit(0)']).pid;
   fs.writeFileSync(lock, JSON.stringify({ pid: dead }));
+  fs.mkdirSync(`${lock}.takeover`);
+  const racing = queue(s, ['run', '--apply']);
+  assert.strictEqual(racing.code, 1);
+  assert.match(racing.err, /another queue run is taking over/);
+  fs.rmSync(`${lock}.takeover`, { recursive: true });
   const r = queue(s, ['run', '--apply']);
   assert.strictEqual(r.code, 0, r.err);
   assert.match(r.err, /took over a stale lock/);
   assert.strictEqual(r.claude.length, 1);
   assert.ok(!fs.existsSync(lock));
+  assert.ok(!fs.existsSync(`${lock}.takeover`));
 });
 
-test('--issue reruns a failed issue but never a handled one, and still checks the author', () => {
+test('a missing <state>/wt is re-added without pruning the developer\'s other worktrees', () => {
+  const s = setup({ issues: [issue(1), issue(2)] });
+  const mine = path.join(s.root, 'my-other-worktree');
+  git(s.dev, 'worktree', 'add', '-q', '--detach', mine, 'main');
+  fs.rmSync(mine, { recursive: true, force: true });
+  assert.strictEqual(queue(s, ['run', '--apply']).code, 0);
+  fs.rmSync(path.join(s.state, 'wt'), { recursive: true, force: true });
+  const r = queue(s, ['run', '--apply']);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.deepStrictEqual(r.claude.map((c) => c.branch), ['queue/issue-2']);
+  assert.ok(slash(git(s.dev, 'worktree', 'list', '--porcelain')).toLowerCase().includes(slash(mine).toLowerCase()), 'the developer\'s missing worktree is still registered');
+});
+
+test('--issue reruns a failed issue (deleting its leftover branch) but never a handled one, and still checks the author', () => {
   const s = setup({ issues: [issue(1), issue(2), issue(3, { author: { login: 'other-user' } })] });
   const first = queue(s, ['run', '--apply', '--max', '2'], { modes: { 1: 'exit' } });
   assert.strictEqual(first.code, 1);
   assert.strictEqual(marker(s, 1).outcome, 'failed');
   assert.strictEqual(marker(s, 2).outcome, 'handled');
+  assert.deepStrictEqual(localQueueBranches(s), ['queue/issue-1']);
   const plain = queue(s, ['run', '--apply']);
   assert.match(plain.out, /no eligible issue/);
   assert.deepStrictEqual(plain.claude, []);
@@ -399,7 +585,7 @@ test('--issue reruns a failed issue but never a handled one, and still checks th
   assert.strictEqual(marker(s, 1).outcome, 'handled');
   const handled = queue(s, ['run', '--apply', '--issue', '2']);
   assert.strictEqual(handled.code, 1);
-  assert.match(handled.err, /issue #2 is skipped: branch queue\/issue-2 exists on origin|issue #2 is skipped: marker \(handled\)/);
+  assert.match(handled.err, /issue #2 is skipped: marker \(handled\)/);
   const stranger = queue(s, ['run', '--apply', '--issue', '3']);
   assert.strictEqual(stranger.code, 1);
   assert.match(stranger.err, /author other-user is not allowed/);
@@ -411,9 +597,11 @@ test('refusals: exit 1 with nothing changed', () => {
   const cases = [
     [['run', '--apply', '--allow', 'Bash(git push:*)'], /--allow refused: .*git push/],
     [['run', '--apply', '--allow', 'Bash'], /--allow refused: a bare Bash rule/],
-    [['run', '--apply', '--allow', 'Bash(git:*)'], /--allow refused: .*every git command/],
+    [['run', '--apply', '--allow', 'Bash(git:*)'], /--allow refused: .*an --allow git rule may name only/],
     [['run', '--apply', '--allow', 'Bash(gh pr create:*)'], /--allow refused: .*gh/],
     [['run', '--apply', '--allow', 'Read,Bash'], /--allow refused: .*comma/],
+    [['run', '--apply', '--allow', 'Bash(npm ci) Bash(gh pr create)'], /--allow refused: .*not one tool name or one Bash/],
+    [['run', '--apply', '--allow', 'WebFetch'], /--allow refused: "WebFetch" is denied/],
     [['run', '--apply', '--budget-usd', '0'], /--budget-usd needs a positive number/],
     [['run', '--apply', '--max', '0'], /--max needs a positive whole number/],
     [['run', '--apply', '--timeout', 'soon'], /--timeout needs a positive whole number/],
@@ -436,7 +624,7 @@ test('refusals: exit 1 with nothing changed', () => {
   assert.strictEqual(lr.code, 1);
   assert.match(lr.err, /has no GitHub origin/);
   const out = setup({ user: null });
-  const lo = queue(out, ['run', '--apply']);
+  const lo = queue(out, ['run']);
   assert.strictEqual(lo.code, 1);
   assert.match(lo.err, /gh is not logged in/);
   for (const x of [s, local, out]) assert.ok(!fs.existsSync(x.state), 'no state folder');
