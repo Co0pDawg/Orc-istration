@@ -261,6 +261,9 @@ const check = (runner, c) => judge(c, runner(payload(c), envFor(c)));
 
 function judge(c, r) {
   assert.equal(r.status, 0, `${c.name}: exit ${r.status}; stderr ${r.stderr}`);
+  // A git probe that timed out is judged as "no branch": a row whose answer matches that fallback would pass
+  // without testing its path, so a timeout fails the row instead.
+  assert.doesNotMatch(r.stderr ?? '', /git did not answer/, `${c.name}: the guard's git probe timed out`);
   if (c.expect === 'allow') {
     assert.equal(r.stdout.trim(), '', `${c.name}: expected no decision, got ${r.stdout}`);
     return;

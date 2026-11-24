@@ -667,6 +667,10 @@ test('review-tier: prompts count as product; uncommitted changes warn', async ()
   const tracked = spawnSync('git', ['ls-files', 'review', 'workflows', 'commands'], { cwd: REPO, encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
   for (const dir of ['review/', 'workflows/', 'commands/']) assert.ok(tracked.some((p) => p.startsWith(dir)), `tracked files under ${dir}`);
   for (const p of tracked) assert.equal(classify([p]).tier, 'Full', p);
+  // The cost-log template the rulebook points at is tracked; the cost logs beside it stay ignored.
+  const git = (...a) => spawnSync('git', a, { cwd: REPO, encoding: 'utf8' });
+  assert.equal(git('ls-files', 'orchestration/log').stdout.trim(), 'orchestration/log/TEMPLATE.md');
+  assert.equal(git('check-ignore', 'orchestration/log/2026-01-01-x-y.md').status, 0, 'a cost log is ignored');
   const start = { 'README.md': 'r\n' };
   const dir = repoWith(start);
   commit(dir, (d) => fs.writeFileSync(path.join(d, 'README.md'), 'r2\n'));
