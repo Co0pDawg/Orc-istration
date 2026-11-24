@@ -146,6 +146,8 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them), install, check, tooling, standards and review-panel tool tests, and the sprint tests (theme tokens and contrast, the theme picker, `make-story.mjs` and the story page) |
 | `CONTRIBUTING.md` | How to change this repo: sources vs generated files, the edit loop, traps |
 | `LICENSE` | MIT |
+| `STANDARDS.md` | This repo's own coding standards (TypeScript/JavaScript and PowerShell), composed by `standards apply` |
+| `CODEOWNERS` | Every change needs the owner's review |
 | `docs/cli.md` | The full command reference |
 | `docs/interview-machine.md`, `docs/example-prompts.md` | Installing and removing the sprint kit on a borrowed machine, and example prompts including its starter prompt |
 | `orchestration/README.md` | Cost-log format and review questions; the anomaly log and its promotion table |
@@ -160,7 +162,7 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `tools/board-reminder.ps1`, `tools/board-reminder.mjs`, `tools/peon/` | Claude Code hooks: board reminder (PowerShell or Node), sound alert while input is pending and when a turn finishes |
 | `tools/guard.ps1`, `tools/guard.mjs` | Claude Code hook: the git guard (PowerShell or Node; see "The git guard") |
 | `tools/worklog/` | A Windows-only example of time tracking on the hooks (one ticket format, Azure DevOps); not part of the method |
-| `.github/workflows/` | CI: tests and `check` on Ubuntu and Windows |
+| `.github/workflows/`, `.github/pull_request_template.md` | CI: tests and `check` on Ubuntu and Windows; the PR template with its Docs checklist |
 
 ## Limits
 
