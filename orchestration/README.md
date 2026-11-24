@@ -6,7 +6,7 @@ Scope: one record per orchestrated task (a session where the orchestrator dispat
 
 `~/.claude/orchestration/log/<date>-<project>-<slug>.md`, from `orchestration/log/TEMPLATE.md`. User-level, not in any repo — the roster applies to every project. `node tools/orc.mjs costlog --session <id>` drafts a record from the board (`docs/cli.md`).
 
-The cost log records live tasks. To measure a change to the builder or refuter role, a rule or a model tier before keeping it, run the replay benchmark on fixed cases: `bench.md`.
+The cost log records live tasks. To measure a change to the builder or refuter role, a rule or a model tier before keeping it, run the replay benchmark on fixed cases: `bench.md`. Unattended runs of labelled GitHub issues, outside any orchestrated task and the board, are `queue.md`.
 
 ## Record format
 

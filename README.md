@@ -79,6 +79,8 @@ Six more roles (`review-*`) make up the [review panel](#review-panel) the Full r
 
 **Fewer permission prompts (Claude Code).** The `orc-permissions` skill adds the allow rules an orchestrated task needs to `~/.claude/settings.json`, so builders and refuters stop pausing on routine commands: the orc CLI, the test runs, scratch-file helpers, and `git worktree add` and `list`. It asks which groups to add, backs the file up first and never removes or loosens a `deny` or `ask` rule. Two risky rules, `git worktree remove` and a blanket `rm -rf`, are opt-in, each behind its own question. A rule matches the command text, so a path in a rule is not a scope and a command that uses a shell variable for a path matches no path rule. Like the other skills, it is there where `~/.claude/skills` has it.
 
+**Unattended issue queue (Claude Code).** `node tools/orc.mjs queue run` works through GitHub issues while nobody is watching, for example overnight when the subscription is idle. It takes open issues with a label (default `orc-queue`) written by an allowed author (default: only you), runs one headless Claude Code session per issue in its own worktree, and when the session commits a change the script itself pushes `queue/issue-<n>` and opens a draft PR; the model never holds push or PR rights. It stops cleanly at a usage limit, a `--until` time or `--max` issues, writes a marker per issue so nothing runs twice, and is a dry run without `--apply`. Every queue PR is a draft a human reviews and merges. Setup, guard rails and scheduling: [`orchestration/queue.md`](orchestration/queue.md).
+
 **The cost log.** Every orchestrated task writes one record: a row per dispatch with agent, model, tokens, minutes, result and a value label (`earned`, `marginal` or `waste`). The format and the review questions are in [`orchestration/README.md`](orchestration/README.md).
 
 **The anomaly log.** Something odd that no rule covers, in any session, goes on one line in a local `anomalies.md` beside the cost logs instead of becoming a rule on one sighting. A repeat is promoted by kind: a constraint becomes a rule, a scriptable check a guard or tool, a multi-step procedure explained a third time a skill, a preference a memory. The line format and the promotion table are in [`orchestration/README.md`](orchestration/README.md).
@@ -142,7 +144,7 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `profiles/*.md` | Optional rulebook additions (`--profile <name>`); `dotnet-azure-devops` holds the long rulebook's stack rules and general lessons |
 | `models.json` | Tier to model, per tool; `models.local.json` (untracked) overrides |
 | `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
-| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `bench`, `hooks`, `standards`; review panel: `calibration`, `corpus`, `metrics`; `help` |
+| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `bench`, `queue`, `hooks`, `standards`; review panel: `calibration`, `corpus`, `metrics`; `help` |
 | `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them), install, check, tooling, standards and review-panel tool tests, and the sprint tests (theme tokens and contrast, the theme picker, `make-story.mjs` and the story page) |
 | `CONTRIBUTING.md` | How to change this repo: sources vs generated files, the edit loop, traps |
 | `LICENSE` | MIT |
@@ -165,7 +167,7 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 ## Limits
 
 - The full loop has run live only on Claude Code (on the files generated from this repo since 2026-11-18). Antigravity CLI has had one headless run of the generated scout.
-- Slash commands, skills and review metrics are Claude Code only; other tools follow `review/PROCEDURE.md`, `workflows/*.md` and the `orchestration/` procedures by hand. `dispatch` runs headlessly on Antigravity and Claude Code only, and `bench` on Claude Code only.
+- Slash commands, skills and review metrics are Claude Code only; other tools follow `review/PROCEDURE.md`, `workflows/*.md` and the `orchestration/` procedures by hand. `dispatch` runs headlessly on Antigravity and Claude Code only, and `bench` and `queue` on Claude Code only.
 - Gemini CLI, Codex, Cursor, Copilot and OpenCode are verified by tests against documented formats only.
 - Cursor and Copilot need model ids set in `models.local.json`; until then they use `inherit` or the default model.
 - Hooks, the worklog and sound alerts are Claude Code extras. On other tools the board update after each report is a build-loop step.
@@ -198,6 +200,7 @@ Every command is `node tools/orc.mjs <command>`. Options: `node tools/orc.mjs he
 | `metrics` | Capture or report per-run review metrics from Claude Code transcripts |
 | `dispatch` | Run one role headlessly at its tier (Antigravity and Claude Code) |
 | `bench` | Replay benchmark: run the builder and refuter on fixed cases (Claude Code), score them with tokens and cost, and compare variants |
+| `queue` | Unattended issue queue: run labelled GitHub issues by an allowed author headlessly (Claude Code), one worktree each; the script pushes and opens a draft PR (dry run without `--apply`) |
 | `hooks` | Merge the example hooks into `settings.json` (dry run without `--apply`) |
 | `standards` | List, show or detect archive coding standards, or compose a project's `STANDARDS.md` (dry run without `--apply`) |
 | `help` | List the commands, or one command's options |

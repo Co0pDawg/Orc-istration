@@ -2,6 +2,8 @@
 
 Generic pattern for jobs that run with nobody watching. Two jobs on this machine are the worked examples: a **build watcher** (every 6 hours; when the main integration pipeline has failed, it runs `claude -p` in a dedicated worktree to fix it and open a draft PR) and a **worktree cleanup** (daily; plain script, no model). The scripts are not copied here.
 
+`node tools/orc.mjs queue` is the shipped implementation of this outline for GitHub issues (`orchestration/queue.md`). Where it differs: it is a Node command, not a PowerShell wrapper, and leaves registering the scheduled task to you; the script, not the model, pushes the branch and opens the draft PR, so the model gets no `git push` or `gh` rule; the "is there work?" check is a labelled issue by an allowed author; markers are one JSON file per issue (`handled`, `blocked` or `failed`) and `--issue <n>` replaces `-Force`; and a usage-limit stop writes no marker, so the issue is retried on the next run.
+
 ## 1. Trigger: Task Scheduler
 
 Settings of the two example tasks, read from `schtasks /query /fo LIST /v`:
