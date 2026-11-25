@@ -20,7 +20,7 @@ import { runQueue, QUEUE_USAGE } from './lib/queue.mjs';
 import { capture, loadRuns, metricsReport, repoTop, DEFAULT_PRICES } from './lib/metrics.mjs';
 import { dispatchPlan, runDispatch, formatCommand, argvProblem, binEnv, unavailable } from './lib/dispatch.mjs';
 import { mergeHooks, formatLike, readSettings, writeSettings, ANTIGRAVITY_GUARD_KEY, antigravityGuardPath, setAntigravityGuard, removeAntigravityGuard } from './lib/hooks.mjs';
-import { KIT_HOOK_SCRIPTS, KIT_SKILLS, KIT_NOTES, KNOWN_STACKS, presetRules, detectStacks, kitHookExample, planKitSettings, removeKitSettings, kitRecordProblem, guardStatus } from './lib/sprintkit.mjs';
+import { KIT_HOOK_SCRIPTS, KIT_PROCEDURES, KIT_NOTES, KNOWN_STACKS, presetRules, detectStacks, kitHookExample, planKitSettings, removeKitSettings, kitRecordProblem, guardStatus } from './lib/sprintkit.mjs';
 import { decodeText, readText } from './lib/text.mjs';
 import { USAGE, globalHelp, commandHelp } from './lib/help.mjs';
 import { validateArchive, runStandards, backupPath } from './lib/standards.mjs';
@@ -32,7 +32,7 @@ const DEFAULT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 // The checkout running orc.mjs, with forward slashes. The last line of every install points at the standards setup.
 // The real (on-disk) case, so every shell that starts node writes and compares the same line.
 const SETUP = fs.realpathSync.native(DEFAULT_REPO).replace(/\\/g, '/');
-const STANDARDS_NEXT = `set up each project's coding standards: see ${SETUP}/orchestration/standards.md (Claude Code: the repo-standards skill, where ~/.claude/skills has it).`;
+const STANDARDS_NEXT = `set up each project's coding standards: see ${SETUP}/orchestration/standards.md (Claude Code and Antigravity: the repo-standards skill that install generates).`;
 
 // The Setup checkout line install adds (status adds it too): the checkout running orc.mjs, never recorded in the manifest.
 const setupNotes = () => [`- Setup checkout (this machine): ${SETUP}. Standards setup: node "${SETUP}/tools/orc.mjs" standards ...; procedure: ${SETUP}/orchestration/standards.md.`];
@@ -145,6 +145,24 @@ export async function loadAdapters(repo) {
     adapters.push(adapter);
   }
   return adapters;
+}
+
+// The procedure catalogue (core/procedures.mjs) of the checkout being built.
+export async function loadProcedures(repo) {
+  const file = path.join(repo, 'core', 'procedures.mjs');
+  if (!fs.existsSync(file)) throw new Error(`${file} is missing: the procedure catalogue the adapters render skills and commands from`);
+  return (await import(pathToFileURL(file).href)).PROCEDURES;
+}
+
+// A generated file: the marker on its first lines (rulebooks, TOML agents) or, under front matter, on the first line of
+// its body (generated skills and commands).
+export function isOrcGenerated(text) {
+  if (isGenerated(text)) return true;
+  try {
+    return isGenerated(parse(text).body);
+  } catch {
+    return false;
+  }
 }
 
 export function renderNotes(adapter, extra = [], profiles = []) {
@@ -330,11 +348,6 @@ function targetPathProblems(home, files) {
 // the Setup checkout line.
 const installNotes = (chosen, toolId) => [...(chosen.sprintKit ? KIT_NOTES : boardNotes(chosen, toolId)), ...setupNotes()];
 
-// The files a kit adds beside the build: the sprint skill under <root>/skills/.
-function kitFiles(repo, adapter) {
-  return KIT_SKILLS.map((rel) => ({ path: `${adapter.home.root}/${rel}`, content: read(path.join(repo, ...rel.split('/'))) }));
-}
-
 const SETTINGS_REL = '.claude/settings.json';
 // Two absolute paths name the same file (case-insensitive on Windows and macOS).
 const samePath = (a, b) => {
@@ -403,8 +416,10 @@ function emittedTools(file) {
   return Array.isArray(data.tools) ? data.tools : String(data.tools).split(',').map((s) => s.trim());
 }
 
-// Returns {files, errors, warnings, rulebook}. Paths are home-relative with forward slashes; agent files carry `role`.
-export function buildTool(adapter, roles, models, agentsMd, { extraNotes = [], profiles = [] } = {}) {
+// Returns {files, errors, warnings, rulebook}. Paths are home-relative with forward slashes; agent files carry `role`,
+// and the skills and commands an adapter renders from the procedure catalogue carry `procedure` (its name) and a
+// `handCopyLabel`, so a hand copy from before generation is kept rather than refusing the install.
+export function buildTool(adapter, roles, models, agentsMd, { extraNotes = [], profiles = [], procedures = [] } = {}) {
   const errors = [];
   const warnings = [];
   let rulebook = null;
@@ -415,6 +430,22 @@ export function buildTool(adapter, roles, models, agentsMd, { extraNotes = [], p
     const tierModel = tiers[role.tier];
     if (!tierModel) errors.push(`${adapter.id}: no model for tier ${role.tier}`);
     else files.push({ ...adapter.renderAgent(role, tierModel), role: role.name });
+  }
+  if (adapter.renderProcedure) {
+    for (const p of procedures) {
+      let f;
+      try {
+        f = adapter.renderProcedure(p);
+      } catch (e) {
+        errors.push(e instanceof Error ? e.message : String(e));
+        continue;
+      }
+      const handCopyLabel = /(^|\/)commands\/[^/]+\.md$/.test(f.path) ? 'command' : 'skill';
+      files.push({ ...f, procedure: p.name, handCopyLabel });
+      const cap = adapter.limits?.skillBytes;
+      const size = Buffer.byteLength(parse(f.content).body, 'utf8');
+      if (cap && size >= cap) errors.push(`${adapter.id}: ${f.path} body is ${size} bytes; the limit is under ${cap}`);
+    }
   }
   const allowed = allowedTools(adapter);
   const editTools = new Set(adapter.capabilityTools?.edit ?? []);
@@ -457,9 +488,10 @@ async function buildAll(repo, toolId, { local = true, shared = false, extraNotes
   const models = loadModels(repo, { local, shared, env, warn });
   const agentsMd = read(path.join(repo, 'core', 'AGENTS.md'));
   const adapters = await loadAdapters(repo);
+  const procedures = await loadProcedures(repo);
   const picked = !toolId || toolId === 'all' ? adapters : adapters.filter((a) => a.id === toolId);
   if (!picked.length) throw new Error(`unknown tool ${toolId}; known: ${adapters.map((a) => a.id).join(', ')}`);
-  return picked.map((adapter) => ({ adapter, ...buildTool(adapter, roles, models, agentsMd, { extraNotes, profiles: loaded }) }));
+  return picked.map((adapter) => ({ adapter, ...buildTool(adapter, roles, models, agentsMd, { extraNotes, profiles: loaded, procedures }) }));
 }
 
 // The scripts the tool's example hooks run (adapter.hookScripts), as files under its root: install copies them beside
@@ -481,13 +513,18 @@ function adapterStaticFiles(repo, adapter, { sprintKit = false } = {}) {
   }));
 }
 
+// The build files a sprint kit installs: every file but the generated procedures outside KIT_PROCEDURES. A kit replaces
+// a differing owner copy after a backup (uninstall restores it), so its procedure files carry no hand-copy label.
+function kitBuiltFiles(builtFiles) {
+  return builtFiles.filter((f) => !f.procedure || KIT_PROCEDURES.includes(f.procedure)).map((f) => (f.procedure ? { ...f, handCopyLabel: undefined } : f));
+}
+
 // Every file install writes and status compares for an adapter, excluding build-only files (`install: false`).
 function installFileList(repo, adapter, builtFiles, { sprintKit = false } = {}) {
   return [
-    ...builtFiles,
+    ...(sprintKit ? kitBuiltFiles(builtFiles) : builtFiles),
     ...hookScriptFiles(repo, adapter, { sprintKit }),
     ...adapterStaticFiles(repo, adapter, { sprintKit }),
-    ...(sprintKit ? kitFiles(repo, adapter) : []),
   ].filter((f) => f.install !== false);
 }
 
@@ -502,11 +539,11 @@ function walkFiles(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walkFiles(path.join(dir, e.name)) : [path.join(dir, e.name)]));
 }
 
-// What to edit for a built file: an agent file comes from its role, a command from the adapter, and the other
-// rulebook files from the core rulebook, the tool notes and the adapter.
+// What to edit for a built file: an agent file comes from its role, a generated skill or command from the procedure
+// catalogue and the adapter, and the other rulebook files from the core rulebook, the tool notes and the adapter.
 function sourceOf(adapter, file) {
   if (file.role) return { src: `core/roles/${file.role}.md`, those: false };
-  if (/(^|\/)commands\/[^/]+\.md$/.test(file.path)) return { src: `adapters/${adapter.id}.mjs`, those: false };
+  if (file.procedure) return { src: `core/procedures.mjs / adapters/${adapter.id}.mjs`, those: true };
   return { src: `core/AGENTS.md / adapters/${adapter.id}.notes.md / adapters/${adapter.id}.mjs`, those: true };
 }
 
@@ -679,7 +716,7 @@ export async function compareInstall(repo, home, toolId, opt, io, configBoard = 
       const line = firstDiffLine(read(target), normalizeEol(f.content));
       if (line && recorded?.[f.path] && diskHash(target) !== recorded[f.path].sha256) state = `edited since install, differs (first difference at line ${line})`;
       // A hand-copied hook script, command or skill with no manifest entry is one install keeps: only --force replaces it.
-      else if (line && f.handCopyLabel && !recorded?.[f.path] && !isGenerated(read(target))) {
+      else if (line && f.handCopyLabel && !recorded?.[f.path] && !isOrcGenerated(read(target))) {
         state = `differs (first difference at line ${line}; a hand-copied ${f.handCopyLabel}, which install --apply keeps: install --apply --force replaces it, with a backup)`;
       } else if (line) state = `differs (first difference at line ${line})`;
     }
@@ -1055,8 +1092,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     // its uninstall would remove the whole earlier install. (The reverse cannot happen: a recorded kit stays a kit.)
     if (kit && early.manifest && early.manifest.options?.sprintKit !== true) {
       return fail(
-        `refused: ${early.file} records a full orc install, not a sprint kit; nothing written. The full install already has the roster agents and the hook scripts (hooks --node --apply wires the guard). ` +
-          `For /sprint, copy ${SETUP}/skills/sprint to ${path.join(home, '.claude', 'skills', 'sprint')} by hand; to switch to a sprint kit, run uninstall --tool claude-code --home <dir> --apply first.`,
+        `refused: ${early.file} records a full orc install, not a sprint kit; nothing written. The full install already has the roster agents, the sprint skill and the hook scripts (hooks --node --apply wires the guard). ` +
+          `To switch to a sprint kit, run uninstall --tool claude-code --home <dir> --apply first.`,
       );
     }
     const extraNotes = installNotes(chosen, toolId);
@@ -1157,9 +1194,10 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         if (state === 'replace') {
           const m = recorded[f.path];
           // In the manifest the hash decides: untouched since install replaces, edited by hand is refused. With no
-          // manifest entry only rulebooks and TOML agents carry a marker; any other differing file is hand-written.
+          // manifest entry only rulebooks, TOML agents and generated skills and commands carry a marker; any other differing
+          // file is hand-written.
           if (m && diskHash(target) !== m.sha256) state = 'REPLACE EDITED';
-          else if (!m && !isGenerated(current)) state = 'REPLACE HAND-WRITTEN';
+          else if (!m && !isOrcGenerated(current)) state = 'REPLACE HAND-WRITTEN';
           // A hook script, command or skill copied by hand before install shipped them is kept, so it never refuses the whole install.
           if (state === 'REPLACE HAND-WRITTEN' && f.handCopyLabel && !opt.force) state = 'KEEP';
           // On a borrowed machine the kit replaces the owner's own file after a backup, and uninstall puts it back.
@@ -1892,7 +1930,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
 
   if (cmd === 'doctor') {
     const home = path.resolve(opt.home ?? os.homedir());
-    return runDoctor({ repo, home, json: Boolean(opt.json), io }, { loadAdapters, loadRoles, loadModels, compareInstall, isArtifactBoard });
+    return runDoctor({ repo, home, json: Boolean(opt.json), io }, { loadAdapters, loadRoles, loadModels, compareInstall, isArtifactBoard, loadProcedures, isOrcGenerated });
   }
 
   if (cmd === 'standards') {

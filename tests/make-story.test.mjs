@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const SCRIPT = path.join(REPO, 'skills', 'sprint', 'make-story.mjs');
+const SCRIPT = path.join(REPO, 'orchestration', 'sprint', 'make-story.mjs');
 const BLOCK = /<script type="application\/json" id="sprint-events">([\s\S]*?)<\/script>/g;
 const USAGE = /usage: node make-story\.mjs --events/;
 
@@ -59,7 +59,7 @@ test('make-story: hostile text stays inside the sprint-events block and parses b
   assert.ok(!inner.includes(String.fromCharCode(0x2028)) && !inner.includes(String.fromCharCode(0x2029)), 'no raw U+2028 or U+2029');
   assert.deepStrictEqual(JSON.parse(inner), { meta: META, events: EVENTS });
   // The rest of the template is unchanged: only the block contents were replaced.
-  const template = fs.readFileSync(path.join(REPO, 'skills', 'sprint', 'story-template.html'), 'utf8');
+  const template = fs.readFileSync(path.join(REPO, 'orchestration', 'sprint', 'story-template.html'), 'utf8');
   assert.equal(page.replace(BLOCK, ''), template.replace(BLOCK, ''));
 });
 

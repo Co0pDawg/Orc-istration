@@ -68,7 +68,7 @@ function shimHint(exe, id, file) {
 }
 
 // Prints one `LEVEL check: detail` line per check (or, with json, one JSON object) and returns 1 when any check FAILs.
-export async function runDoctor({ repo, home, json, io, env = process.env, timeouts = TIMEOUTS }, { loadAdapters, loadRoles, loadModels, compareInstall, isArtifactBoard }) {
+export async function runDoctor({ repo, home, json, io, env = process.env, timeouts = TIMEOUTS }, { loadAdapters, loadRoles, loadModels, compareInstall, isArtifactBoard, loadProcedures, isOrcGenerated }) {
   const checks = [];
   const add = (level, check, detail, tool) => checks.push({ level, check, detail, ...(tool ? { tool } : {}) });
   const adapters = await loadAdapters(repo);
@@ -258,6 +258,19 @@ export async function runDoctor({ repo, home, json, io, env = process.env, timeo
     await guarded('hooks', 'claude-code', async () => {
       if (readText(installed) !== readText(source)) {
         add('WARN', 'hooks', `${installed} is a hand copy that differs from this checkout, so install keeps it; delete it and run install --tool claude-code --apply to get the current one`, 'claude-code');
+      }
+    });
+  }
+
+  // Hand copies of the routine skills and workflow commands from before install generated them: unrecorded and with no
+  // generated marker, so install keeps them in place of the generated wrapper.
+  if (loadProcedures && isOrcGenerated && claudeAdapter) {
+    await guarded('skills', 'claude-code', async () => {
+      for (const p of await loadProcedures(repo)) {
+        const rel = p.kind === 'routine' ? `.claude/skills/${p.name}/SKILL.md` : `.claude/commands/${p.name}.md`;
+        const installed = path.join(home, ...rel.split('/'));
+        if (Object.hasOwn(recordedClaudeFiles, rel) || !fs.existsSync(installed) || isOrcGenerated(readText(installed))) continue;
+        add('WARN', 'skills', `${installed} is a hand copy from before install generated it, so install keeps it; delete it and run install --tool claude-code --apply to get the generated one`, 'claude-code');
       }
     });
   }

@@ -89,7 +89,7 @@ Tell the user in one line that the sprint kit is installed and verified.
 
 ## 6. Start the sprint
 
-In the exercise folder, start the sprint with the minutes and the task, for example `/sprint 45` followed by the interviewer's task, or "start a 45-minute sprint: <task>". The skill reads `orchestration/sprint.md` from the clone (the rulebook's "Setup checkout (this machine)" line points at it) and runs the timebox. A pasted task is taken as a finished brief ("as given"); to show requirements gathering instead, say the interviewer is the client, and the sprint starts with Discover: you ask the questions and the agreed `REQUIREMENTS.md` is the first commit. The story-page template, `make-story.mjs` and the theme are also read from the clone, so delete the clone only after the sprint. There is no board on this machine; the rulebook says so, and sprint mode waives it anyway.
+In the exercise folder, start the sprint with the minutes and the task, for example `/sprint 45` followed by the interviewer's task, or "start a 45-minute sprint: <task>". The skill reads `orchestration/sprint.md` from the clone (the rulebook's "Setup checkout (this machine)" line points at it) and runs the timebox. A pasted task is taken as a finished brief ("as given"); to show requirements gathering instead, say the interviewer is the client, and the sprint starts with Discover: you ask the questions and the agreed `REQUIREMENTS.md` is the first commit. The story-page template, `make-story.mjs` and the theme are also read from the clone (`orchestration/sprint/`), so delete the clone only after the sprint. There is no board on this machine; the rulebook says so, and sprint mode waives it anyway.
 
 ## 7. Clean up afterwards
 

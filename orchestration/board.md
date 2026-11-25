@@ -1,17 +1,12 @@
----
-name: board
-description: Write an orchestrated task to the live board (open the session and cards, write at each dispatch, report and commit, mark it Done). Use at the start of any task that dispatches a builder, refuter or debugger, and at each of those moments after; not for inline work or a lone scout or researcher lookup.
----
-
 # Board
 
-This skill exists only where `~/.claude/skills` holds a copy of it. Elsewhere, follow the protocol directly.
+How the orchestrator writes an orchestrated task to the live board: open the session and its cards, write at each dispatch, report and commit, and mark it Done. Use it at the start of any task that dispatches a builder, refuter or debugger, and at each of those moments after; not for inline work or a lone scout or researcher lookup. The rulebook's "Orchestration Board" section is the summary; this file is the step list. The generated `board` skill points here.
 
 The protocol is the "Writing protocol" section of the board's `README.md`: read it at the start of each orchestrated task, and follow it over anything here. The board is its own repo (Orc-Dashboard). Find its README at `<board repo>/README.md`, where `<board repo>` is `board.repo` in `~/.orc/config.json` (suggested: `~/.orc/board`), else `~/.orc/board/README.md`. The board address is in the Board line of the tool notes (added at install from `~/.orc/config.json`). No address: skip the board and say so once.
 
 ## Backend
 
-- **Artifact** (`claude.ai/artifact/...`): load ArtifactData with ToolSearch `select:ArtifactData`. If it is absent, load `select:mcp__claude-artifacts__db_get,mcp__claude-artifacts__db_write`, resolve the address to its UUID slug first (the short id fails), and pass `ifVersion` on every write to an existing doc.
+- **Artifact** (`claude.ai/artifact/...`): only a tool whose notes say how can write it (the tool notes name the tool to load, how to resolve the address and how to pin each write). Any other tool skips the board and says so once.
 - **Local** (`http://localhost:<port>`): `node <board repo>/local/board.js batch` for the Start write, `append` for progress and events, `update` for fields. Exit 2 is a version conflict.
 
 ## Every write
@@ -33,4 +28,4 @@ The protocol is the "Writing protocol" section of the board's `README.md`: read 
 
 ## Refuters, scouts and researchers
 
-On Claude Code these roles have a tools allowlist without MCP tools, so they cannot write the board. Give a refuter's brief `BOARD: none`, and after it reports, write its stage, `note` and `tokens` yourself. Builders and debuggers write their own card's `progress`, `note` and named stage. Agents never write the session doc.
+Where the tool notes say these roles cannot write the board, give a refuter's brief `BOARD: none`, and after it reports, write its stage, `note` and `tokens` yourself. Builders and debuggers write their own card's `progress`, `note` and named stage. Agents never write the session doc.
