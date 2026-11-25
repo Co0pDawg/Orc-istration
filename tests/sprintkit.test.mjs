@@ -10,6 +10,8 @@ import { normalizeEol } from '../tools/lib/frontmatter.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tempDir = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `orc-${name}-`));
+// No test reads this machine's ~/.orc: the shared state home is an empty scratch folder, which children inherit.
+process.env.ORC_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'orc-data-'));
 const now = () => new Date(2026, 10, 21, 9, 30, 0);
 
 async function run(argv, { cwd = tempDir('cwd') } = {}) {

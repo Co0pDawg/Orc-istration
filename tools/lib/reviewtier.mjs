@@ -19,6 +19,9 @@ export const PRODUCT_PATTERNS = [
   /^(roles|agents|profiles|review|workflows|commands|\.claude|\.agents|\.codex|\.cursor|\.gemini)\//,
   /^adapters\/[^/]+\.notes\.md$/,
   /^standards\//,
+  /^review\//,
+  /^workflows\//,
+  /^commands\//,
   /^orchestration\/(standards|sprint)\.md$/,
 ];
 

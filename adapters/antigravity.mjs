@@ -33,6 +33,7 @@ export default {
     'Per-agent model is only inherit, flash or pro: Mid and Low both map to flash, and what flash and pro resolve to is not documented.',
     'No per-agent effort key; effort exists only on a headless run (--effort).',
     'Low and Mid are the same per-agent model (flash) in the shipped `models.json`, so a per-dispatch tier override between them changes nothing outside a headless run.',
+    'Listing, searching and URL fetching have no dedicated tool on Antigravity and go through run_command (or search_web).',
     'No subagent-stop hook: the board update after an agent report is a build-loop step.',
     'Read-only is enforced only by the tools allowlist; run_command can still change files, so the role body forbids edits.',
     'Listing, searching and URL fetching have no dedicated tool on Antigravity and go through run_command (or search_web); whether run_command can reach the network under the `sandbox` policy is not established, so only search_web is known to reach the web.',
@@ -44,7 +45,7 @@ export default {
     const fm = {
       name: role.name,
       description: role.description,
-      tools: caps.flatMap((c) => capabilityTools[c]),
+      tools: [...new Set(caps.flatMap((c) => capabilityTools[c]))],
       subagent: true,
       // `agy --agent <name>` (the headless recipe below) selects only main agents; with `false`, agy 1.5.16
       // answers `unknown agent "<name>" (no custom agents are available)`.

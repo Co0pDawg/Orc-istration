@@ -24,6 +24,8 @@ async function run(argv, stdin = '') {
 function tempDir(name) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `orc-${name}-`));
 }
+// No test reads this machine's ~/.orc: the shared state home is an empty scratch folder, which children inherit.
+process.env.ORC_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'orc-data-'));
 
 async function buildRepo() {
   const roles = loadRoles(REPO);
@@ -376,6 +378,30 @@ test('antigravity build refuses a role whose capabilities map to no tool; every 
   const agents = real.files.filter((f) => f.role);
   assert.strictEqual(agents.length, 11);
   for (const f of agents) assert.ok(parse(f.content).data.tools.length > 0, f.path);
+});
+
+test('antigravity agents are main agents and subagents, and name only agy 1.5.16 tools', async () => {
+  const [agy] = (await buildGolden(REPO)).filter((r) => r.adapter.id === 'antigravity');
+  const roles = loadRoles(REPO);
+  const accepted = new Set(['read_file', 'write_file', 'edit_file', 'run_command', 'search_web']);
+  const deprecated = /\b(list_dir|find_by_name|grep_search|view_file|write_to_file|replace_file_content|multi_replace_file_content|read_url_content)\b/;
+  for (const f of agy.files) assert.doesNotMatch(f.content, deprecated, f.path);
+  const agents = agy.files.filter((f) => f.role);
+  assert.equal(agents.length, roles.length);
+  for (const f of agents) {
+    const { data } = parse(f.content);
+    assert.equal(data.subagent, true, f.path);
+    assert.equal(data.mainAgent, true, f.path);
+    const tools = Array.isArray(data.tools) ? data.tools : data.tools.split(', ');
+    assert.equal(new Set(tools).size, tools.length, `${f.path}: no tool twice`);
+    for (const t of tools) assert.ok(accepted.has(t), `${f.path} names ${t}`);
+    const role = roles.find((r) => r.name === f.role);
+    if (role.access === 'read-only') for (const t of ['write_file', 'edit_file']) assert.ok(!tools.includes(t), `${role.name} gets ${t}`);
+    else assert.ok(tools.includes('write_file') && tools.includes('edit_file'), `${role.name} can edit`);
+  }
+  assert.ok(agy.adapter.gaps.some((g) => /listing, searching and URL fetching have no dedicated tool .*run_command.*search_web/i.test(g)));
+  const rulebook = agy.files.find((f) => f.path === '.gemini/AGENTS.md');
+  assert.ok(Buffer.byteLength(rulebook.content) < 24000, 'Antigravity rulebook under its cap');
 });
 
 test('AGENTS.md hygiene', () => {
