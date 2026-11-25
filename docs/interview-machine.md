@@ -59,7 +59,7 @@ It writes nothing. Read the output:
 - `would add to settings.json ...` for the guard hook and each preset entry; existing entries are kept, and a working guard the owner already has is not added twice.
 - `WARN ... which is not on disk, so it guards nothing` names an old guard hook whose script is gone; the kit adds its own guard and leaves that entry alone. Mention it to the user.
 - `refused: ... settings.json is not valid JSON` means the owner's `settings.json` is broken. Stop and tell the user; do not edit it.
-- `refused: ... records a full orc install, not a sprint kit` means this machine already has Orc-istration installed. Stop and tell the user: the roster is already there, and the message says how to add `/sprint`.
+- `refused: ... records a full orc install, not a sprint kit` means this machine already has Orc-istration installed. Stop and tell the user: the roster is already there, and if `/sprint` is missing (a full install made before skill generation), running `install --tool claude-code --apply` again adds it, after deleting any hand-copied `skills/sprint/SKILL.md`, as the message says.
 - `--apply would refuse` means a file installed earlier by orc was edited by hand. Stop and tell the user.
 
 ## 4. Apply (seconds)

@@ -2,7 +2,7 @@
 
 This procedure sets up a project's coding standards: `STANDARDS.md` at the project's root. Builders follow it, and refuters check diffs against its Review checklists. Each section comes from the cited archive in this setup checkout (`standards/`, format in `standards/README.md`), or from the user's own files.
 
-`<repo>` below is the project, and `<setup>` is the setup checkout. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `~/.orc/config.json`, else ask the user. Call it CHECKOUT and confirm `CHECKOUT/tools/orc.mjs` exists there; if it does not, stop and say so. `<setup>` below is that CHECKOUT. Commands run as `node "<setup>/tools/orc.mjs" standards ...`, quoted for paths with spaces, with `--repo <repo>`. The generated `repo-standards` skill points here.
+`<repo>` below is the project, and `<setup>` is the setup checkout. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `config.json` (under `ORC_DATA_DIR` when set, else under `~/.orc/`), else ask the user. Call it CHECKOUT and confirm `CHECKOUT/tools/orc.mjs` exists there; if it does not, stop and say so. `<setup>` below is that CHECKOUT. Commands run as `node "<setup>/tools/orc.mjs" standards ...`, quoted for paths with spaces, with `--repo <repo>`. The generated `repo-standards` skill points here.
 
 ## When to run it
 

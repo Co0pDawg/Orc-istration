@@ -2,7 +2,7 @@
 
 How the orchestrator finishes an orchestrated task: full test projects once, the diff read, the pre-PR review tier, the cost log, the handoff note, the board marked Done. Use it when the builder/refuter loop of an orchestrated task is accepted and before reporting it done or opening the PR; not in sprint mode, which waives most of this. The rulebook's "Build loop", "Pre-PR review tiers" and "Cost log" sections win over anything here. The generated `wrap-up` skill points here.
 
-`<setup>` is the setup checkout: CHECKOUT in the generated skill, named by the "Setup checkout (this machine)" line of the tool notes. Commands run as `node "<setup>/tools/orc.mjs" ...`, quoted.
+`<setup>` is the setup checkout (CHECKOUT in the generated skill). Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `config.json` (under `ORC_DATA_DIR` when set, else under `~/.orc/`), else ask the user. Call it CHECKOUT and confirm `CHECKOUT/orchestration/wrap-up.md` exists there; if it does not, stop and say so. Commands run as `node "<setup>/tools/orc.mjs" ...`, quoted.
 
 Show this as a visible checklist and tick each step as it finishes.
 

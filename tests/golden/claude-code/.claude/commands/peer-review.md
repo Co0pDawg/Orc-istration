@@ -19,5 +19,5 @@ allowed-tools:
 
 **Arguments:** "$ARGUMENTS"
 
-1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `~/.orc/config.json`, else ask the user. Call it CHECKOUT and confirm `CHECKOUT/workflows/peer-review.md` exists there; if it does not, stop and say so.
+1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `config.json` (under `ORC_DATA_DIR` when set, else under `~/.orc/`), else ask the user. Call it CHECKOUT and confirm `CHECKOUT/workflows/peer-review.md` exists there; if it does not, stop and say so.
 2. Read `CHECKOUT/workflows/README.md`, then `CHECKOUT/workflows/peer-review.md`, and follow it with these arguments. Run the review panel in this session by following `CHECKOUT/review/PROCEDURE.md`, launching its explorers in one message, each with `run_in_background: true`; dispatch every agent by its roster name as `subagent_type`; ask the developer with `AskUserQuestion`.

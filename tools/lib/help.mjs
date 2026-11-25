@@ -60,7 +60,7 @@ export const HELP = {
   },
   uninstall: {
     repo: true,
-    summary: 'Delete the files an install recorded in its manifest (dry run without --apply); for a sprint kit also remove its settings.json entries and restore the files it replaced; for antigravity remind to remove orc-guard from hooks.json when still present',
+    summary: 'Delete the files an install recorded in its manifest (dry run without --apply); for a sprint kit also remove its settings.json entries and restore the files it replaced; for antigravity also remove the orc-guard entry from hooks.json when it runs the guard being deleted',
     synopsis: 'uninstall --tool <id> [--home <dir>] [--apply] [--force]',
     options: {
       '--tool <id>': 'the adapter to uninstall (required; not all)',
@@ -222,7 +222,7 @@ export const HELP = {
     synopsis: 'metrics capture --workflow <name> [--session <id> | --transcript <path>] [--log <run log>] [--mode lite|full] [--version <v>] [--out <dir>] [--print] | metrics report [--dir <dir>] [--prices <file>] [--out <file>] [--force]',
     options: {
       '--workflow <name>': 'capture: the workflow that ran (required)',
-      '--session <id>': 'capture: the session (default CLAUDE_CODE_SESSION_ID; with no session and no --transcript, as outside Claude Code, capture prints metrics: skipped and exits 0)',
+      '--session <id>': 'capture: the session (default CLAUDE_CODE_SESSION_ID; with no session, no --transcript and no CLAUDECODE set, as outside Claude Code, capture prints metrics: skipped and exits 0)',
       '--transcript <path>': 'capture: read this transcript instead of the session\'s',
       '--log <run log>': 'capture: the run log to attach',
       '--mode lite|full': 'capture: the run mode',

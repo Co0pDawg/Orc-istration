@@ -58,9 +58,16 @@ export function prSize(repoDir, base, head, sensitive) {
       throw new Error(`pr-size: --sensitive ${JSON.stringify(sensitive)} is not a valid regular expression (${why})`);
     }
   }
-  const isDir = fs.existsSync(repoDir) && fs.statSync(repoDir).isDirectory();
-  const inside = isDir && spawnSync('git', ['rev-parse', '--git-dir'], { cwd: repoDir, encoding: 'utf8', shell: false }).status === 0;
-  if (!inside) throw new Error(`pr-size: ${repoDir} is not a git repository`);
+  if (!fs.existsSync(repoDir) || !fs.statSync(repoDir).isDirectory()) throw new Error(`pr-size: ${repoDir} is not a git repository`);
+  // Only git's own "not a git repository" answer is reported as one; git missing, or any other rev-parse failure
+  // (such as "dubious ownership"), shows what went wrong. LC_ALL=C keeps git's messages untranslated for the match.
+  const probe = spawnSync('git', ['rev-parse', '--git-dir'], { cwd: repoDir, encoding: 'utf8', shell: false, env: { ...process.env, LC_ALL: 'C' } });
+  if (probe.error) throw new Error(`pr-size: cannot run git (${probe.error.code === 'ENOENT' ? 'git is not installed or not on PATH' : probe.error.message})`);
+  if (probe.status !== 0) {
+    const said = (probe.stderr || '').trim();
+    if (/not a git repository/i.test(said)) throw new Error(`pr-size: ${repoDir} is not a git repository`);
+    throw new Error(`pr-size: git rev-parse failed in ${repoDir}: ${said || `exit ${probe.status}`}`);
+  }
   const range = `${base}...${head}`;
   const lines = [formatScore(score(git(repoDir, ['diff', '--numstat', '-M', range, '--', '.', ...EXCLUDE])))];
   if (sensitive) lines.push(...riskPaths(git(repoDir, ['diff', '--name-only', range]), sensitive).map((p) => `risk: ${p}`));

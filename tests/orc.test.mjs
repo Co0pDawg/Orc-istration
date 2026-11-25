@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { parse, serialize, normalizeEol, generatedMarker } from '../tools/lib/frontmatter.mjs';
 import { parseRole } from '../tools/lib/roles.mjs';
 import { serializeToml, parseToml, tomlMultiline } from '../tools/lib/toml.mjs';
-import { main, loadRoles, loadModels, loadAdapters, buildTool, buildGolden, allowedTools, parseAgyModels, firstDiffLine, isOrcGenerated } from '../tools/orc.mjs';
+import { main, loadRoles, loadModels, loadAdapters, loadProcedures, buildTool, buildGolden, allowedTools, parseAgyModels, firstDiffLine, isOrcGenerated } from '../tools/orc.mjs';
 import { PROCEDURES, checkoutLookup } from '../core/procedures.mjs';
 import { knownTools } from '../tools/lib/models.mjs';
 import { spawnSync } from 'node:child_process';
@@ -128,6 +128,30 @@ test('copilot enforces the 30,000-character agent body cap', async () => {
   const copilot = adapters.find((a) => a.id === 'copilot');
   const big = roles.map((r) => (r.name === 'scout' ? { ...r, body: 'x'.repeat(30001) } : r));
   assert.match(buildTool(copilot, big, models, agentsMd).errors.join('\n'), /scout\.agent\.md body is 30001 characters/);
+});
+
+test('buildTool: a skill body at or over skillBytes fails the build; a renderProcedure error is reported; a missing catalogue throws', async () => {
+  const { models, agentsMd, adapters } = await buildRepo();
+  const agy = adapters.find((a) => a.id === 'antigravity');
+  // The real Antigravity adapter with its real procedure renderer, held to a smaller cap.
+  const small = { ...agy, limits: { ...agy.limits, skillBytes: 900 } };
+  const board = PROCEDURES.find((p) => p.name === 'board');
+  const bodyBytes = Buffer.byteLength(parse(agy.renderProcedure(board).content).body, 'utf8');
+  assert.ok(bodyBytes > 300 && bodyBytes < 900, `board body is ${bodyBytes} bytes`);
+  assert.deepStrictEqual(buildTool(small, [], models, agentsMd, { procedures: [board] }).errors, []);
+  const atCap = { ...agy, limits: { ...agy.limits, skillBytes: bodyBytes } };
+  assert.deepStrictEqual(buildTool(atCap, [], models, agentsMd, { procedures: [board] }).errors, [`antigravity: .gemini/config/skills/board/SKILL.md body is ${bodyBytes} bytes; the limit is under ${bodyBytes}`]);
+  // A procedure an adapter has no notes for, on both adapters that render them: reported, not thrown, and no file.
+  const stray = { ...board, name: 'stray', title: 'Stray' };
+  for (const id of ['antigravity', 'claude-code']) {
+    const adapter = adapters.find((a) => a.id === id);
+    const built = buildTool(adapter, [], models, agentsMd, { procedures: [stray, board] });
+    assert.deepStrictEqual(built.errors, [`${id}: no notes for procedure stray in adapters/${id}.mjs`]);
+    assert.deepStrictEqual(built.files.filter((f) => f.procedure).map((f) => f.procedure), ['board'], id);
+  }
+  // A checkout with no catalogue: the build stops with the file named.
+  const bare = tempDir('no-catalogue');
+  await assert.rejects(loadProcedures(bare), (e) => e.message === `${path.join(bare, 'core', 'procedures.mjs')} is missing: the procedure catalogue the adapters render skills and commands from`);
 });
 
 test('models.local.json overrides per tool and tier', () => {
@@ -678,26 +702,28 @@ test('no tracked workflows, review or orchestration Markdown holds a bash fence 
   assert.deepStrictEqual(hits, []);
 });
 
-test('the checkout lookup is one sentence: wrappers, both adapters\' notes, the standards and review procedures', () => {
+test('the checkout lookup is one sentence: wrappers, both adapters\' notes, the standards, brief, wrap-up and review procedures', () => {
   const [before, after] = checkoutLookup('\0').split('\0');
   const once = new RegExp(`${esc(before)}[^\`]+${esc(after)}`);
-  for (const f of ['adapters/claude-code.notes.md', 'adapters/antigravity.notes.md', 'orchestration/standards.md', 'review/PROCEDURE.md']) {
+  for (const f of ['adapters/claude-code.notes.md', 'adapters/antigravity.notes.md', 'orchestration/standards.md', 'orchestration/brief.md', 'orchestration/wrap-up.md', 'review/PROCEDURE.md']) {
     assert.match(read(path.join(REPO, f)), once, f);
   }
   assert.doesNotMatch(checkoutLookup('x'), /ORC_[H]OME|~\/\.claude/);
 });
 
 test('no generated or tracked file still finds the checkout through the old environment variable or the Claude home', async () => {
-  // Built from fragments so this file never holds them; the cost logs and migration notes name neither.
+  // Built from fragments so this file never holds them; the cost logs name neither. The one allowed line is the
+  // README migration note saying the variable is no longer read ([file, phrase the line must hold]).
   const needles = [['ORC', '_HOME'].join(''), ['else `~/', '.claude`'].join(''), ['`~/', '.claude` when'].join('')];
-  const allowed = new Set([]);
+  const allowed = [['README.md', `\`${needles[0]}\` is no longer read`]];
   const hits = [];
   for (const f of trackedFiles()) {
-    if (allowed.has(f) || !fs.existsSync(path.join(REPO, f))) continue;
+    if (!fs.existsSync(path.join(REPO, f))) continue;
     const buf = fs.readFileSync(path.join(REPO, f));
     if (buf.includes(0)) continue;
-    const text = buf.toString('utf8');
-    for (const n of needles) if (text.includes(n)) hits.push(`${f}: ${n}`);
+    for (const line of buf.toString('utf8').split('\n')) {
+      for (const n of needles) if (line.includes(n) && !allowed.some(([file, phrase]) => file === f && line.includes(phrase))) hits.push(`${f}: ${n}`);
+    }
   }
   for (const { adapter, files } of await buildGolden(REPO)) {
     for (const f of files) for (const n of needles) if (f.content.includes(n)) hits.push(`build ${adapter.id}/${f.path}: ${n}`);
@@ -869,22 +895,104 @@ test('install copies tools/guard.mjs for antigravity; status compares it; hand c
   assert.strictEqual(hook.status, 0, hook.stderr);
   assert.strictEqual(JSON.parse(hook.stdout).decision, 'deny');
 
-  // Wire orc-guard in hooks.json: uninstall reminds the user to run hooks --tool antigravity --home <home> --remove --apply.
+  // Wire orc-guard in hooks.json: uninstall deletes guard.mjs, so it removes the orc-guard that runs it.
   assert.strictEqual((await run(['hooks', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
+  const hooksFile = path.join(home, '.gemini', 'config', 'hooks.json');
   const unDry = await run(['uninstall', '--tool', 'antigravity', '--home', home]);
   assert.strictEqual(unDry.code, 0, unDry.err);
-  assert.ok(unDry.out.includes(`hooks --tool antigravity --home ${home} --remove --apply`), unDry.out);
+  assert.ok(unDry.out.includes(`would remove orc-guard from ${hooksFile} (it runs ${guardPath.replace(/\\/g, '/')}, which this uninstall deletes; other hooks are kept, with a backup)`), unDry.out);
+  assert.ok(Object.hasOwn(JSON.parse(fs.readFileSync(hooksFile, 'utf8')), 'orc-guard'), 'the dry run writes nothing');
   const unApply = await run(['uninstall', '--tool', 'antigravity', '--home', home, '--apply']);
   assert.strictEqual(unApply.code, 0, unApply.err);
   assert.ok(!fs.existsSync(guardPath), 'guard.mjs deleted by uninstall');
-  assert.ok(unApply.out.includes(`hooks --tool antigravity --home ${home} --remove --apply`), unApply.out);
+  assert.ok(unApply.out.includes(`removed orc-guard from ${hooksFile}`), unApply.out);
+  assert.doesNotMatch(unApply.out, /--remove --apply/);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(hooksFile, 'utf8')), {});
 
-  // Once orc-guard is removed from hooks.json, uninstall prints no reminder.
-  assert.strictEqual((await run(['hooks', '--tool', 'antigravity', '--home', home, '--remove', '--apply'])).code, 0);
+  // With no orc-guard in hooks.json, uninstall prints no reminder.
   assert.strictEqual((await run(['install', '--tool', 'antigravity', '--home', home, '--apply', '--no-board'])).code, 0);
   const unClean = await run(['uninstall', '--tool', 'antigravity', '--home', home, '--apply']);
   assert.strictEqual(unClean.code, 0, unClean.err);
-  assert.doesNotMatch(unClean.out, /--remove --apply/);
+  assert.doesNotMatch(unClean.out, /--remove --apply|orc-guard/);
+});
+
+// The hooks.json shapes uninstall --tool antigravity meets: another named hook beside orc-guard (as another tool
+// writes it), an orc-guard running another script, an unreadable file, and none.
+test('uninstall --tool antigravity removes only an orc-guard that runs the guard.mjs it deletes; an unreadable hooks.json is a WARN', async () => {
+  const setup = async (hooks) => {
+    const home = tempDir('uninstall-agy-hooks');
+    assert.strictEqual((await run(['install', '--tool', 'antigravity', '--home', home, '--apply', '--no-board'])).code, 0);
+    const hooksFile = path.join(home, '.gemini', 'config', 'hooks.json');
+    if (hooks !== undefined) {
+      fs.mkdirSync(path.dirname(hooksFile), { recursive: true });
+      fs.writeFileSync(hooksFile, typeof hooks === 'function' ? hooks(home) : hooks);
+    }
+    return { home, hooksFile, guard: path.join(home, '.gemini', 'tools', 'guard.mjs') };
+  };
+  const removeCmd = (home) => `node tools/orc.mjs hooks --tool antigravity --home ${home} --remove --apply`;
+  const guardCommand = (home) => `node "${path.join(home, '.gemini', 'tools', 'guard.mjs').replace(/\\/g, '/')}"`;
+  const entry = (command) => ({ PreToolUse: [{ matcher: 'run_command', hooks: [{ type: 'command', command, timeout: 10 }] }] });
+  const other = { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: 'other-tool-hook.cmd' }] }], Stop: [] };
+
+  // Another named hook (a PreToolUse group on `*`) ahead of orc-guard, in a 4-space CRLF file with a BOM: only
+  // orc-guard goes, with a backup, and the BOM and layout stay.
+  const a = await setup((home) => '\ufeff' + JSON.stringify({ 'orca-status': other, 'orc-guard': entry(guardCommand(home)) }, null, 4).replace(/\n/g, '\r\n') + '\r\n');
+  const before = fs.readFileSync(a.hooksFile, 'utf8');
+  const aDry = await run(['uninstall', '--tool', 'antigravity', '--home', a.home]);
+  assert.strictEqual(aDry.code, 0, aDry.err);
+  assert.match(aDry.out, /would remove orc-guard from .*hooks\.json \(it runs .*guard\.mjs, which this uninstall deletes/);
+  assert.strictEqual(fs.readFileSync(a.hooksFile, 'utf8'), before, 'the dry run writes nothing');
+  const aApply = await run(['uninstall', '--tool', 'antigravity', '--home', a.home, '--apply']);
+  assert.strictEqual(aApply.code, 0, aApply.err);
+  assert.strictEqual(aApply.err, '');
+  assert.match(aApply.out, /^backed up: .*hooks\.json\.orc-backup-\d{8}-\d{6}$/m);
+  assert.ok(aApply.out.includes(`removed orc-guard from ${a.hooksFile} (it ran `), aApply.out);
+  assert.strictEqual(fs.readFileSync(a.hooksFile, 'utf8'), '\ufeff' + JSON.stringify({ 'orca-status': other }, null, 4).replace(/\n/g, '\r\n') + '\r\n');
+  const backups = fs.readdirSync(path.dirname(a.hooksFile)).filter((f) => f.startsWith('hooks.json.orc-backup-'));
+  assert.strictEqual(backups.length, 1);
+  assert.strictEqual(fs.readFileSync(path.join(path.dirname(a.hooksFile), backups[0]), 'utf8'), before);
+  assert.ok(!fs.existsSync(a.guard));
+
+  // An orc-guard that runs another script is left alone, and named.
+  const elsewhere = JSON.stringify({ 'orc-guard': entry('node "/opt/elsewhere/guard.mjs"') }, null, 2);
+  const b = await setup(elsewhere);
+  const bApply = await run(['uninstall', '--tool', 'antigravity', '--home', b.home, '--apply']);
+  assert.strictEqual(bApply.code, 0, bApply.err);
+  assert.strictEqual(fs.readFileSync(b.hooksFile, 'utf8'), elsewhere);
+  assert.ok(bApply.out.includes(`note: ${b.hooksFile} still has orc-guard; run ${removeCmd(b.home)} to remove it`), bApply.out);
+  assert.doesNotMatch(bApply.out, /removed orc-guard/);
+
+  // A guard.mjs edited since install is kept by uninstall, so the orc-guard that runs it stays, and is named.
+  const k = await setup((home) => JSON.stringify({ 'orc-guard': entry(guardCommand(home)) }, null, 2));
+  const kBefore = fs.readFileSync(k.hooksFile, 'utf8');
+  fs.appendFileSync(k.guard, '\n// edited by the owner\n');
+  const kApply = await run(['uninstall', '--tool', 'antigravity', '--home', k.home, '--apply']);
+  assert.strictEqual(kApply.code, 0, kApply.err);
+  assert.ok(fs.existsSync(k.guard), 'the edited guard is kept');
+  assert.strictEqual(fs.readFileSync(k.hooksFile, 'utf8'), kBefore);
+  assert.ok(kApply.out.includes(`note: ${k.hooksFile} still has orc-guard; run ${removeCmd(k.home)} to remove it`), kApply.out);
+  assert.doesNotMatch(kApply.out, /removed orc-guard/);
+
+  // An unreadable hooks.json: a WARN naming the file and the command; the uninstall still completes.
+  const c = await setup('{ not json');
+  const cApply = await run(['uninstall', '--tool', 'antigravity', '--home', c.home, '--apply']);
+  assert.strictEqual(cApply.code, 0, cApply.err);
+  assert.match(cApply.err, new RegExp(`^WARN cannot read ${esc(c.hooksFile)} \\(not valid JSON: .+\\); if it still has orc-guard, fix the file and run ${esc(removeCmd(c.home))}$`));
+  assert.ok(!fs.existsSync(c.guard), 'the uninstall went on');
+  assert.match(cApply.out, /removed manifest: /);
+  assert.strictEqual(fs.readFileSync(c.hooksFile, 'utf8'), '{ not json');
+  // The same WARN when there is no manifest to uninstall.
+  const none = await run(['uninstall', '--tool', 'antigravity', '--home', c.home]);
+  assert.strictEqual(none.code, 1);
+  assert.match(none.err, /^WARN cannot read .*hooks\.json \(not valid JSON: [^\n]+\n.*no install manifest at /s);
+
+  // No hooks.json: nothing about orc-guard.
+  const d = await setup(undefined);
+  const dApply = await run(['uninstall', '--tool', 'antigravity', '--home', d.home, '--apply']);
+  assert.strictEqual(dApply.code, 0, dApply.err);
+  assert.strictEqual(dApply.err, '');
+  assert.doesNotMatch(dApply.out, /orc-guard/);
+  assert.ok(!fs.existsSync(d.hooksFile));
 });
 
 test('install --board adds the Board line; without it a warning', async () => {

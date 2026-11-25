@@ -7,6 +7,6 @@ description: Set up or refresh a repo's coding standards (STANDARDS.md at the pr
 
 # Repo standards
 
-1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `~/.orc/config.json`, else ask the user. Call it CHECKOUT and confirm `CHECKOUT/orchestration/standards.md` exists there; if it does not, stop and say so.
+1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `config.json` (under `ORC_DATA_DIR` when set, else under `~/.orc/`), else ask the user. Call it CHECKOUT and confirm `CHECKOUT/orchestration/standards.md` exists there; if it does not, stop and say so.
 2. Read `CHECKOUT/orchestration/standards.md` and follow it.
 3. On Antigravity this skill is also the slash command `/repo-standards`. Dispatch each roster agent with `invoke_subagent` and its roster name, as the tool notes' Dispatch line says.

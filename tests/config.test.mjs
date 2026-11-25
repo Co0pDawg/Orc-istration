@@ -1095,7 +1095,7 @@ test('doctor warns about a hand-copied skill or command from before generation; 
   fs.writeFileSync(cmd, '# my own start\n');
   const dir = tempDir('stub');
   const data = dataDir({ version: 1, activeTools: ['claude-code'], binaries: { 'claude-code': stub(dir) } });
-  const warn = (f) => `WARN claude-code skills: ${f} is a hand copy from before install generated it, so install keeps it; delete it and run install --tool claude-code --apply to get the generated one`;
+  const warn = (f) => `WARN claude-code skills: ${f} is not orc's generated file, so install keeps it; if it is an old copy of orc's, delete it and run install --tool claude-code --apply to get the generated one`;
   const before = await run(['doctor', '--home', home], data);
   assert.equal(before.code, 0, before.out);
   for (const f of [skill, cmd]) assert.ok(before.out.includes(warn(f)), before.out);
@@ -1107,6 +1107,40 @@ test('doctor warns about a hand-copied skill or command from before generation; 
   fs.rmSync(cmd);
   assert.equal((await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board'], data)).code, 0);
   assert.doesNotMatch((await run(['doctor', '--home', home], data)).out, /WARN claude-code skills:/);
+});
+
+test('doctor skills check: only where Claude Code is active or installed, and on a sprint kit only at its procedures', async () => {
+  const skills = (out) => out.split('\n').filter((l) => l.startsWith('WARN claude-code skills:'));
+  const unrelated = (home) => {
+    const f = path.join(home, '.claude', 'commands', 'start.md');
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, '# my own start command, not orc\n');
+    return f;
+  };
+  const noClaude = dataDir({ version: 1, activeTools: ['antigravity'], binaries: { antigravity: stub(tempDir('stub')) } });
+  // No manifest and Claude Code not active (or no config at all): an unrelated commands/start.md draws no WARN.
+  const bare = tempDir('doc-skills-bare');
+  unrelated(bare);
+  assert.deepStrictEqual(skills((await run(['doctor', '--home', bare], noClaude)).out), []);
+  assert.deepStrictEqual(skills((await run(['doctor', '--home', bare], dataDir())).out), []);
+  // A full install's manifest is enough, Claude Code active or not.
+  const full = tempDir('doc-skills-full');
+  const kept = unrelated(full);
+  assert.equal((await run(['install', '--tool', 'claude-code', '--home', full, '--apply', '--no-board'], dataDir())).code, 0);
+  assert.deepStrictEqual(skills((await run(['doctor', '--home', full], noClaude)).out), [`WARN claude-code skills: ${kept} is not orc's generated file, so install keeps it; if it is an old copy of orc's, delete it and run install --tool claude-code --apply to get the generated one`]);
+  // A sprint kit: start is not one of its procedures, so it draws no WARN; an unrecorded copy of its sprint skill does.
+  const kit = tempDir('doc-skills-kit');
+  unrelated(kit);
+  const installed = await run(['install', '--tool', 'claude-code', '--sprint-kit', '--home', kit, '--apply'], dataDir());
+  assert.equal(installed.code, 0, installed.err);
+  assert.deepStrictEqual(skills((await run(['doctor', '--home', kit], noClaude)).out), []);
+  const manifestFile = path.join(kit, '.claude', '.orc-manifest.claude-code.json');
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+  delete manifest.files['.claude/skills/sprint/SKILL.md'];
+  fs.writeFileSync(manifestFile, JSON.stringify(manifest, null, 2));
+  const sprint = path.join(kit, '.claude', 'skills', 'sprint', 'SKILL.md');
+  fs.writeFileSync(sprint, '---\nname: sprint\ndescription: old\n---\n\n# Sprint\n');
+  assert.deepStrictEqual(skills((await run(['doctor', '--home', kit], noClaude)).out), [`WARN claude-code skills: ${sprint} is not orc's generated file, so install keeps it; if it is an old copy of orc's, delete it and run install --tool claude-code --apply to get the generated one`]);
 });
 
 // runDoctor with the real dependencies and `extra` added to the environment it is given (process.env is untouched).
@@ -1629,4 +1663,9 @@ test('doctor checks antigravity hooks.json: missing file, invalid JSON, missing 
   // A second group on another tool does not hide the run_command one.
   const two = guardEntry((e) => ({ PreToolUse: [{ ...e.PreToolUse[0], matcher: 'view_file', hooks: [{ type: 'command', command: 'node "/elsewhere/other.mjs"' }] }, e.PreToolUse[0]] }));
   assert.strictEqual(await doctorWith(two), 'OK antigravity hooks: orc-guard wired');
+  // A matcher that is not a valid regex counts only when it is run_command itself.
+  assert.strictEqual(await doctorWith(guardEntry(group('run_command['))), `WARN antigravity hooks: orc-guard in ${hooksFile} does not run on run_command (PreToolUse matcher "run_command["); run node tools/orc.mjs hooks --tool antigravity --home ${home} --apply`, 'an invalid regex');
+  // A hook on run_command whose command names no script.
+  const noScript = guardEntry((e) => ({ PreToolUse: [{ ...e.PreToolUse[0], hooks: [{ type: 'command', command: 'echo guard' }] }] }));
+  assert.strictEqual(await doctorWith(noScript), `WARN antigravity hooks: orc-guard in ${hooksFile} does not name a guard script; run node tools/orc.mjs hooks --tool antigravity --home ${home} --apply`);
 });

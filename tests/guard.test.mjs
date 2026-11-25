@@ -561,3 +561,16 @@ test('guard.mjs: under ORC_HEADLESS=1 an Antigravity ask is refused; a Claude Co
   const commit = JSON.stringify({ hookEventName: 'PreToolUse', cwd: R.wt, toolCall: { id: 't2', name: 'run_command', args: { CommandLine: 'git status' } } });
   assert.strictEqual(runGuard(commit, { ORC_HEADLESS: '1' }, () => {}), '');
 });
+
+test('guard.mjs: ~ is USERPROFILE on Windows and HOME elsewhere, when the two differ', () => {
+  // R.root holds the repo on main; the other home holds no repo, so following it would find no branch and allow.
+  const otherHome = fs.mkdtempSync(path.join(os.tmpdir(), 'orc-guard-otherhome-'));
+  const env = process.platform === 'win32' ? { USERPROFILE: R.root, HOME: otherHome } : { HOME: R.root, USERPROFILE: otherHome };
+  for (const cmd of ['cd ~/repo && git commit -m x', 'git -C ~/repo commit -m x']) {
+    const out = runGuard(JSON.stringify({ hook_event_name: 'PreToolUse', cwd: R.wt, tool_name: 'Bash', tool_input: { command: cmd } }), env, () => {});
+    assert.notStrictEqual(out, '', `${cmd}: expected a deny`);
+    assert.strictEqual(JSON.parse(out).hookSpecificOutput.permissionDecision, 'deny', cmd);
+    assert.match(JSON.parse(out).hookSpecificOutput.permissionDecisionReason, /commit on main/, cmd);
+  }
+  fs.rmSync(otherHome, { recursive: true, force: true });
+});

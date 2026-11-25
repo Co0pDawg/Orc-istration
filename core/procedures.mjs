@@ -9,9 +9,11 @@
 // heading in that file), argumentHint (when it takes arguments), extras [{path, first?, about?}] (other checkout files
 // it reads: `first` ones are read before the source, the others are named with what they are for).
 
-// The one sentence every generated wrapper, both adapters' notes and the neutral procedures use to find the checkout.
+// The one sentence every generated wrapper, both adapters' notes and the neutral procedures that find the checkout
+// themselves (orchestration/standards.md, brief.md and wrap-up.md, review/PROCEDURE.md) use; tests/orc.test.mjs
+// checks each copy.
 export const checkoutLookup = (file) =>
-  `Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else \`setupCheckout\` in \`~/.orc/config.json\`, else ask the user. Call it CHECKOUT and confirm \`${file}\` exists there; if it does not, stop and say so.`;
+  `Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else \`setupCheckout\` in \`config.json\` (under \`ORC_DATA_DIR\` when set, else under \`~/.orc/\`), else ask the user. Call it CHECKOUT and confirm \`${file}\` exists there; if it does not, stop and say so.`;
 
 const WORKFLOW_README = { path: 'workflows/README.md', first: true };
 

@@ -22,7 +22,7 @@ import { listBenchCases, runBench, loadBenchResults, benchReport, BENCH_USAGE } 
 import { runQueue, QUEUE_USAGE } from './lib/queue.mjs';
 import { capture, loadRuns, metricsReport, repoTop, DEFAULT_PRICES } from './lib/metrics.mjs';
 import { dispatchPlan, runDispatch, formatCommand, argvProblem, binEnv, unavailable } from './lib/dispatch.mjs';
-import { mergeHooks, formatLike, readSettings, writeSettings, ANTIGRAVITY_GUARD_KEY, antigravityGuardPath, setAntigravityGuard, removeAntigravityGuard } from './lib/hooks.mjs';
+import { mergeHooks, formatLike, readSettings, writeSettings, ANTIGRAVITY_GUARD_KEY, antigravityGuardPath, antigravityGuardScript, setAntigravityGuard, removeAntigravityGuard } from './lib/hooks.mjs';
 import { KIT_HOOK_SCRIPTS, KIT_PROCEDURES, KIT_NOTES, KNOWN_STACKS, presetRules, detectStacks, kitHookExample, planKitSettings, removeKitSettings, kitRecordProblem, guardStatus } from './lib/sprintkit.mjs';
 import { decodeText, readText } from './lib/text.mjs';
 import { USAGE, globalHelp, commandHelp } from './lib/help.mjs';
@@ -357,6 +357,21 @@ const samePath = (a, b) => {
   const fold = ['win32', 'darwin'].includes(process.platform) ? (p) => path.resolve(p).toLowerCase() : (p) => path.resolve(p);
   return fold(a) === fold(b);
 };
+// A hooks.json (read with readSettings) that orc would re-indent on write: the WARN line, or null.
+const layoutWarning = (target, { original, settings }) =>
+  original !== null && formatLike(original, settings) !== original
+    ? `WARN ${target} is not in plain indented JSON layout; writing it re-indents the existing content (values and order unchanged)`
+    : null;
+
+// Removes only orc-guard from a read Antigravity hooks.json (`hooks --remove`, and uninstall when it deletes the guard
+// script): every other top-level key untouched in value and order, the BOM, indent and line ending kept, the old file
+// backed up first. Returns the backup path.
+function writeGuardRemoval(target, { original, bom, settings }, when) {
+  const backup = backupPath(target, when);
+  writeSettings(target, bom + formatLike(original, removeAntigravityGuard(settings).merged), backup);
+  return backup;
+}
+
 const KIT_NEXT = `start a fresh Claude Code session and check that /sprint and the roster agents are listed; then ask for a sprint (${SETUP}/docs/interview-machine.md).`;
 const KIT_RESTORABLE = 'replace (hand-written; backed up, uninstall restores it)';
 
@@ -605,6 +620,14 @@ export function isoNow(d = new Date()) {
   const zone = `${off < 0 ? '-' : '+'}${p(Math.trunc(off / 60))}:${p(off % 60)}`;
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}${zone}`;
 }
+
+// `--timeout` for poll and dispatch: whole seconds from 1 to 86400; 0 when not given, NaN when invalid.
+const parseTimeout = (value) => {
+  if (value === undefined) return 0;
+  const n = /^\d+$/.test(value) ? Number(value) : NaN;
+  return n >= 1 && n <= 86400 ? n : NaN;
+};
+const TIMEOUT_USAGE = (value) => `--timeout needs a whole number of seconds from 1 to 86400, got ${value}`;
 
 function stamp(d = new Date()) {
   const p = (n) => String(n).padStart(2, '0');
@@ -1112,7 +1135,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     // its uninstall would remove the whole earlier install. (The reverse cannot happen: a recorded kit stays a kit.)
     if (kit && early.manifest && early.manifest.options?.sprintKit !== true) {
       return fail(
-        `refused: ${early.file} records a full orc install, not a sprint kit; nothing written. The full install already has the roster agents, the sprint skill and the hook scripts (hooks --node --apply wires the guard). ` +
+        `refused: ${early.file} records a full orc install, not a sprint kit; nothing written. The full install already has the roster agents and the hook scripts (hooks --node --apply wires the guard); a full install made before skill generation gets the sprint skill by running install --tool claude-code --apply again (delete a hand-copied skills/sprint/SKILL.md first, or install keeps it). ` +
           `To switch to a sprint kit, run uninstall --tool claude-code --home <dir> --apply first.`,
       );
     }
@@ -1365,23 +1388,26 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         io.err(`WARN ${mismatch}`);
       }
     }
-    // Antigravity: orc-guard lives in hooks.json, which no manifest records, so it is named on every uninstall.
-    const agyGuardNote = () => {
-      if (adapter.id !== 'antigravity') return;
-      const hooksFile = path.join(home, '.gemini', 'config', 'hooks.json');
+    // Antigravity: orc-guard lives in hooks.json, which no manifest records. It is removed when this uninstall deletes
+    // the guard script it runs, and named otherwise; an unreadable hooks.json is a WARN and never blocks the uninstall.
+    const hooksFile = path.join(home, '.gemini', 'config', 'hooks.json');
+    const removeGuardCmd = `node tools/orc.mjs hooks --tool antigravity --home ${/\s/.test(home) ? `"${home}"` : home} --remove --apply`;
+    const readGuardHook = () => {
+      if (adapter.id !== 'antigravity' || !fs.existsSync(hooksFile)) return null;
       try {
-        if (fs.existsSync(hooksFile) && Object.hasOwn(readSettings(hooksFile).settings, ANTIGRAVITY_GUARD_KEY)) {
-          const homeArg = /\s/.test(home) ? `"${home}"` : home;
-          io.out(`note: ${hooksFile} still has ${ANTIGRAVITY_GUARD_KEY}; run node tools/orc.mjs hooks --tool antigravity --home ${homeArg} --remove --apply to remove it`);
-        }
-      } catch {
-        // Unreadable hooks.json never blocks uninstalling the manifest files.
+        const read = readSettings(hooksFile);
+        return Object.hasOwn(read.settings, ANTIGRAVITY_GUARD_KEY) ? read : null;
+      } catch (e) {
+        const why = e instanceof SyntaxError ? `not valid JSON: ${e.message}` : e instanceof Error ? e.message : String(e);
+        io.err(`WARN cannot read ${hooksFile} (${why}); if it still has ${ANTIGRAVITY_GUARD_KEY}, fix the file and run ${removeGuardCmd}`);
+        return null;
       }
     };
+    const guardNote = () => io.out(`note: ${hooksFile} still has ${ANTIGRAVITY_GUARD_KEY}; run ${removeGuardCmd} to remove it`);
     const { manifest, file, error } = loadManifest(home, adapter);
     if (error) return fail(error);
     if (!manifest) {
-      agyGuardNote();
+      if (readGuardHook()) guardNote();
       return fail(`no install manifest at ${file}: remove ${adapter.id}'s files by hand`);
     }
     const when = stamp(io.now ? io.now() : new Date());
@@ -1539,7 +1565,29 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         io.out(`kept manifest listing ${Object.keys(kept).length} kept file(s): ${file}`);
       } else io.out(`removed manifest: ${file}`);
     } else io.out(`dry run for ${adapter.id}; add --apply to delete`);
-    agyGuardNote();
+    const guardHook = readGuardHook();
+    if (guardHook) {
+      // Only an orc-guard that runs the guard script deleted above goes: it would run a missing file from now on.
+      const guardRel = `${root}/tools/guard.mjs`;
+      const script = antigravityGuardScript(guardHook.settings[ANTIGRAVITY_GUARD_KEY]).script;
+      const scriptPath = !script ? null : /^~[\\/]/.test(script) ? path.join(home, script.slice(2)) : path.resolve(path.dirname(hooksFile), script);
+      const unsafe = escapes(home, root, hooksFile);
+      if (!gone.has(guardRel) || !scriptPath || !samePath(scriptPath, safeRel(home, guardRel, root)) || unsafe) guardNote();
+      else {
+        const layout = layoutWarning(hooksFile, guardHook);
+        if (layout) io.err(layout);
+        if (!opt.apply) io.out(`would remove ${ANTIGRAVITY_GUARD_KEY} from ${hooksFile} (it runs ${script}, which this uninstall deletes; other hooks are kept, with a backup)`);
+        else {
+          try {
+            const backup = writeGuardRemoval(hooksFile, guardHook, when);
+            io.out(`backed up: ${backup}`);
+            io.out(`removed ${ANTIGRAVITY_GUARD_KEY} from ${hooksFile} (it ran ${script}, deleted above)`);
+          } catch (e) {
+            io.err(`WARN cannot remove ${ANTIGRAVITY_GUARD_KEY} from ${hooksFile} (${e instanceof Error ? e.message : String(e)}); run ${removeGuardCmd}`);
+          }
+        }
+      }
+    }
     return 0;
   }
 
@@ -1650,18 +1698,15 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     if (!polled?.length || opt._.length !== 1 || opt.every === undefined || opt.until === undefined) return fail(usage);
     const every = /^\d+$/.test(opt.every) ? Number(opt.every) : NaN;
     if (!(every >= 1 && every <= 3600)) return fail(`--every needs a whole number of seconds from 1 to 3600, got ${opt.every}`);
-    let timeoutSec = 0;
-    if (opt.timeout !== undefined) {
-      timeoutSec = /^\d+$/.test(opt.timeout) ? Number(opt.timeout) : NaN;
-      if (!(timeoutSec >= 1 && timeoutSec <= 86400)) return fail(`--timeout needs a whole number of seconds from 1 to 86400, got ${opt.timeout}`);
-    }
+    const timeoutSec = parseTimeout(opt.timeout);
+    if (Number.isNaN(timeoutSec)) return fail(TIMEOUT_USAGE(opt.timeout));
     let until;
     try {
       until = new RegExp(opt.until);
     } catch (e) {
       return fail(`--until is not a valid regular expression: ${e instanceof Error ? e.message : String(e)}`);
     }
-    const r = await pollUntil({ argv: polled, everyMs: every * 1000, until, timeoutMs: timeoutSec * 1000 });
+    const r = await pollUntil({ argv: polled, everyMs: every * 1000, until, timeoutMs: timeoutSec * 1000, log: io.err });
     if (r.out !== undefined) io.out(r.out);
     if (r.err) io.err(r.err);
     return r.code;
@@ -1801,6 +1846,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
           mode: opt.mode,
           version: opt.version,
           out: opt.out,
+          inClaudeCode: Boolean(process.env.CLAUDECODE),
         });
         if (captured.skipped) {
           io.out(captured.skipped);
@@ -1832,11 +1878,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
 
   if (cmd === 'dispatch') {
     if (!opt.role || !opt.brief) return fail('usage: dispatch [--tool <id> | --prefer <id>] --role <name> --brief <file> [--model <slug>] [--dry-run] [--timeout <seconds>] [--no-lint]');
-    let timeoutSec = 0;
-    if (opt.timeout !== undefined) {
-      timeoutSec = /^\d+$/.test(opt.timeout) ? Number(opt.timeout) : NaN;
-      if (!(timeoutSec >= 1 && timeoutSec <= 86400)) return fail(`--timeout needs a whole number of seconds from 1 to 86400, got ${opt.timeout}`);
-    }
+    const timeoutSec = parseTimeout(opt.timeout);
+    if (Number.isNaN(timeoutSec)) return fail(TIMEOUT_USAGE(opt.timeout));
     let plan;
     try {
       const role = knownRole(opt.role);
@@ -1916,28 +1959,26 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       const unsafe = escapes(home, '.gemini', target);
       if (unsafe) return fail(`hooks: ${unsafe}; nothing written`);
       try {
-        const { original, bom, settings } = readSettings(target);
+        const read = readSettings(target);
+        const { original, bom, settings } = read;
         // Antigravity's hooks.json is keyed by hook name: a Claude-style `{"hooks": {...}}` wrapper loads as one hook
         // named "hooks". It is not ours, so it is left alone.
         if (settings && typeof settings === 'object' && Object.hasOwn(settings, 'hooks')) {
           io.err(`WARN ${target} has a top-level key named "hooks", which Antigravity loads as a hook named "hooks" (a Claude Code-style wrapper?); orc leaves it alone`);
         }
         if (opt.remove) {
-          const { status, merged } = removeAntigravityGuard(settings);
-          if (status === 'absent') {
+          if (!Object.hasOwn(settings, ANTIGRAVITY_GUARD_KEY)) {
             io.out(`nothing to remove: ${ANTIGRAVITY_GUARD_KEY} is not in ${target}`);
             return 0;
           }
-          if (original !== null && formatLike(original, settings) !== original) {
-            io.err(`WARN ${target} is not in plain indented JSON layout; writing it re-indents the existing content (values and order unchanged)`);
-          }
+          const layout = layoutWarning(target, read);
+          if (layout) io.err(layout);
           if (!opt.apply) {
             io.out(`would remove ${ANTIGRAVITY_GUARD_KEY} from ${target}`);
             io.out(`dry run: would update ${target}; add --apply to write`);
             return 0;
           }
-          const backup = backupPath(target, stamp(io.now ? io.now() : new Date()));
-          writeSettings(target, bom + formatLike(original, merged), backup);
+          const backup = writeGuardRemoval(target, read, stamp(io.now ? io.now() : new Date()));
           io.out(`backed up: ${backup}`);
           io.out(`removed ${ANTIGRAVITY_GUARD_KEY} from ${target}`);
           io.out(`updated ${target}`);

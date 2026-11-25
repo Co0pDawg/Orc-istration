@@ -1030,6 +1030,20 @@ test('queue run uses binaries.claude-code from ~/.orc/config.json, and warns and
   assert.match(warn.err, /WARN .*config\.json: not valid JSON.*queue run goes on without its binaries/);
 });
 
+test('queue run --apply refuses a binaries.claude-code that does not exist, and starts nothing', () => {
+  const s = setup({ issues: [issue(1)] });
+  const data = tempDir('queue-orcdata-missing');
+  const configFile = path.join(data, 'config.json');
+  const gone = path.join(tempDir('queue-nobin'), 'claude.exe');
+  fs.writeFileSync(configFile, JSON.stringify({ version: 1, binaries: { 'claude-code': gone } }));
+  const r = queue(s, ['run', '--apply'], { extraEnv: { ORC_DATA_DIR: data, ORC_TOOL_BIN_CLAUDE_CODE: undefined, PATH: pathWithoutClaude } });
+  assert.strictEqual(r.code, 1);
+  assert.ok(r.err.includes(`cannot run claude-code: ${gone} (binaries.claude-code in ${configFile}) does not exist`), r.err);
+  assert.deepStrictEqual(r.claude, []);
+  assert.strictEqual(marker(s, 1), null);
+  assert.deepStrictEqual(localQueueBranches(s), []);
+});
+
 test('queue run reads ~/.orc/models.json (printing unknown-tool warnings) as dispatch does', () => {
   const s = setup({ issues: [issue(1)] });
   const data = tempDir('queue-shared-models');

@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { isolateHome } from './helpers.mjs';
+import { isolateHome, esc } from './helpers.mjs';
 import { main, isoNow } from '../tools/orc.mjs';
 import { score, tierOf, riskPaths } from '../tools/lib/prsize.mjs';
 import { textCheck } from '../tools/lib/textcheck.mjs';
@@ -131,6 +131,29 @@ test('pr-size on a real repo: exclusions, binary, risk lines, an empty diff, a m
     assert.strictEqual(r2.err, `pr-size: ${where} is not a git repository`);
     assert.strictEqual(r2.out, '');
   }
+  // Any other rev-parse failure shows git's own message, not "is not a git repository".
+  const saved = process.env.GIT_CONFIG_PARAMETERS;
+  process.env.GIT_CONFIG_PARAMETERS = "'bogus";
+  try {
+    const broken = await run(['pr-size', '--repo-dir', dir, '--base', 'main', '--head', 'feat']);
+    assert.strictEqual(broken.code, 1);
+    assert.match(broken.err, new RegExp(`^pr-size: git rev-parse failed in ${esc(dir)}: .*bogus format in GIT_CONFIG_PARAMETERS`, 's'));
+    assert.doesNotMatch(broken.err, /is not a git repository/);
+  } finally {
+    if (saved === undefined) delete process.env.GIT_CONFIG_PARAMETERS;
+    else process.env.GIT_CONFIG_PARAMETERS = saved;
+  }
+  // No git on PATH: said so.
+  const pathKey = Object.keys(process.env).find((k) => k.toLowerCase() === 'path') ?? 'PATH';
+  const savedPath = process.env[pathKey];
+  process.env[pathKey] = tempDir('nogit');
+  try {
+    const nogit = await run(['pr-size', '--repo-dir', dir, '--base', 'main', '--head', 'feat']);
+    assert.strictEqual(nogit.code, 1);
+    assert.strictEqual(nogit.err, 'pr-size: cannot run git (git is not installed or not on PATH)');
+  } finally {
+    process.env[pathKey] = savedPath;
+  }
   assert.strictEqual((await run(['pr-size', '--repo-dir', dir, '--base', 'main'])).code, 1, '--head is required');
   assert.match((await run(['review-tier', '--head', 'x'])).err, /--head and --sensitive apply to pr-size only/);
 });
@@ -140,6 +163,18 @@ test('workflows/peer-review-score.sh is gone and peer-review.md runs pr-size', (
   const text = fs.readFileSync(path.join(REPO, 'workflows', 'peer-review.md'), 'utf8');
   assert.match(text, /tools\/orc\.mjs pr-size --base origin\/<target> --head origin\/<source>/);
   assert.doesNotMatch(text, /peer-review-score|Git Bash/);
+});
+
+test('workflows/fix-ci.md polls with a timeout and an --until that matches only the top-level status', () => {
+  const text = fs.readFileSync(path.join(REPO, 'workflows', 'fix-ci.md'), 'utf8');
+  const line = text.split(/\r?\n/).find((l) => l.includes('tools/orc.mjs poll '));
+  assert.ok(line, 'the poll line');
+  assert.match(line, / --timeout \d+ /);
+  const until = new RegExp(/ --until '([^']+)' /.exec(line)[1]);
+  // ConvertTo-Json output from PowerShell 7 (one space) and Windows PowerShell 5.1 (two spaces).
+  assert.ok(until.test('{\n  "id": 1,\n  "status": "completed",\n  "result": "failed"\n}'));
+  assert.ok(until.test('{\n    "id":  1,\n    "status":  "completed",\n    "result":  "failed"\n}'));
+  assert.ok(!until.test('{\n  "status": "inProgress",\n  "triggerInfo": { "ci.message": "status: completed" }\n}'), 'free text that says status: completed');
 });
 
 // ---------- text-check ----------
@@ -187,15 +222,17 @@ test('text-check limits: one stderr line naming what was exceeded', async () => 
   assert.match((await run(['pr-size', '--ascii'])).err, /--max-words, --max-bytes and --ascii apply to text-check only/);
 });
 
-test('text-check on a real pull request description: the newest merge commit body', async () => {
-  const body = spawnSync('git', ['log', '--merges', '-1', '--format=%B'], { cwd: REPO, encoding: 'utf8' }).stdout;
-  if (!body.trim()) return;
-  const file = path.join(tempDir('textcheck'), 'merge.md');
+test('text-check on a pull request description shaped like this repo\'s: counts, and the footer emoji line', async () => {
+  const body = 'Fix the poll timeout\n\nSummary:\n- poll prints a failed run\'s stderr\n- fix-ci passes --timeout\n\nBuilt with [Orc-istration](https://github.com/Co0pDawg/Orc-istration) \u{1F9CC}\n';
+  const file = path.join(tempDir('textcheck'), 'pr.md');
   fs.writeFileSync(file, body);
-  const r = await run(['text-check', file, '--ascii']);
-  const words = body.split(/[ \t\n\r\v\f]+/).filter(Boolean).length;
-  assert.strictEqual(r.out.split('\n')[0], `words=${words} bytes=${Buffer.byteLength(body)}`);
-  assert.strictEqual(r.code, /[^\t\n\x20-\x7e]/.test(body) ? 1 : 0);
+  const r = await run(['text-check', file, '--ascii', '--max-words', '20', '--max-bytes', '169']);
+  assert.strictEqual(r.out, 'words=20 bytes=169\nnon-ascii: 7: Built with [Orc-istration](https://github.com/Co0pDawg/Orc-istration) \u{1F9CC}');
+  assert.strictEqual(r.code, 1);
+  assert.strictEqual(r.err, 'text-check: 1 line(s) hold a character outside printable ASCII');
+  const plain = await run(['text-check', file, '--max-words', '20', '--max-bytes', '169']);
+  assert.strictEqual(plain.code, 0, plain.err);
+  assert.strictEqual(plain.out, 'words=20 bytes=169');
 });
 
 // ---------- poll ----------
@@ -242,6 +279,29 @@ test('poll gives up at the timeout with 124, the last output and the last failur
   assert.strictEqual(f.calls[3][1], 90000 - 60020);
 });
 
+test('poll passes a failed run\'s stderr to log once per distinct text, and never a passing run\'s', async () => {
+  const f = fakes([
+    { code: 1, stdout: '', stderr: 'ORC_ADO_ORG is not set\n' },
+    { code: 1, stdout: '', stderr: 'ORC_ADO_ORG is not set\n' },
+    { code: 0, stdout: 'queued', stderr: 'a warning on a passing run' },
+    { code: 2, stdout: '', stderr: 'HTTP 503' },
+    { code: 1, stdout: '', stderr: '' },
+    { code: 0, stdout: '"status": "completed"', stderr: '' },
+  ]);
+  const logged = [];
+  const r = await pollUntil({ argv: ['helper'], everyMs: 1000, until: /"status":\s*"completed"/, log: (l) => logged.push(l), ...f });
+  assert.strictEqual(r.code, 0);
+  assert.deepStrictEqual(logged, ['poll: a run exited 1; its stderr: ORC_ADO_ORG is not set', 'poll: a run exited 2; its stderr: HTTP 503']);
+});
+
+test('poll CLI: a helper that fails every run prints its stderr once while waiting', async () => {
+  const r = await run(['poll', '--every', '1', '--until', 'x', '--timeout', '2', '--', process.execPath, '-e', 'console.error("missing setting"); process.exit(1)']);
+  assert.strictEqual(r.code, 124);
+  assert.strictEqual(r.err.split('\n')[0], 'poll: a run exited 1; its stderr: missing setting');
+  assert.strictEqual(r.err.split('\n').filter((l) => l.startsWith('poll: a run exited')).length, 1, 'once per distinct text');
+  assert.match(r.err, /\nlast stderr: missing setting$/);
+});
+
 test('poll matches stdout only: the same text on stderr never ends the poll', async () => {
   const f = fakes([{ code: 0, stdout: 'queued\n', stderr: '"status": "completed"\n' }]);
   const r = await pollUntil({ argv: ['helper'], everyMs: 1000, until: /completed/, timeoutMs: 2500, ...f });
@@ -259,8 +319,9 @@ test('poll --timeout kills a command still running at the deadline', async () =>
   assert.strictEqual(r.code, 124, r.err);
   assert.match(r.err, /^poll: timed out after 1s; the last run was killed at the deadline; last output:\n\(no stdout\)$/);
   assert.ok(took < 15000, `returned after ${took} ms, well before the command would have ended`);
-  const pid = Number(fs.readFileSync(pidFile, 'utf8'));
-  let alive = true;
+  // On a loaded runner the command can be killed before it has written its pid: then no process is left to check.
+  const pid = fs.existsSync(pidFile) ? Number(fs.readFileSync(pidFile, 'utf8')) : 0;
+  let alive = pid > 0;
   for (const until = Date.now() + 5000; alive && Date.now() < until;) {
     try {
       process.kill(pid, 0);
@@ -316,4 +377,24 @@ test('now prints local time with its UTC offset, to the second', async () => {
   assert.strictEqual(s.slice(0, 19), '2026-11-25T09:05:07');
   assert.strictEqual(Date.parse(s), d.getTime() - d.getMilliseconds(), 'the offset is the local one');
   assert.strictEqual((await run(['now', 'extra'])).code, 1);
+});
+
+test('now: the offset sign and half hours, whatever zone this machine is in', () => {
+  // getTimezoneOffset is minutes behind UTC: 300 is UTC-5, -330 is UTC+5:30.
+  class Zoned extends Date {
+    constructor(offset) {
+      super(2026, 0, 2, 3, 4, 5);
+      this.offset = offset;
+    }
+    getTimezoneOffset() {
+      return this.offset;
+    }
+  }
+  const zone = (offset) => isoNow(new Zoned(offset)).slice(19);
+  assert.strictEqual(zone(300), '-05:00');
+  assert.strictEqual(zone(-60), '+01:00');
+  assert.strictEqual(zone(-330), '+05:30');
+  assert.strictEqual(zone(570), '-09:30');
+  assert.strictEqual(zone(0), '+00:00');
+  assert.strictEqual(isoNow(new Zoned(-330)).slice(0, 19), '2026-01-02T03:04:05');
 });

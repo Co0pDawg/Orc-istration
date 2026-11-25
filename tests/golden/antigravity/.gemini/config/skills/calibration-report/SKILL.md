@@ -7,6 +7,6 @@ description: Aggregate review run-log verdicts and escaped defects into per-lane
 
 # Calibration Report
 
-1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `~/.orc/config.json`, else ask the user. Call it CHECKOUT and confirm `CHECKOUT/review/calibration.md` exists there; if it does not, stop and say so.
+1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `config.json` (under `ORC_DATA_DIR` when set, else under `~/.orc/`), else ask the user. Call it CHECKOUT and confirm `CHECKOUT/review/calibration.md` exists there; if it does not, stop and say so.
 2. Read `CHECKOUT/review/calibration.md` and follow its "Calibration report" section with the arguments the user gave (`[lane to focus on, e.g. code-reviewer]`).
 3. On Antigravity this skill is also the slash command `/calibration-report`, and the user's request after the command name gives its arguments.

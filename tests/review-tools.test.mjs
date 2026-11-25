@@ -612,10 +612,12 @@ test('metrics capture fails by name on a missing transcript, run log, workflow o
   assert.equal((await run(['metrics', 'nope'])).code, 1);
 });
 
-test('metrics capture outside Claude Code: no session, no transcript and no CLAUDE_CODE_SESSION_ID is a clean skip', async (t) => {
-  // This may run inside Claude Code: its session id is removed, and the home that holds transcripts is a scratch one.
-  const saved = Object.fromEntries(['CLAUDE_CODE_SESSION_ID', 'HOME', 'USERPROFILE'].map((k) => [k, process.env[k]]));
+test('metrics capture outside Claude Code: no session, no transcript, no CLAUDE_CODE_SESSION_ID and no CLAUDECODE is a clean skip', async (t) => {
+  // This may run inside Claude Code: its session id and marker are removed, and the home that holds transcripts is a
+  // scratch one.
+  const saved = Object.fromEntries(['CLAUDE_CODE_SESSION_ID', 'CLAUDECODE', 'HOME', 'USERPROFILE'].map((k) => [k, process.env[k]]));
   delete process.env.CLAUDE_CODE_SESSION_ID;
+  delete process.env.CLAUDECODE;
   process.env.HOME = process.env.USERPROFILE = tempDir('metrics-home');
   t.after(() => {
     for (const [k, v] of Object.entries(saved)) {
@@ -650,6 +652,13 @@ test('metrics capture outside Claude Code: no session, no transcript and no CLAU
   const missing = await run(['metrics', 'capture', '--workflow', 'pre-pr-review', '--transcript', path.join(out, 'none.jsonl')]);
   assert.strictEqual(missing.code, 1);
   assert.match(missing.err, /metrics: transcript not found/);
+  // Inside Claude Code (CLAUDECODE=1) with no session id, it is an error as before, not a skip.
+  process.env.CLAUDECODE = '1';
+  const inside = await run(['metrics', 'capture', '--workflow', 'pre-pr-review', '--out', out]);
+  assert.strictEqual(inside.code, 1);
+  assert.strictEqual(inside.out, '');
+  assert.match(inside.err, /^metrics: no session id\. Run inside Claude Code \(CLAUDE_CODE_SESSION_ID\) or pass --session \/ --transcript\.$/);
+  delete process.env.CLAUDECODE;
   process.env.CLAUDE_CODE_SESSION_ID = 'no-such-session';
   assert.strictEqual((await run(['metrics', 'capture', '--workflow', 'pre-pr-review', '--out', out])).code, 1, 'a session from the environment is looked up');
   assert.deepStrictEqual(fs.readdirSync(out), []);

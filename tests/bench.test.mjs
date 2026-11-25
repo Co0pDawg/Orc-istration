@@ -605,6 +605,18 @@ test('bench run uses binaries.claude-code from ~/.orc/config.json, and warns and
   assert.match(warn.err, /WARN .*config\.json: not valid JSON.*bench run goes on without its binaries/);
 });
 
+test('bench run refuses a binaries.claude-code that does not exist, and starts nothing', () => {
+  const data = tempDir('bench-orcdata-missing');
+  const configFile = path.join(data, 'config.json');
+  const gone = path.join(tempDir('bench-nobin'), 'claude.exe');
+  fs.writeFileSync(configFile, JSON.stringify({ version: 1, binaries: { 'claude-code': gone } }));
+  const r = bench(['run', '--case', 'csv-quoted-fields'], { ORC_DATA_DIR: data, ORC_TOOL_BIN_CLAUDE_CODE: undefined, PATH: pathWithoutClaude });
+  assert.strictEqual(r.code, 1);
+  assert.ok(r.err.includes(`bench: cannot run claude-code: ${gone} (binaries.claude-code in ${configFile}) does not exist`), r.err);
+  assert.deepStrictEqual(r.calls, []);
+  assert.deepStrictEqual(r.runs, [], 'no run folder, no result');
+});
+
 test('bench run ignores ~/.orc/models.json so a benchmark depends on the checkout and flags alone', () => {
   const data = tempDir('bench-shared-models');
   fs.writeFileSync(path.join(data, 'models.json'), JSON.stringify({ 'claude-code': { high: { model: 'shared-override-model', effort: 'low' } } }));
