@@ -2,15 +2,10 @@
 name: builder
 description: Implements a change from a written spec and runs the tests. Needs marching orders with goal, exact files in scope, what may change, what to verify, and what not to do. Does not review its own work; a refuter does that.
 tools:
-  - list_dir
-  - find_by_name
-  - grep_search
-  - view_file
+  - read_file
   - run_command
-  - write_to_file
-  - replace_file_content
-  - multi_replace_file_content
-  - read_url_content
+  - write_file
+  - edit_file
   - search_web
 subagent: true
 mainAgent: true
