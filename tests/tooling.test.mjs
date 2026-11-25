@@ -466,7 +466,7 @@ test('dispatch codex: read-only sandbox only for scout and researcher, effort on
   }
 });
 
-test('killTree falls back to child.kill when the tree kill fails, and not when it succeeds', () => {
+test('killTree falls back to child.kill when the tree kill fails, and not when it succeeds', async () => {
   // A pid no process can have (not a multiple of 4 on Windows, above pid_max on Linux), so nothing real is killed:
   // taskkill (Windows) exits non-zero, process.kill(-pid) (POSIX) throws.
   const gone = 2147483647;
@@ -485,9 +485,16 @@ test('killTree falls back to child.kill when the tree kill fails, and not when i
     killTree({ pid: live.pid, kill: (sig) => liveCalls.push(sig) }, (s) => liveSaid.push(s));
     assert.deepEqual(liveCalls, []);
     assert.deepEqual(liveSaid, [], 'nothing to say when the tree kill works');
-    const until = Date.now() + 5000;
-    while (alive(live.pid) && Date.now() < until) spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},200)']);
-    assert.equal(alive(live.pid), false, 'the tree kill ended the process');
+    // Wait on the exit event: a synchronous poll never lets Node reap the child, and on POSIX a killed but unreaped
+    // child still answers signal 0.
+    const ended = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), 5000);
+      live.once('exit', () => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+    assert.equal(ended, true, 'the tree kill ended the process');
   } finally {
     if (alive(live.pid)) live.kill('SIGKILL');
   }
