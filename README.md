@@ -203,7 +203,7 @@ Every key and rule: [docs/cli.md](docs/cli.md#shared-state-orc).
 | `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
 | `core/procedures.mjs` | The procedure catalogue: the five routines, six workflows and three review procedures the adapters generate as Claude Code skills and commands and Antigravity skills; add a procedure here |
 | `adapters/claude-code/` | Claude-only static assets: `skills/orc-permissions/` (installed by `install --tool claude-code` and `sync`), plus `settings.example.json` (hooks, status line, plugins and `permissions.deny`) and `hooks.node.example.json` (`hooks --node`) |
-| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `doctor`, `bench`, `queue`, `hooks`, `standards`; review panel: `calibration`, `corpus`, `metrics`; `help` |
+| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `pr-size`, `text-check`, `poll`, `now`, `costlog`, `dispatch`, `doctor`, `bench`, `queue`, `hooks`, `standards`; review panel: `calibration`, `corpus`, `metrics`; `help` |
 | `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them; `check` compares against them), install, check, tooling, standards and review-panel tool tests, the `bench` tests (`tests/bench.test.mjs`, over the replay cases in `tests/fixtures/bench/`) and the `queue` tests (`tests/queue.test.mjs`), and the sprint tests (theme tokens and contrast, the theme picker, `make-story.mjs` and the story page) |
 | `CONTRIBUTING.md` | How to change this repo: sources vs generated files, the edit loop, traps |
 | `LICENSE` | MIT |
@@ -254,10 +254,14 @@ Every command is `node tools/orc.mjs <command>`. Options: `node tools/orc.mjs he
 | `models` | Turn `agy models` output into a `models.local.json` fragment (Flash slugs without `--family`, or `--family <name>`) |
 | `brief` | Print or lint a marching-orders brief |
 | `review-tier` | Say whether a branch diff is Light-eligible or Full (prompt files, including `core/`, `adapters/<tool>/`, `.agents/`, `review/` and `workflows/`, count as product) |
+| `pr-size` | Size a PR diff for `workflows/peer-review.md`: product, test and doc lines, the score, the size tier and one `risk:` line per sensitive path |
+| `text-check` | Count a file's words and bytes and list its non-ASCII lines, exiting 1 over a limit (`workflows/draft-pr.md`) |
+| `poll` | Run a command without a shell every interval until its output matches, as `workflows/fix-ci.md` waits on a CI run |
+| `now` | Print the current local time as ISO 8601 with its offset, the board's timestamp |
 | `costlog` | Draft a cost log from the board |
 | `calibration` | Per-lane precision and recall of the review panel from its run logs |
 | `corpus` | List the review regression corpus, or score a panel report against one case |
-| `metrics` | Capture or report per-run review metrics from Claude Code transcripts |
+| `metrics` | Capture or report per-run review metrics from Claude Code transcripts (outside Claude Code, `capture` prints `skipped` and exits 0) |
 | `dispatch` | Run one role headlessly at its tier (Antigravity, Claude Code and Codex), on `--tool` or routed by `~/.orc/config.json` with fallback (`--prefer` puts a tool first); `--model` overrides the model |
 | `doctor` | Check `~/.orc`, each active tool (install state; for a tool with a headless recipe also its binary, `--version`, sign-in and headless models), the routing table and the board, without writing (`--json`) |
 | `bench` | Replay benchmark: run the builder and refuter on fixed cases (Claude Code), score them with tokens and cost, and compare variants |
@@ -313,6 +317,7 @@ It is a seat belt, not a sandbox. Its command parser is a best-effort reading of
 - a write through a redirect, a script or another program (`bash do-release.sh`, a git library, an editor);
 - an aliased git (`git ci`, a shell alias or function, a renamed binary);
 - a command built at run time (`eval`, `Invoke-Expression`, variables holding the subcommand);
+- a git command inside another shell's command string: `bash -c '...'`, `sh -c '...'`, `& bash.exe -c ...` (as Antigravity agents on Windows often run commands): the guard does not look inside the string;
 - a push whose remote configuration maps a feature branch onto a protected one;
 - switching to a protected branch and committing in the same command (`git switch main && git commit`): the branch is read before the command runs;
 - a push destination built by command substitution (`git push origin $(git branch --show-current)`);
@@ -343,7 +348,7 @@ Earlier versions of this repo were designed to be checked out as `~/.claude` its
 
 ## Hand-copied skills and commands from before generation
 
-`install` and `sync` now generate the routine skills and the workflow commands that were once copied by hand (the catalogue is `core/procedures.mjs`). A copy you made by hand, with no manifest entry and no generated marker, is kept: `install` reports it as `kept (hand-copied skill ...)` or `kept (hand-copied command ...)`, `status` reports it as `differs`, and `doctor` warns about it, until you delete it (or pass `--force`, which replaces it after a backup). The fourteen paths under `~/.claude/` are `skills/board/SKILL.md`, `skills/brief/SKILL.md`, `skills/wrap-up/SKILL.md`, `skills/sprint/SKILL.md`, `skills/repo-standards/SKILL.md`, `commands/start.md`, `commands/grill.md`, `commands/draft-pr.md`, `commands/peer-review.md`, `commands/create.md`, `commands/fix-ci.md`, `commands/pre-pr-review.md`, `commands/review-verdict.md` and `commands/calibration-report.md`. Delete the hand copies, then run `install --tool claude-code --apply` (or `sync --apply`). The sprint assets moved from `skills/sprint/` to `orchestration/sprint/`; the generated `sprint` skill reads them from the checkout.
+`install` and `sync` now generate the routine skills and the workflow commands that were once copied by hand (the catalogue is `core/procedures.mjs`). A copy you made by hand, with no manifest entry and no generated marker, is kept: `install` reports it as `kept (hand-copied skill ...)` or `kept (hand-copied command ...)`, `status` reports it as `differs`, and `doctor` warns about it, until you delete it (or pass `--force`, which replaces it after a backup). The fourteen paths under `~/.claude/` are `skills/board/SKILL.md`, `skills/brief/SKILL.md`, `skills/wrap-up/SKILL.md`, `skills/sprint/SKILL.md`, `skills/repo-standards/SKILL.md`, `commands/start.md`, `commands/grill.md`, `commands/draft-pr.md`, `commands/peer-review.md`, `commands/create.md`, `commands/fix-ci.md`, `commands/pre-pr-review.md`, `commands/review-verdict.md` and `commands/calibration-report.md`. On a machine that already ran `install`, the three review commands (`pre-pr-review`, `review-verdict`, `calibration-report`) came from orc and are in its manifest, so `install` replaces them rather than keeping them. Delete the hand copies, then run `install --tool claude-code --apply` (or `sync --apply`). The sprint assets moved from `skills/sprint/` to `orchestration/sprint/`; the generated `sprint` skill reads them from the checkout, while an old hand-copied `sprint` skill points at a `skills/sprint/` folder that no longer exists until you delete it.
 
 ## Restore on a new machine
 

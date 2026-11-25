@@ -20,7 +20,7 @@ The result lists each detected archive id with its match count and example paths
 
 ## Step 2: ask the user (one ask)
 
-Ask a single several-picks question. In Claude Code, that is one `AskUserQuestion` with `multiSelect: true`. Other tools use their own question tool, or a plain numbered question. Each question needs 2 to 4 options, plus a free-text "Other".
+Ask a single several-picks question with the tool's question prompt (your tool notes say which, and how it takes several picks), or as a plain numbered question when the tool has none. Each question needs 2 to 4 options, plus a free-text "Other".
 
 If `STANDARDS.md` already exists (`standardsFile` is true), the same single ask holds three questions instead:
 

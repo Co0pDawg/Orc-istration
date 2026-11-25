@@ -62,13 +62,13 @@ A pipeline that triggers on push may already have started one: check `TRACKER bu
 
 ## Step 7 - Monitor
 
-Wait with **one** background poll that exits on a terminal status, not repeated foreground checks, e.g. in bash:
+Wait with **one** background poll that exits on a terminal status, not repeated foreground checks. `orc poll` runs the tracker helper every 300 seconds until the build's `status` is `completed`, then prints the build:
 
-```bash
-until s=$(<helper> build-get -Build <id> | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{const b=JSON.parse(d);console.log(b.status+' '+(b.result??''))})") && [[ "$s" == completed* ]]; do sleep 300; done; echo "$s"
+```
+node <checkout>/tools/orc.mjs poll --every 300 --until 'status\W+completed' -- <helper> build-get -Build <id>
 ```
 
-Continue only when it finishes. A transient helper failure inside the loop just means another iteration; if the poll itself dies, re-arm it. While waiting, do not start another fix for the same run.
+`<helper>` is the `Tracker helper` command, word by word. `poll` starts it without a shell, so the command names its interpreter, as in `pwsh -NoProfile -File <checkout>/tools/tracker/ado.ps1`. Read `result` from the printed build. Continue only when the poll finishes. A transient helper failure (a non-zero exit) just means another run; if the poll itself dies, re-arm it. While waiting, do not start another fix for the same run.
 
 ## Step 8 - Review and loop
 

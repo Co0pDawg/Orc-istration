@@ -9,4 +9,4 @@ description: Record confirmed / false-positive / wont-fix verdicts on findings f
 
 1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `~/.orc/config.json`, else ask the user. Call it CHECKOUT and confirm `CHECKOUT/review/calibration.md` exists there; if it does not, stop and say so.
 2. Read `CHECKOUT/review/calibration.md` and follow its "Later triage" section with the arguments the user gave (`[branch or run log file] [verdicts, e.g. 1 confirmed, 2 fp: covered by an end-to-end test]`).
-3. On Antigravity this skill is also the slash command `/review-verdict`, and its arguments are the text after it.
+3. On Antigravity this skill is also the slash command `/review-verdict`, and the user's request after the command name gives its arguments.

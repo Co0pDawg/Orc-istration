@@ -33,7 +33,7 @@ const procedureNotes = {
     notes: 'On Claude Code, the Full review tier is `/pre-pr-review`, and the orchestrator\'s context size for the cost log comes from the status line or `/context`.',
   },
   sprint: {
-    notes: 'On Claude Code, the refuter dispatch is `subagent_type: "refuter"` with `model: "sonnet"`.',
+    notes: 'On Claude Code, the refuter dispatch is `subagent_type: "refuter"` with `model: "sonnet"`. Before the clock starts, pre-approve the stack\'s read-only and build commands in `permissions.allow` of the user-level `~/.claude/settings.json`; `/fewer-permission-prompts` helps only in an existing project with past sessions, and only for read-only calls. `/fast` speeds up the orchestrator\'s own output.',
   },
   'repo-standards': {
     notes: [
@@ -46,7 +46,7 @@ const procedureNotes = {
   start: {
     tools: [...BASE, 'Agent', 'SendMessage', 'EnterPlanMode', 'ExitPlanMode'],
     notes:
-      'Run the grill and the review panel in this session by following `CHECKOUT/workflows/grill.md` and `CHECKOUT/review/PROCEDURE.md`; launch the panel\'s explorers in one message, each with `run_in_background: true`. Plan with EnterPlanMode and ExitPlanMode; dispatch every agent by its roster name as `subagent_type`; resume a builder with SendMessage; ' + ASK,
+      'Run the grill and the review panel in this session by following `CHECKOUT/workflows/grill.md` and `CHECKOUT/review/PROCEDURE.md`; launch the panel\'s explorers in one message, each with `run_in_background: true`. Plan with EnterPlanMode and ExitPlanMode; dispatch every agent by its roster name as `subagent_type`; resume a builder with SendMessage; publish a Step 9 UI mockup as a private artifact; ' + ASK,
   },
   grill: {
     tools: [...BASE, 'Agent'],

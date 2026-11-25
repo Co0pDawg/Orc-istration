@@ -615,6 +615,69 @@ test('generated skills and commands: thin wrappers that find the checkout and na
   for (const files of Object.values(wrappers)) for (const [, f] of files) assert.ok(f.content.length < 4000, f.path);
 });
 
+// Claude Code only tool names, and slash names that are not one of the fourteen procedures (a slash after a space,
+// backtick, quote or bracket; a path such as `CHECKOUT/workflows/` or `~/.orc/` is not one).
+function claudeOnlyTerms(text) {
+  const names = new Set(PROCEDURES.map((p) => p.name));
+  const hits = ['AskUserQuestion', 'subagent_type', 'SendMessage', 'TaskStop', 'ArtifactData', 'ToolSearch'].filter((t) => text.includes(t));
+  for (const m of text.matchAll(/(?:^|[\s`'"(\[])\/([a-z][a-z0-9-]*)/gm)) if (!names.has(m[1])) hits.push(`/${m[1]}`);
+  return hits;
+}
+
+test('generated Antigravity skills name no Claude Code only tool or slash command', async () => {
+  const built = (await buildGolden(REPO)).find((r) => r.adapter.id === 'antigravity').files;
+  const skills = built.filter((f) => /^\.gemini\/config\/skills\/[^/]+\/SKILL\.md$/.test(f.path));
+  assert.strictEqual(skills.length, PROCEDURES.length);
+  for (const f of skills) assert.deepStrictEqual(claudeOnlyTerms(f.content), [], f.path);
+  // The scanner itself: each term and a foreign slash name is caught; paths and the procedures' own names are not.
+  assert.deepStrictEqual(claudeOnlyTerms('Ask with `AskUserQuestion`, `subagent_type`, SendMessage, TaskStop, ArtifactData via ToolSearch.'), ['AskUserQuestion', 'subagent_type', 'SendMessage', 'TaskStop', 'ArtifactData', 'ToolSearch']);
+  assert.deepStrictEqual(claudeOnlyTerms('run `/fast`, then /context or (/fewer-permission-prompts)'), ['/fast', '/context', '/fewer-permission-prompts']);
+  assert.deepStrictEqual(claudeOnlyTerms('the slash command `/pre-pr-review`; read `CHECKOUT/workflows/start.md` and ~/.orc/config.json and `.gemini/config/skills/<name>/SKILL.md`'), []);
+  // The wrapper wording for arguments is the one nobody has to verify.
+  const start = skills.find((f) => f.path.includes('/start/'));
+  assert.match(start.content, /On Antigravity this skill is also the slash command `\/start`, and the user's request after the command name gives its arguments\./);
+});
+
+// The neutral sources name no Claude Code only tool: the specific lives in the tool notes or a generated wrapper. A
+// statement that a feature is Claude Code only may stay, as a [file, phrase, reason] entry here; none needs one today.
+test('workflows, review, orchestration and core/AGENTS.md name no Claude Code only tool', () => {
+  const allowed = [];
+  const terms = ['AskUserQuestion', 'SendMessage', 'TaskStop', 'ArtifactData', 'ToolSearch', 'subagent_type', 'model: "sonnet"'];
+  const files = spawnSync('git', ['ls-files', '--', 'workflows/*.md', 'review/*.md', 'orchestration/*.md', 'core/AGENTS.md'], { cwd: REPO, encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
+  assert.ok(['workflows/grill.md', 'review/lanes/code-reviewer.md', 'orchestration/sprint.md', 'core/AGENTS.md'].every((f) => files.includes(f)), 'every folder is scanned');
+  const hits = [];
+  for (const f of files) {
+    if (!fs.existsSync(path.join(REPO, f))) continue;
+    read(path.join(REPO, f)).split('\n').forEach((line, i) => {
+      for (const t of terms) if (line.includes(t) && !allowed.some(([file, phrase]) => file === f && line.includes(phrase))) hits.push(`${f}:${i + 1}: ${t}`);
+    });
+  }
+  assert.deepStrictEqual(hits, []);
+});
+
+// Workflows, review and orchestration procedures run in any shell: no bash fence and no POSIX text tool, except the
+// lines below, each with its reason.
+test('no tracked workflows, review or orchestration Markdown holds a bash fence or a POSIX text tool', () => {
+  const allowed = [
+    // Advice on reading economy (a search with context lines), not a step that runs; the reader picks its own search.
+    ['review/contract.md', /`grep -n -C3`/],
+    // Plain git against a docs repo given by path: git runs the same in any shell.
+    ['review/lanes/secondary-artifacts.md', /^git -C <docs repo> grep -n /],
+    ['review/lanes/secondary-artifacts.md', /^```bash$/],
+  ];
+  const files = spawnSync('git', ['ls-files', '--', 'workflows/*.md', 'review/*.md', 'orchestration/*.md'], { cwd: REPO, encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
+  assert.ok(files.includes('workflows/fix-ci.md') && files.includes('review/lanes/secondary-artifacts.md'), 'subfolders are scanned');
+  const hits = [];
+  for (const f of files) {
+    if (!fs.existsSync(path.join(REPO, f))) continue;
+    read(path.join(REPO, f)).split('\n').forEach((line, i) => {
+      const bad = /^\s*```(bash|sh|shell)\s*$/.test(line) || /\bawk\b|\bsed -|\bwc -|(?<!\bgit )\bgrep -/.test(line);
+      if (bad && !allowed.some(([file, re]) => file === f && re.test(line))) hits.push(`${f}:${i + 1}: ${line.trim().slice(0, 80)}`);
+    });
+  }
+  assert.deepStrictEqual(hits, []);
+});
+
 test('the checkout lookup is one sentence: wrappers, both adapters\' notes, the standards and review procedures', () => {
   const [before, after] = checkoutLookup('\0').split('\0');
   const once = new RegExp(`${esc(before)}[^\`]+${esc(after)}`);
@@ -768,7 +831,7 @@ test('install copies the hook scripts for claude-code; status reports them; a ha
   for (const s of scripts) assert.ok(fs.existsSync(path.join(tools, s)), s);
   // Tools without hookScripts wire no hooks and get no scripts.
   const codex = tempDir('hookscripts-codex');
-  assert.equal((await run(['install', '--tool', 'codex', '--home', codex, '--apply', '--no-board'])).code, 0);
+  assert.strictEqual((await run(['install', '--tool', 'codex', '--home', codex, '--apply', '--no-board'])).code, 0);
   assert.ok(!fs.existsSync(path.join(codex, '.codex', 'tools')));
 });
 

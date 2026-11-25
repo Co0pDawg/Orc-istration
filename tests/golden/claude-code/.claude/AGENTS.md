@@ -43,7 +43,7 @@ Reports are capped at 40 lines; anything longer goes to a scratch file and the r
 The board address for this machine is in the Board line of the tool notes below (added at install from `~/.orc/config.json`, so the public repo carries no personal link).
 - A `http://localhost:<port>` address means the local backend: write with `node <board repo>/local/board.js` (`batch` for the Start write, `append` for progress and events, `update` for fields; exit 2 is a version conflict).
 - A `claude.ai/artifact/...` address means the artifact backend, which only Claude Code can write (see its tool notes).
-- Board times come from the clock at the moment of the write (`date -Iseconds`), never an estimate; estimated times once ran 30 minutes ahead.
+- Board times come from the clock at the moment of the write, ISO 8601 with offset, never an estimate; estimated times once ran 30 minutes ahead.
 
 Every orchestrated task (any task that dispatches a builder, refuter or debugger) goes on the live board, so the user can watch progress from any device. Inline work and lone scout/researcher lookups stay off it.
 - **Start:** before the first dispatch, create the session doc and one card per task in a single batch.

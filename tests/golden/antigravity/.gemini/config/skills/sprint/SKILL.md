@@ -9,4 +9,4 @@ description: Timeboxed build mode (default 45 minutes) for a live AI-assisted bu
 
 1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `~/.orc/config.json`, else ask the user. Call it CHECKOUT and confirm `CHECKOUT/orchestration/sprint.md` exists there; if it does not, stop and say so.
 2. Read `CHECKOUT/orchestration/sprint.md` and follow it with the arguments the user gave (`[minutes]`). It also uses `CHECKOUT/orchestration/sprint/`: the story page template `story-template.html`, its filler `make-story.mjs` and the shared `theme/` to copy into the project; read them from the checkout, not from a copy.
-3. On Antigravity this skill is also the slash command `/sprint`, and its arguments are the text after it. Dispatch each roster agent with `invoke_subagent` and its roster name, as the tool notes' Dispatch line says.
+3. On Antigravity this skill is also the slash command `/sprint`, and the user's request after the command name gives its arguments. Dispatch each roster agent with `invoke_subagent` and its roster name, as the tool notes' Dispatch line says.

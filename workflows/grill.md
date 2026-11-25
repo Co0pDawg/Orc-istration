@@ -10,7 +10,7 @@ Interview the developer relentlessly until you reach a shared understanding of t
 
 Work the tree in **rounds**. The **frontier** is every decision whose prerequisites are already settled: the questions you can ask _now_ without guessing at answers you haven't heard yet. Ask the whole frontier in one round, then wait for the answers before the next round.
 
-Each round goes through the tool's question prompt (in Claude Code, `AskUserQuestion`), never only as prose:
+Each round goes through the tool's question prompt (see your tool notes), never only as prose:
 
 - At most 4 questions per call. A frontier larger than 4 takes consecutive calls in the same round.
 - Each question carries your recommended answer as its first option, labelled with "(Recommended)", plus the real alternatives. Word it so picking the first option accepts your recommendation.

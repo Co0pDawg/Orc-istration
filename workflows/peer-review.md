@@ -13,9 +13,9 @@ Review someone else's PR with effort scaled to its size and risk, fix what the r
 | **L** | up to 1500 | The review panel, every selected agent staged 3+3; one `refuter` verifies the issue and warning findings before they count. The panel's verifier (finding verification) decides each finding and its verdict is the one logged; the refuter only adds findings it shows were missed or under-rated, and never overturns a verifier verdict | `builder` and `refuter` loop |
 | **XL** | over 1500 | L, plus the `arch` lane forced, plus a live-app run of the PR's How to test in its own worktree (`Run the app`; with `none`, skip it and say so) | the L loop, plus a browser check of the fixed paths when the repo has UI tests (follow its test docs) |
 
-**Score** = product lines + a quarter of test and doc lines (that quarter capped at 1000). `peer-review-score.sh` computes it.
+**Score** = product lines + a quarter of test and doc lines (that quarter capped at 1000). `orc pr-size` computes it.
 
-**Risk bump:** each `risk:` line from the script raises the tier one step (XL stays XL). So does a change in any other extra-scrutiny area the repo's rulebook or review rules name; when they name tenant scoping, that includes any changed query that loads or changes tenant data by an id from the route, query string or form, so check the diff for it. `--tier` overrides both.
+**Risk bump:** each `risk:` line from `pr-size` raises the tier one step (XL stays XL). So does a change in any other extra-scrutiny area the repo's rulebook or review rules name; when they name tenant scoping, that includes any changed query that loads or changes tenant data by an id from the route, query string or form, so check the diff for it. `--tier` overrides both.
 
 **Lite mode** (`workflows/README.md`): L and XL run as M, and the review panel gets the `lite` token. A diff in an extra-scrutiny area keeps its tier.
 
@@ -26,7 +26,7 @@ Review someone else's PR with effort scaled to its size and risk, fix what the r
    1. `git fetch origin <source> <target>`.
    2. In a sibling folder of the main checkout: `git worktree add ../<repo>-pr<id> -b review/<id>-fix origin/<source>`.
    3. Try `git merge --no-commit --no-ff origin/<target>`. On conflicts, resolve them and commit the merge first; on a clean merge, `git merge --abort`.
-3. **Score.** From the main checkout (worktrees share refs, and the author's branch may predate any repo-local copy): `bash <checkout>/workflows/peer-review-score.sh origin/<target> origin/<source> '<regex>'`, where `<regex>` is the `Sensitive paths:` line of the repo's review rules (omit it when there is none). On Windows run it in Git Bash; from PowerShell, `bash` may resolve to WSL and fail. Apply the risk bump, then state the tier and reason in one line, e.g. `Tier L: score 521, no risk hits`.
+3. **Score.** From the main checkout (worktrees share refs, and the author's branch may predate any repo-local copy): `node <checkout>/tools/orc.mjs pr-size --base origin/<target> --head origin/<source> --sensitive '<regex>'`, where `<regex>` is the `Sensitive paths:` line of the repo's review rules, read as a JavaScript regular expression, case-insensitive (POSIX classes such as `[[:upper:]]` are not supported; omit `--sensitive` when there is none). It prints `product=<n> tests=<n> docs=<n> score=<n> size_tier=<S|M|L|XL>`, then one `risk: <path>` line per sensitive product path. Apply the risk bump, then state the tier and reason in one line, e.g. `Tier L: score 521, no risk hits`.
 4. **Review** at that tier. Every dispatch gets the PR intent from step 1.
 5. **Fix** every confirmed issue and warning, each with the test that proves it. Suggestions and nits follow the rulebook's nit rule. A finding that changes behavior the author chose deliberately is not fixed: it becomes a question in the comment.
 6. **Verify.**
