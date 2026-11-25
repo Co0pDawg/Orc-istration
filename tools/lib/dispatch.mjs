@@ -126,27 +126,39 @@ export function killTree(child, { platform = process.platform, runSync = spawnSy
 }
 
 // Streams the tool's output through; resolves to its exit code, or 124 after a timeout kill.
-export function runDispatch(plan, { timeoutSec, err = console.error } = {}) {
+export async function runDispatch(plan, { timeoutSec, err = console.error } = {}) {
+  return (await runTool(plan, { timeoutSec, err })).code;
+}
+
+// The spawn, timeout, kill-tree and signal handling behind runDispatch. With `capture`, stdout is collected and
+// returned instead of streamed; `cwd` sets the working folder; `label` prefixes the messages. Resolves to
+// {code, stdout, timedOut, signalled}: code is the exit code, 124 after a timeout kill, 128+signal after Ctrl-C or a
+// kill of orc, 127 when the tool cannot start.
+export function runTool(plan, { timeoutSec, err = console.error, capture = false, cwd, label = 'dispatch' } = {}) {
   return new Promise((resolve) => {
+    const chunks = [];
     const cannot = (e) => {
       const hint = plan.exe.shim && plan.exe.source === 'env' ? `: ${plan.exe.shim} is a .cmd/.bat shim, which cannot be started without a shell; set ${binEnv(plan.toolId)} to the real executable`
         : plan.exe.unusable ? `: ${plan.exe.unusable}; point it at the real executable`
         : e.code === 'ENOENT' ? `: ${plan.exe.command} is not installed or not on PATH; set ${binEnv(plan.toolId)} to its full path` : `: ${e.message}`;
-      err(`dispatch: cannot start ${plan.exe.command}${hint}`);
+      err(`${label}: cannot start ${plan.exe.command}${hint}`);
     };
+    const done = (code, extra = {}) => resolve({ code, stdout: Buffer.concat(chunks).toString('utf8'), timedOut: false, signalled: null, ...extra });
     let child;
     try {
       child = spawn(plan.exe.command, plan.argv, {
         shell: false,
         windowsHide: true,
         detached: process.platform !== 'win32',
-        stdio: [plan.stdin == null ? 'ignore' : 'pipe', 'inherit', 'inherit'],
+        ...(cwd ? { cwd } : {}),
+        stdio: [plan.stdin == null ? 'ignore' : 'pipe', capture ? 'pipe' : 'inherit', 'inherit'],
       });
     } catch (e) {
       cannot(e);
-      resolve(127);
+      done(127);
       return;
     }
+    if (capture) child.stdout.on('data', (c) => chunks.push(c));
     let timedOut = false;
     let signalled = null;
     // Ctrl-C or a kill of orc must not leave a detached agent running: kill the tree, then exit 128+signal.
@@ -155,7 +167,7 @@ export function runDispatch(plan, { timeoutSec, err = console.error } = {}) {
     const onSignal = (sig) => {
       if (signalled) return;
       signalled = sig;
-      err(`dispatch: ${sig} received; killing the process tree`);
+      err(`${label}: ${sig} received; killing the process tree`);
       killTree(child, { err });
     };
     for (const s of signals) process.on(s, onSignal);
@@ -163,7 +175,7 @@ export function runDispatch(plan, { timeoutSec, err = console.error } = {}) {
     const timer = timeoutSec
       ? setTimeout(() => {
           timedOut = true;
-          err(`dispatch: timed out after ${timeoutSec}s; killing the process tree`);
+          err(`${label}: timed out after ${timeoutSec}s; killing the process tree`);
           killTree(child, { err });
         }, timeoutSec * 1000)
       : null;
@@ -171,21 +183,21 @@ export function runDispatch(plan, { timeoutSec, err = console.error } = {}) {
       // After a timeout or signal kill began, an error is a failed kill, not a failed start. The process may have
       // survived, in which case `close` never comes, so resolve now with the timeout or signal code.
       if (timedOut || signalled) {
-        err(`dispatch: kill failed: ${e.message}`);
+        err(`${label}: kill failed: ${e.message}`);
         if (timer) clearTimeout(timer);
         unhook();
-        resolve(signalled ? CODES[signalled] : 124);
+        done(signalled ? CODES[signalled] : 124, { timedOut, signalled });
         return;
       }
       if (timer) clearTimeout(timer);
       unhook();
       cannot(e);
-      resolve(127);
+      done(127);
     });
     child.on('close', (code) => {
       if (timer) clearTimeout(timer);
       unhook();
-      resolve(signalled ? CODES[signalled] : timedOut ? 124 : (code ?? 1));
+      done(signalled ? CODES[signalled] : timedOut ? 124 : (code ?? 1), { timedOut, signalled });
     });
     if (plan.stdin != null) {
       child.stdin.on('error', () => {});

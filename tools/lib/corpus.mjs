@@ -79,6 +79,14 @@ export function parseExpected(text) {
 // findings. Every `file:line` or `file:a-b` on the bullet's line is a location.
 const FINDING_SECTIONS = /^###\s+(Must fix|Review before submitting|Suggestions)/i;
 
+// Every `file:line` or `file:a-b` in a piece of text (the path needs a file extension).
+export const locationsIn = (text) =>
+  [...text.matchAll(/([\w./\\-]+\.[\w]+):(\d+)(?:-(\d+))?/g)].map((x) => ({
+    file: normPath(x[1]),
+    from: Number(x[2]),
+    to: Number(x[3] ?? x[2]),
+  }));
+
 export function parseReport(text) {
   const findings = [];
   let inFindings = false;
@@ -89,12 +97,7 @@ export function parseReport(text) {
     }
     const m = /^[-*]\s+\[([^\]]+)\]\s*(.*)$/.exec(line);
     if (!inFindings || !m) continue;
-    const locations = [...m[2].matchAll(/([\w./\\-]+\.[\w]+):(\d+)(?:-(\d+))?/g)].map((x) => ({
-      file: normPath(x[1]),
-      from: Number(x[2]),
-      to: Number(x[3] ?? x[2]),
-    }));
-    findings.push({ lanes: m[1].split(/,\s*/).map((s) => s.trim()), text: m[2].trim(), locations });
+    findings.push({ lanes: m[1].split(/,\s*/).map((s) => s.trim()), text: m[2].trim(), locations: locationsIn(m[2]) });
   }
   return findings;
 }

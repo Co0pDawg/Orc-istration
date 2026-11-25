@@ -15,6 +15,7 @@ import { reviewTier } from './lib/reviewtier.mjs';
 import { costlog, readBoardExport } from './lib/costlog.mjs';
 import { calibrationReport, DEFAULT_MIN_PRECISION } from './lib/calibration.mjs';
 import { listCases, scoreReport } from './lib/corpus.mjs';
+import { listBenchCases, runBench, loadBenchResults, benchReport, BENCH_USAGE } from './lib/bench.mjs';
 import { capture, loadRuns, metricsReport, repoTop, DEFAULT_PRICES } from './lib/metrics.mjs';
 import { dispatchPlan, runDispatch, formatCommand, argvProblem, binEnv, unavailable } from './lib/dispatch.mjs';
 import { mergeHooks, formatLike, readSettings, writeSettings } from './lib/hooks.mjs';
@@ -51,8 +52,9 @@ export function loadRoles(repo) {
 // models.json, then (with `shared`) <orc home>/models.json, then models.local.json; the two over-layers only with
 // `local`. Only install, status, dispatch and doctor pass `shared`: build, check, sync and golden never read ~/.orc.
 // <orc home> is shared by every checkout, so a tool id there that this checkout does not know is skipped, with one
-// line through `warn`; models.json and models.local.json stay strict.
-export function loadModels(repo, { local = true, shared = false, env = process.env, warn = () => {} } = {}) {
+// line through `warn`; models.json and models.local.json stay strict. `extra` is one more override file in the
+// models.local.json shape (bench --models), layered last whatever `local` says.
+export function loadModels(repo, { local = true, shared = false, env = process.env, warn = () => {}, extra = null } = {}) {
   const tools = knownTools(repo);
   const models = JSON.parse(read(path.join(repo, 'models.json')));
   validateModels(models, tools, 'models.json');
@@ -88,6 +90,11 @@ export function loadModels(repo, { local = true, shared = false, env = process.e
   if (local && fs.existsSync(localFile)) {
     const over = JSON.parse(read(localFile));
     validateModels(over, tools, 'models.local.json');
+    layer(over);
+  }
+  if (extra) {
+    const over = JSON.parse(read(extra));
+    validateModels(over, tools, extra);
     layer(over);
   }
   return models;
@@ -467,15 +474,15 @@ function stamp(d = new Date()) {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices', 'stack', 'from', 'case', 'report', 'family', 'model', 'prefer'];
+const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices', 'stack', 'from', 'case', 'report', 'variant', 'models', 'budget-usd', 'runs', 'family', 'model', 'prefer'];
 
 // Value options that may repeat; each value may also be comma-separated.
 const LIST_OPTIONS = ['profile', 'stack'];
 
-// Value options that may repeat but are never comma-split (paths).
-const REPEAT_OPTIONS = ['from'];
+// Value options that may repeat but are never comma-split (paths, case ids).
+const REPEAT_OPTIONS = ['from', 'case'];
 
-const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print', 'json', 'sprint-kit', 'all'];
+const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print', 'json', 'sprint-kit', 'keep', 'keep-output', 'all'];
 
 // Accepts `--key value` and `--key=value`. An unknown option is an error, never a silent boolean: a mistyped
 // `--home=<dir>` once fell through to the real home directory.
@@ -1452,7 +1459,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       }
       if (sub === 'score' && opt._.length === 2) {
         if (!opt.case || !opt.report) return fail('corpus: score needs --case <id> and --report <file>');
-        const { text, missed } = scoreReport(root, opt.case, path.resolve(opt.report));
+        // --case may repeat (bench takes several); corpus score keeps the last one, as before.
+        const { text, missed } = scoreReport(root, opt.case.at(-1), path.resolve(opt.report));
         io.out(text.replace(/\n$/, ''));
         return missed ? 1 : 0;
       }
@@ -1460,6 +1468,36 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       return fail(e.message);
     }
     return fail('usage: corpus list | corpus score --case <id> --report <file>');
+  }
+
+  if (cmd === 'bench') {
+    const sub = opt._[1];
+    const root = path.join(repo, 'tests', 'fixtures', 'bench');
+    try {
+      if (sub === 'list' && opt._.length === 2) {
+        const warnings = [];
+        const cases = listBenchCases(root, warnings);
+        for (const w of warnings) io.err(`WARN ${w}`);
+        io.out(cases.map((c) => `${c.id}  ${c.kind || '?'}  ${c.title}`).join('\n'));
+        return 0;
+      }
+      if (sub === 'run' && opt._.length === 2) {
+        const toolId = opt.tool ?? 'claude-code';
+        const adapter = (await loadAdapters(repo)).find((a) => a.id === toolId);
+        if (toolId !== 'claude-code' || !adapter) return fail(`bench: no bench recipe for ${toolId} (bench runs Claude Code only)`);
+        const models = loadModels(repo, { local: false, extra: opt.models ? path.resolve(opt.models) : null });
+        return await runBench({ repo, root, adapter, roles: loadRoles(repo), models, opt, cwd: io.cwd ? io.cwd() : process.cwd() }, io);
+      }
+      if (sub === 'report' && opt._.length === 2) {
+        const dir = path.resolve(opt.dir ?? path.join(repoTop(process.cwd()) ?? process.cwd(), '.orc', 'bench'));
+        const { results, skipped } = loadBenchResults(dir);
+        emit(benchReport(results, skipped));
+        return 0;
+      }
+    } catch (e) {
+      return fail(e.message.startsWith('bench:') ? e.message : `bench: ${e.message}`);
+    }
+    return fail(BENCH_USAGE);
   }
 
   if (cmd === 'metrics') {
