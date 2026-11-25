@@ -1,6 +1,6 @@
 # Workflows
 
-Tool-neutral procedures for the work around the build loop. Each is a plain markdown procedure the orchestrator follows; in Claude Code a thin `commands/<name>.md` wrapper finds this checkout and runs it.
+Tool-neutral procedures for the work around the build loop. Each is a plain markdown procedure the orchestrator follows; in Claude Code a thin `adapters/claude-code/commands/<name>.md` wrapper (installed into `~/.claude/commands/`) finds this checkout and runs it.
 
 | Workflow | What it does |
 |---|---|

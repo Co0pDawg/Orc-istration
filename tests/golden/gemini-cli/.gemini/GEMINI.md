@@ -41,7 +41,7 @@ Reports are capped at 40 lines; anything longer goes to a scratch file and the r
 `node tools/orc.mjs brief new|lint` (setup checkout) prints this template and checks a brief.
 
 ## Orchestration Board
-The board address for this machine is in `board.local.md` beside the rulebook (untracked, so the public repo carries no personal link), or in the Board line of the tool notes below.
+The board address for this machine is in the Board line of the tool notes below (added at install from `~/.orc/config.json`, so the public repo carries no personal link).
 - A `http://localhost:<port>` address means the local backend: write with `node <board repo>/local/board.js` (`batch` for the Start write, `append` for progress and events, `update` for fields; exit 2 is a version conflict).
 - A `claude.ai/artifact/...` address means the artifact backend, which only Claude Code can write (see its tool notes).
 - Board times come from the clock at the moment of the write (`date -Iseconds`), never an estimate; estimated times once ran 30 minutes ahead.
@@ -121,7 +121,7 @@ Each tool's specifics (dispatch, model mapping, hooks, what it cannot do) are in
 - **Dispatch:** each agent is a tool named after it; start a prompt with `@name` to force one. Agents need `experimental.enableAgents` left on.
 - **Tiers:** Low and Mid run `gemini-3-flash-preview`, High runs `gemini-3-pro-preview` (`models.json`). A headless run is `gemini -p "<orders>" -m <model> -o json`.
 - **Hooks:** the `hooks` block in `~/.gemini/settings.json`.
-- **Board:** local backend only; `install --board <address> --board-repo <path>` adds this machine's Board line.
+- **Board:** local backend only; `install` adds this machine's Board line from `--board <address> --board-repo <path>`, else `board` in `~/.orc/config.json`.
 - **Shared `~/.gemini`:** Antigravity may load both this `GEMINI.md` and its own `AGENTS.md`, so two rulebook copies; `install` warns, whether that file is orc-generated or hand-written. Remove an orc-generated `~/.gemini/AGENTS.md` unless you also use Antigravity.
 - **Access:** needs a paid API key or an enterprise licence.
 - **Review panel:** no slash command here: follow `review/PROCEDURE.md` in the setup checkout, dispatching the `review-*` agents by name. `metrics capture` reads Claude Code transcripts only, so it is unsupported here.

@@ -378,17 +378,17 @@ for (const [label, runner, runnerAsync, skip] of RUNNERS) {
 
 test('both example files wire the guard on PreToolUse for Bash and PowerShell; settings denies secret reads', () => {
   for (const [file, pattern] of [
-    ['settings.example.json', /tools\\guard\.ps1"$/],
-    ['hooks.node.example.json', /tools\/guard\.mjs"$/],
+    ['adapters/claude-code/settings.example.json', /tools\\guard\.ps1"$/],
+    ['adapters/claude-code/hooks.node.example.json', /tools\/guard\.mjs"$/],
   ]) {
-    const groups = JSON.parse(fs.readFileSync(path.join(REPO, file), 'utf8')).hooks.PreToolUse.filter((g) => g.hooks.some((h) => pattern.test(h.command)));
+    const groups = JSON.parse(fs.readFileSync(path.join(REPO, ...file.split('/')), 'utf8')).hooks.PreToolUse.filter((g) => g.hooks.some((h) => pattern.test(h.command)));
     assert.equal(groups.length, 1, file);
     assert.equal(groups[0].matcher, 'Bash|PowerShell', file);
   }
   // The shipped PowerShell line runs the script under any execution policy, as the tests here do.
-  const ps = JSON.parse(fs.readFileSync(path.join(REPO, 'settings.example.json'), 'utf8')).hooks.PreToolUse.flatMap((g) => g.hooks).find((h) => /guard\.ps1/.test(h.command));
+  const ps = JSON.parse(fs.readFileSync(path.join(REPO, 'adapters', 'claude-code', 'settings.example.json'), 'utf8')).hooks.PreToolUse.flatMap((g) => g.hooks).find((h) => /guard\.ps1/.test(h.command));
   assert.match(ps.command, /^powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "/);
-  const example = JSON.parse(fs.readFileSync(path.join(REPO, 'settings.example.json'), 'utf8'));
+  const example = JSON.parse(fs.readFileSync(path.join(REPO, 'adapters', 'claude-code', 'settings.example.json'), 'utf8'));
   assert.deepEqual(example.permissions.deny, ['Read(.env)', 'Read(.env.*)', 'Read(**/.credentials.json)', 'Read(~/.claude/.credentials.json)']);
 });
 

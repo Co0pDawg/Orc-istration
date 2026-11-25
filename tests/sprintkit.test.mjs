@@ -54,7 +54,7 @@ function populatedHome({ guard = true } = {}) {
   const home = tempDir('kit-populated');
   const claude = path.join(home, '.claude');
   fs.mkdirSync(claude);
-  const settings = JSON.parse(fs.readFileSync(path.join(REPO, 'settings.example.json'), 'utf8'));
+  const settings = JSON.parse(fs.readFileSync(path.join(REPO, 'adapters', 'claude-code', 'settings.example.json'), 'utf8'));
   settings.permissions.allow = ['Read(./docs/**)', 'Bash(dotnet build *)'];
   const isGuard = (g) => g.hooks.some((h) => /guard\.ps1/.test(h.command));
   if (!guard) settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter((g) => !isGuard(g));
@@ -87,6 +87,7 @@ test('sprint kit: a home with no .claude gets the roster, the skill, the guard a
   const files = tree(path.join(home, '.claude'));
   for (const f of ['CLAUDE.md', 'AGENTS.md', 'agents/builder.md', 'agents/refuter.md', 'agents/scout.md', 'skills/sprint/SKILL.md', 'tools/guard.mjs', 'settings.json']) assert.ok(files.includes(f), f);
   assert.deepEqual(files.filter((f) => f.includes('board-reminder')), [], 'no board reminder on the machine');
+  assert.ok(!files.includes('commands/start.md') && !files.includes('skills/orc-permissions/SKILL.md'), 'sprint kit leaves out personal workflow commands and orc-permissions');
   assert.equal(fs.readFileSync(path.join(home, '.claude', 'skills', 'sprint', 'SKILL.md'), 'utf8'), fs.readFileSync(path.join(REPO, 'skills', 'sprint', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n'));
   const rulebook = fs.readFileSync(path.join(home, '.claude', 'CLAUDE.md'), 'utf8');
   for (const line of KIT_NOTES) assert.ok(rulebook.includes(`${line}\n`), line);
@@ -389,7 +390,7 @@ test('sprint kit: a plain install\'s rulebook is unchanged (the golden file plus
   assert.equal((await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board'])).code, 0);
   const installed = fs.readFileSync(path.join(home, '.claude', 'CLAUDE.md'), 'utf8');
   const golden = normalizeEol(fs.readFileSync(path.join(REPO, 'tests', 'golden', 'claude-code', '.claude', 'CLAUDE.md'), 'utf8'));
-  assert.match(installed, /@board\.local\.md/);
+  assert.doesNotMatch(installed, /@board\.local\.md/);
   assert.equal(installed.replace(/^- Setup checkout \(this machine\): .*\n/m, ''), golden);
 });
 

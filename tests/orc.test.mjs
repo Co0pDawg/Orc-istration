@@ -9,6 +9,7 @@ import { parse, serialize, normalizeEol } from '../tools/lib/frontmatter.mjs';
 import { parseRole } from '../tools/lib/roles.mjs';
 import { serializeToml, parseToml, tomlMultiline } from '../tools/lib/toml.mjs';
 import { main, loadRoles, loadModels, loadAdapters, buildTool, buildGolden, allowedTools, parseAgyModels, firstDiffLine } from '../tools/orc.mjs';
+import { knownTools } from '../tools/lib/models.mjs';
 import { spawnSync } from 'node:child_process';
 
 // No test in this file can reach the real home folder: commands that default --home use this scratch one.
@@ -409,7 +410,7 @@ test('claude-code review commands: thin wrappers, no machine path, panel files p
   }
   // The hand-written commands find the checkout in the same order.
   for (const n of ['create', 'draft-pr', 'fix-ci', 'grill', 'peer-review', 'start']) {
-    assert.match(read(path.join(REPO, 'commands', `${n}.md`)), /`ORC_HOME`.*, else the "Setup checkout \(this machine\)" line in the rulebook's tool notes, else `~\/\.claude`/, n);
+    assert.match(read(path.join(REPO, 'adapters', 'claude-code', 'commands', `${n}.md`)), /`ORC_HOME`.*, else the "Setup checkout \(this machine\)" line in the rulebook's tool notes, else `~\/\.claude`/, n);
   }
   for (const f of ['PROCEDURE.md', 'contract.md', 'shared-rules.md', 'selection.md']) assert.ok(fs.existsSync(path.join(REPO, 'review', f)), f);
   const lanes = ['architecture-reviewer', 'code-reviewer', 'code-simplifier', 'comment-analyzer', 'pr-test-analyzer', 'secondary-artifacts', 'silent-failure-hunter', 'ticket-coverage', 'type-design-analyzer', 'ui-test-reviewer'];
@@ -634,4 +635,75 @@ test('install paths for codex, cursor, copilot, opencode', async () => {
     if (tool === 'cursor') assert.match(r.out, /no global rulebook file/);
   }
   assert.ok(!fs.existsSync(path.join(home, 'project')));
+});
+
+test('install copies Claude Code workflow commands and orc-permissions skill with hand-copy/edit safeguards; uninstall removes unchanged ones', async () => {
+  const home = tempDir('claude-static');
+  const cmds = ['create', 'draft-pr', 'fix-ci', 'grill', 'peer-review', 'start'];
+  const claude = path.join(home, '.claude');
+  // Pre-seed a differing hand-copied workflow command (no manifest): install keeps it without --force.
+  fs.mkdirSync(path.join(claude, 'commands'), { recursive: true });
+  fs.writeFileSync(path.join(claude, 'commands', 'start.md'), '# my own start\n');
+  const first = await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board']);
+  assert.equal(first.code, 0, first.err);
+  assert.match(first.out, /kept \(hand-copied command, differs; --force replaces it, with a backup\): .*start\.md/);
+  assert.equal(read(path.join(claude, 'commands', 'start.md')), '# my own start\n', 'hand-copied command kept');
+  for (const n of cmds.filter((c) => c !== 'start')) {
+    assert.equal(read(path.join(claude, 'commands', `${n}.md`)), read(path.join(REPO, 'adapters', 'claude-code', 'commands', `${n}.md`)), n);
+  }
+  const permTarget = path.join(claude, 'skills', 'orc-permissions', 'SKILL.md');
+  assert.equal(read(permTarget), read(path.join(REPO, 'adapters', 'claude-code', 'skills', 'orc-permissions', 'SKILL.md')));
+  const mf = JSON.parse(fs.readFileSync(path.join(claude, '.orc-manifest.claude-code.json'), 'utf8'));
+  assert.ok(!mf.files['.claude/commands/start.md'], 'kept hand copy is not recorded');
+  assert.ok(mf.files['.claude/commands/grill.md'], 'installed command is recorded');
+  assert.ok(mf.files['.claude/skills/orc-permissions/SKILL.md'], 'orc-permissions skill is recorded');
+  // status reports the hand-copied command as differs, and the rest as same.
+  const st1 = await run(['status', '--tool', 'claude-code', '--home', home, '--no-board']);
+  assert.equal(st1.code, 1);
+  assert.match(st1.out, /differs \(first difference at line 1; a hand-copied command, which install --apply keeps: install --apply --force replaces it, with a backup\): .*start\.md/);
+  assert.match(st1.out, /same: .*skills[\\/]orc-permissions[\\/]SKILL\.md/);
+  // --force replaces the hand-copied command with a backup; now status is clean.
+  assert.equal((await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board', '--force'])).code, 0);
+  assert.equal(read(path.join(claude, 'commands', 'start.md')), read(path.join(REPO, 'adapters', 'claude-code', 'commands', 'start.md')));
+  assert.equal((await run(['status', '--tool', 'claude-code', '--home', home, '--no-board'])).code, 0);
+  // Hand-editing an installed command refuses re-install without --force and is kept by uninstall without --force.
+  const grill = path.join(claude, 'commands', 'grill.md');
+  fs.appendFileSync(grill, '\nlocal edit\n');
+  const refused = await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board']);
+  assert.equal(refused.code, 1);
+  assert.match(refused.err, /refused \(edited since install; pass --force to replace it, with a backup\): .*grill\.md/);
+  assert.match(read(grill), /local edit/, 'edited installed command is not overwritten without --force');
+  const un = await run(['uninstall', '--tool', 'claude-code', '--home', home, '--apply']);
+  assert.equal(un.code, 0, un.err);
+  assert.match(un.out, /kept \(edited since install; --force deletes it after a backup\): .*grill\.md/);
+  assert.ok(fs.existsSync(grill), 'edited command kept on uninstall');
+  assert.ok(!fs.existsSync(permTarget), 'unchanged orc-permissions skill removed on uninstall');
+  assert.ok(!fs.existsSync(path.join(claude, 'commands', 'create.md')), 'unchanged command removed on uninstall');
+  // Clean uninstall with --force leaves nothing installed (other than the earlier backup).
+  assert.equal((await run(['uninstall', '--tool', 'claude-code', '--home', home, '--apply', '--force'])).code, 0);
+  assert.ok(!fs.existsSync(grill));
+  // Golden build never includes static files (same as hook scripts).
+  const ccGold = (await buildGolden(REPO, 'claude-code'))[0].files.map((f) => f.path);
+  assert.ok(!ccGold.includes('.claude/commands/start.md') && !ccGold.includes('.claude/skills/orc-permissions/SKILL.md'));
+});
+
+test('adapter loaders ignore sub-folders under adapters/ (including adapters/claude-code/ and *.mjs folders)', async () => {
+  const expected = ['antigravity', 'claude-code', 'codex', 'copilot', 'cursor', 'gemini-cli', 'opencode'];
+  assert.ok(fs.statSync(path.join(REPO, 'adapters', 'claude-code')).isDirectory());
+  assert.deepEqual(knownTools(REPO), expected);
+  assert.deepEqual((await loadAdapters(REPO)).map((a) => a.id), expected);
+  // Even a subfolder whose name ends in .mjs is ignored.
+  const copy = tempDir('adapter-dirs');
+  for (const p of ['adapters', 'tools/lib']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
+  fs.mkdirSync(path.join(copy, 'adapters', 'fake.mjs'));
+  assert.deepEqual(knownTools(copy), expected);
+  assert.deepEqual((await loadAdapters(copy)).map((a) => a.id), expected);
+});
+
+test('ship-prompts skill is identical for Claude Code and Antigravity', () => {
+  const claude = parse(read(path.join(REPO, '.claude', 'skills', 'ship-prompts', 'SKILL.md')));
+  const agy = parse(read(path.join(REPO, '.agents', 'skills', 'ship-prompts', 'SKILL.md')));
+  assert.equal(claude.data.name, 'ship-prompts');
+  assert.equal(agy.data.name, 'ship-prompts');
+  assert.equal(agy.body, claude.body, '.agents and .claude ship-prompts bodies must match');
 });

@@ -21,9 +21,10 @@ Edit the sources. Never hand-edit a generated file; regenerate it.
 | `review/` | The review panel: procedure, explorer contract, lane checklists, calibration, regression corpus and metrics formats |
 | `workflows/*.md`, `templates/` | The portable workflows (`/start`, `/draft-pr` and others) and the target-repo rulebook template |
 | `orchestration/standards.md`, `orchestration/sprint.md` | The standards setup procedure and sprint mode |
-| `skills/*/SKILL.md` | Claude Code skills (copied into `~/.claude/skills` by hand; `install --sprint-kit` copies `skills/sprint/SKILL.md`). The sprint skill folder also holds `story-template.html`, `make-story.mjs` and `theme/`, which sprint mode reads from the setup checkout |
-| `.claude/skills/*/SKILL.md` | Project skills for developing this repo, such as `ship-prompts` (loaded only in a session opened here; `.claude/settings.json` stays untracked) |
-| `commands/*.md` | Hand-written Claude Code commands for the workflows; the review-panel commands are generated into `~/.claude/commands/` on install (and into `tests/golden/claude-code/`) |
+| `skills/*/SKILL.md` | Tool-neutral skills (`board`, `brief`, `repo-standards`, `sprint`, `wrap-up`; copied into `~/.claude/skills` by hand until skill generation lands; `install --sprint-kit` copies `skills/sprint/SKILL.md`). The sprint skill folder also holds `story-template.html`, `make-story.mjs` and `theme/`, which sprint mode reads from the setup checkout |
+| `.claude/skills/ship-prompts/SKILL.md`, `.agents/skills/ship-prompts/SKILL.md` | Project skill for developing this repo, shipped identically for Claude Code and Antigravity (loaded only in a session opened here; other files under `.claude/` and `.agents/` stay untracked) |
+| `adapters/claude-code/` | Claude-only static assets: the six hand-written workflow `commands/*.md` and `skills/orc-permissions/SKILL.md` (installed by `install --tool claude-code` and `sync` beside the rulebook, roster agents, generated review commands and hook scripts), plus `settings.example.json` and `hooks.node.example.json` |
+| `extras/worklog/`, `extras/peon/` | Optional Windows-only Claude Code hook scripts (run from the setup checkout; not installed into `~/.claude/tools/`) |
 
 | Generated (do not edit) | Written by |
 |---|---|
@@ -42,17 +43,17 @@ npm test
 node tools/orc.mjs check     # watch the antigravity headroom line
 ```
 
-In Claude Code, the `ship-prompts` project skill walks this loop plus the README and wiki co-change and the live install.
+In Claude Code and Antigravity, the `ship-prompts` project skill walks this loop plus the README and wiki co-change and the live install.
 
 `node tools/orc.mjs help` lists every command; `help <command>` lists its options. The full reference is `docs/cli.md`.
 
 ## Traps
 - **A `~/.claude` checkout must not pull this layout.** The repo used to be checked out as `~/.claude`; `README.md` ("Moving off a `~/.claude` checkout") gives the order: clone elsewhere, install from the clone, then delete `~/.claude/.git`.
 
-- **`.gitignore`.** Standard deny-list: `node_modules/`, `dist/`, `models.local.json`, `.orc/`, `orchestration/board/`, `orchestration/log/*` (except `TEMPLATE.md`), `.claude/*` (except `.claude/skills/ship-prompts/`) and editor/OS noise stay ignored so local state never gets staged.
-- **Review tier.** Editing `core/AGENTS.md`, `core/roles/`, root `AGENTS.md` / `CLAUDE.md`, `adapters/*.notes.md`, `profiles/`, any `SKILL.md` (such as `skills/repo-standards/SKILL.md`), `standards/`, `review/`, `workflows/`, `commands/`, `orchestration/standards.md` or `orchestration/sprint.md` makes `node tools/orc.mjs review-tier` say `Full`: prompts count as product, not docs.
-- **The board is another repo.** The board page code in `orchestration/board` is its own repo (Co0pDawg/Orc-Dashboard), not part of this one.
-- **`tools/worklog`** is a Windows-only example with its own `tools/worklog/test.ps1`. Its tests assert US Eastern local times, so CI sets the runner to Eastern time first.
+- **`.gitignore`.** Standard deny-list: `node_modules/`, `dist/`, `models.local.json`, `.orc/`, `orchestration/board/`, `orchestration/log/*` (except `TEMPLATE.md`), `.claude/*` (except `.claude/skills/ship-prompts/`), `.agents/*` (except `.agents/skills/ship-prompts/`) and editor/OS noise stay ignored so local state never gets staged.
+- **Review tier.** Editing `core/AGENTS.md`, `core/roles/`, root `AGENTS.md` / `CLAUDE.md`, `adapters/*.notes.md`, `adapters/<tool>/` (commands, skills), `profiles/`, `.claude/`, `.agents/`, any `SKILL.md` (such as `skills/repo-standards/SKILL.md`), `standards/`, `review/`, `workflows/`, `orchestration/standards.md` or `orchestration/sprint.md` makes `node tools/orc.mjs review-tier` say `Full`: prompts count as product, not docs.
+- **The board is another repo.** The board page code in `orchestration/board` is its own repo (Co0pDawg/Orc-Dashboard), not part of this one. This machine's board address lives in `~/.orc/config.json` (`board.url`, and `board.repo` for a local board); `board.local.md` is retired: put its address in `~/.orc/config.json` `board.url` (with `board.repo` for a local board), run `install --tool claude-code --apply --force` (or `sync --apply --force`) so hook scripts copied by hand are replaced, each with a backup, then delete `~/.claude/board.local.md`.
+- **`extras/worklog`** is a Windows-only example with its own `extras/worklog/test.ps1`. Its tests assert US Eastern local times, so CI sets the runner to Eastern time first.
 - **`models.local.json`** is untracked. `check` validates it, but builds and compares from `models.json` only; `golden` reads `models.json` only. `build`, `install`, `sync`, `status`, `dispatch` and `doctor` use it. `~/.orc/models.json` (or `$ORC_DATA_DIR/models.json`) layers between the two for `install`, `sync`, `status`, `dispatch` and `doctor` only; `build`, `check` and `golden` never read `~/.orc`.
 
 ## Adding or refreshing a standards entry

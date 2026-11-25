@@ -19,9 +19,6 @@ export const KIT_NOTES = [
   '- **Sprint kit:** only the Node git guard (`tools/guard.mjs`) is wired; there is no board-reminder hook, so the PowerShell guard and board-reminder lines above do not apply here. No subagent model or effort is set in `settings.json`, so always name `subagent_type` (each roster agent carries its own model). Nothing is pushed unless the user says so: commits stay local.',
 ];
 
-// The tool-notes line that imports the machine's board address; a kit build drops it (there is no board.local.md).
-export const BOARD_IMPORT = /^.*@board\.local\.md.*\n(?:\n)?/m;
-
 // Permission presets: build, test, run and package-restore commands per stack. A command with arguments gets the
 // trailing-wildcard form; the permissions doc says "A `*` at the end, with a space before it, also matches the bare
 // command." (so `Bash(npm test *)` matches `npm test`). A restore command is exact, so `npm install` never matches
@@ -67,9 +64,9 @@ export function detectStacks(dir) {
   return found;
 }
 
-// The PreToolUse guard group of hooks.node.example.json only (that file also wires the board reminder).
+// The PreToolUse guard group of adapters/claude-code/hooks.node.example.json only (that file also wires the board reminder).
 export function kitHookExample(repo) {
-  const example = JSON.parse(readText(path.join(repo, 'hooks.node.example.json')));
+  const example = JSON.parse(readText(path.join(repo, 'adapters', 'claude-code', 'hooks.node.example.json')));
   const groups = (example.hooks?.PreToolUse ?? []).filter((g) => (g.hooks ?? []).some((h) => /tools\/guard\.mjs"/.test(h.command ?? '')));
   return { hooks: { PreToolUse: groups } };
 }

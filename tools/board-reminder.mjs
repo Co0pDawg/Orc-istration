@@ -3,7 +3,8 @@
 // refuter or debugger finishes. `mark` (SubagentStop) only leaves a marker, because SubagentStop output goes to the
 // finishing agent; `relay` (PostToolUse, UserPromptSubmit) turns the session's markers into context on the main
 // session's next dispatch, board write or prompt. It writes nothing to the board.
-// Silent without ~/.claude/board.local.md. Any failure exits 0. BOARD_REMINDER_ROOT overrides ~/.claude.
+// Silent without a board.url in ~/.orc/config.json (or $ORC_DATA_DIR/config.json). Any failure exits 0.
+// BOARD_REMINDER_ROOT overrides ~/.claude for markers.
 // Usage: node board-reminder.mjs mark|relay  (hook JSON on stdin)
 import fs from 'node:fs';
 import os from 'node:os';
@@ -13,8 +14,22 @@ import { fileURLToPath } from 'node:url';
 const WEEK = 7 * 24 * 3600 * 1000;
 const clean = (s) => String(s ?? '').replace(/[^\w-]/g, '');
 
-export function run(mode, stdinText, root, now = Date.now()) {
-  if (!fs.existsSync(path.join(root, 'board.local.md'))) return '';
+// On when the state home's config.json (ORC_DATA_DIR, else ~/.orc) has a non-empty string board.url; a missing,
+// unreadable or invalid file means off, silently.
+function hasBoardConfig(env = process.env) {
+  try {
+    const stateHome = env.ORC_DATA_DIR?.trim() ? env.ORC_DATA_DIR : path.join(os.homedir(), '.orc');
+    const file = path.join(stateHome, 'config.json');
+    if (!fs.existsSync(file)) return false;
+    const cfg = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+    return Boolean(cfg && typeof cfg === 'object' && !Array.isArray(cfg) && typeof cfg.board?.url === 'string' && cfg.board.url.trim() !== '');
+  } catch {
+    return false;
+  }
+}
+
+export function run(mode, stdinText, root, now = Date.now(), env = process.env) {
+  if (!hasBoardConfig(env)) return '';
   const dir = path.join(root, 'board-reminders');
   const any = () => fs.existsSync(dir) && fs.readdirSync(dir).length > 0;
   // The relay runs on every prompt, so the common case of no markers stops here.

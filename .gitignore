@@ -18,6 +18,12 @@ node_modules/
 /.claude/skills/*
 !/.claude/skills/ship-prompts/
 
+# Antigravity project folder: only the ship-prompts project skill is tracked
+/.agents/*
+!/.agents/skills/
+/.agents/skills/*
+!/.agents/skills/ship-prompts/
+
 # Editor and OS noise
 .vscode/
 .idea/

@@ -5,7 +5,7 @@ description: Add the allow rules an orchestrated task needs to the user's Claude
 
 # Orc permissions
 
-This skill exists only where `~/.claude/skills` holds a copy of it. Elsewhere, add the rules below to the tool's own allow-list by hand.
+This skill is installed into `~/.claude/skills/orc-permissions/` by `install --tool claude-code --apply` (and `sync --apply`). Elsewhere, add the rules below to the tool's own allow-list by hand.
 
 It edits `permissions` in the user settings file, `~/.claude/settings.json`, because agents work in worktrees outside any one project. Use a project's `.claude/settings.local.json` instead only when the user asks for one project.
 

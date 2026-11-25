@@ -7,15 +7,29 @@ A SubagentStop hook cannot reach the main session: its output goes to the finish
 -Mode mark (SubagentStop) only leaves a marker, and -Mode relay (PostToolUse, UserPromptSubmit) turns the session's
 markers into context on the main session's next dispatch, board write or prompt. It writes nothing to the board.
 
-Silent without ~/.claude/board.local.md, so a developer with no board sees nothing. Any failure exits 0: a reminder
-never blocks work. BOARD_REMINDER_ROOT overrides ~/.claude for a self-test.
+Silent without a board.url in ~/.orc/config.json (or $ORC_DATA_DIR/config.json), so a developer with no board sees
+nothing. Any failure exits 0: a reminder never blocks work. BOARD_REMINDER_ROOT overrides ~/.claude for markers.
 #>
 param([ValidateSet('mark', 'relay')][string]$Mode = 'relay')
 
 $ErrorActionPreference = 'Stop'
 try {
-    $root = if ($env:BOARD_REMINDER_ROOT) { $env:BOARD_REMINDER_ROOT } else { Join-Path $HOME '.claude' }
-    if (-not (Test-Path (Join-Path $root 'board.local.md'))) { exit 0 }
+    $orcHome = if ($env:ORC_DATA_DIR -and $env:ORC_DATA_DIR.Trim()) { $env:ORC_DATA_DIR } else { Join-Path -Path $HOME -ChildPath '.orc' }
+    $cfgFile = Join-Path -Path $orcHome -ChildPath 'config.json'
+    $hasBoard = $false
+    if (Test-Path -LiteralPath $cfgFile -PathType Leaf) {
+        try {
+            $cfg = Get-Content -LiteralPath $cfgFile -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            if ($null -ne $cfg -and ($cfg.PSObject.Properties.Name -contains 'board') -and $null -ne $cfg.board -and ($cfg.board.PSObject.Properties.Name -contains 'url')) {
+                $url = $cfg.board.url
+                if ($url -is [string] -and $url.Trim()) { $hasBoard = $true }
+            }
+        } catch {
+            $hasBoard = $false
+        }
+    }
+    if (-not $hasBoard) { exit 0 }
+    $root = if ($env:BOARD_REMINDER_ROOT) { $env:BOARD_REMINDER_ROOT } else { Join-Path -Path $HOME -ChildPath '.claude' }
     $dir = Join-Path $root 'board-reminders'
     # The relay runs on every prompt, so the common case of no markers stops here.
     if ($Mode -eq 'relay' -and -not (Test-Path (Join-Path $dir '*'))) { exit 0 }

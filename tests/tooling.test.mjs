@@ -352,11 +352,11 @@ test('.gitignore: a standard deny-list; the cost-log template and every source s
   assert.equal(ignored('orchestration/log/2026-01-01-x.md'), true, 'a cost log stays local');
   assert.equal(ignored('orchestration/log/anomalies.md'), true, 'the anomaly log stays local');
   for (const p of ['node_modules/x/index.js', 'tools/node_modules/x.js', 'dist/codex/.codex/AGENTS.md', 'models.local.json', '.orc/reviews/run.md', 'orchestration/board/index.html',
-    '.claude/settings.local.json', '.claude/worktrees/a/x.md', '.claude/skills/mine/SKILL.md', '.vscode/settings.json', '.idea/x.xml', 'a.swp', 'notes.md~', '.DS_Store', 'docs/Thumbs.db', 'desktop.ini']) {
+    '.claude/settings.local.json', '.claude/worktrees/a/x.md', '.claude/skills/mine/SKILL.md', '.agents/settings.json', '.agents/skills/mine/SKILL.md', '.vscode/settings.json', '.idea/x.xml', 'a.swp', 'notes.md~', '.DS_Store', 'docs/Thumbs.db', 'desktop.ini']) {
     assert.equal(ignored(p), true, `${p} is ignored`);
   }
-  for (const p of ['AGENTS.md', 'CLAUDE.md', 'core/AGENTS.md', 'core/roles/scout.md', '.claude/skills/ship-prompts/SKILL.md', 'tests/golden/claude-code/.claude/CLAUDE.md',
-    'tests/golden/claude-code/.claude/agents/scout.md', 'commands/start.md', 'skills/brief/SKILL.md', 'tools/orc.mjs', 'orchestration/README.md', 'new-top-level-file.md']) {
+  for (const p of ['AGENTS.md', 'CLAUDE.md', 'core/AGENTS.md', 'core/roles/scout.md', '.claude/skills/ship-prompts/SKILL.md', '.agents/skills/ship-prompts/SKILL.md', 'tests/golden/claude-code/.claude/CLAUDE.md',
+    'tests/golden/claude-code/.claude/agents/scout.md', 'adapters/claude-code/commands/start.md', 'adapters/claude-code/skills/orc-permissions/SKILL.md', 'extras/worklog/worklog.ps1', 'skills/brief/SKILL.md', 'tools/orc.mjs', 'orchestration/README.md', 'new-top-level-file.md']) {
     assert.equal(ignored(p), false, `${p} can be tracked`);
   }
   // No tracked file is matched by an ignore rule.
@@ -564,10 +564,10 @@ test('dispatch honours the timeout and kills the child tree', () => {
 
 // ---------- hooks ----------
 
-const EXAMPLE = JSON.parse(fs.readFileSync(path.join(REPO, 'settings.example.json'), 'utf8'));
+const EXAMPLE = JSON.parse(fs.readFileSync(path.join(REPO, 'adapters', 'claude-code', 'settings.example.json'), 'utf8'));
 const exampleCommands = Object.values(EXAMPLE.hooks).flatMap((gs) => gs.flatMap((g) => g.hooks.map((h) => h.command)));
 
-test('hooks: empty home gets every example hook with the real home; dry run writes nothing', () => {
+test('hooks: empty home gets every example hook with the real home and setup checkout; dry run writes nothing', () => {
   const home = tempDir('hookhome');
   const dry = isolated(['hooks', '--home', home]);
   assert.equal(dry.code, 0, dry.err);
@@ -578,10 +578,108 @@ test('hooks: empty home gets every example hook with the real home; dry run writ
   const settings = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
   assert.deepEqual(Object.keys(settings), ['hooks'], 'only the hooks block is merged');
   const text = JSON.stringify(settings);
-  assert.ok(!text.includes('<you>'), 'placeholder replaced');
+  const setup = fs.realpathSync.native(REPO).replace(/\\/g, '/');
+  assert.ok(!text.includes('<you>'), 'home placeholder replaced');
+  assert.ok(!text.includes('<setup>'), 'setup placeholder replaced');
   assert.ok(text.includes(JSON.stringify(home).slice(1, -1)), 'real home in the commands');
+  assert.ok(text.includes(`${setup}/extras/worklog/log-event.ps1`), 'setup checkout path in worklog commands');
+  assert.ok(text.includes(`${setup}/extras/peon/peon-hook.ps1`), 'setup checkout path in peon commands');
+  // Every worklog and peon script wired from <setup>/extras/ exists on disk.
+  const extrasPaths = Object.values(settings.hooks)
+    .flatMap((gs) => gs.flatMap((g) => g.hooks.map((h) => /"([^"]+\/extras\/[^"]+\.ps1)"/.exec(h.command)?.[1])))
+    .filter(Boolean);
+  assert.ok(extrasPaths.length >= 11, `expected worklog and peon hooks, got ${extrasPaths.length}`);
+  for (const p of extrasPaths) assert.ok(fs.existsSync(p), `extras script exists: ${p}`);
   assert.match(isolated(['hooks', '--home', home]).out, /nothing to add/);
   assert.match(isolated(['hooks']).err, /hooks needs --home/);
+});
+
+test('hooks: stale .claude/tools/worklog and .claude/tools/peon entries are reported to replace and never duplicated', () => {
+  const home = tempDir('hookstale');
+  const file = path.join(home, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  // Simulate a live home whose settings.json still points at the old .claude\tools\worklog and .claude\tools\peon paths.
+  const oldSettings = {
+    hooks: {
+      Stop: [
+        { matcher: '', hooks: [{ type: 'command', command: `powershell -NoProfile -NonInteractive -File "${home}\\.claude\\tools\\worklog\\log-event.ps1" -Kind stop`, timeout: 10, async: true }] },
+        { matcher: '', hooks: [{ type: 'command', command: `powershell -NoProfile -NonInteractive -File "${home}\\.claude\\tools\\peon\\peon-hook.ps1"`, timeout: 10, async: true }] },
+      ],
+      PostToolUse: [
+        { matcher: 'ArtifactData', hooks: [{ type: 'command', command: `powershell -NoProfile -NonInteractive -File "${home}\\.claude\\tools\\worklog\\board-title.ps1"`, timeout: 10 }] },
+      ],
+    },
+  };
+  fs.writeFileSync(file, `${JSON.stringify(oldSettings, null, 2)}\n`);
+  const dry = isolated(['hooks', '--home', home]);
+  assert.equal(dry.code, 0, dry.err);
+  assert.equal(dry.out.match(/^stale /gm).length, 3, dry.out);
+  assert.match(dry.out, /stale Stop \(replace by hand; not duplicated\): .*tools\\worklog\\log-event\.ps1" -Kind stop/);
+  assert.match(dry.out, /-> .*\/extras\/worklog\/log-event\.ps1" -Kind stop/);
+  assert.match(dry.out, /stale PostToolUse \[ArtifactData\] \(replace by hand; not duplicated\): .*tools\\worklog\\board-title\.ps1/);
+  assert.equal(dry.out.match(/^would add /gm).length, exampleCommands.length - 3, 'stale entries are not added beside the old ones');
+  const applied = isolated(['hooks', '--home', home, '--apply']);
+  assert.equal(applied.code, 0, applied.err);
+  assert.equal(applied.out.match(/^stale /gm).length, 3, applied.out);
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const stopCmds = after.hooks.Stop.flatMap((g) => g.hooks.map((h) => h.command));
+  assert.equal(stopCmds.filter((c) => /log-event\.ps1/.test(c)).length, 1, 'worklog Stop hook not duplicated');
+  assert.equal(stopCmds.filter((c) => /peon-hook\.ps1/.test(c)).length, 1, 'peon Stop hook not duplicated');
+  assert.equal(stopCmds.filter((c) => /peon-nag\.ps1/.test(c)).length, 1, 'missing peon-nag hook was added');
+  const ptuCmds = after.hooks.PostToolUse.flatMap((g) => g.hooks.map((h) => h.command));
+  assert.equal(ptuCmds.filter((c) => /board-title\.ps1/.test(c)).length, 1, 'board-title hook not duplicated');
+  // Second run reports the 3 stale hooks and adds nothing.
+  const again = isolated(['hooks', '--home', home, '--apply']);
+  assert.equal(again.code, 0, again.err);
+  assert.equal(again.out.match(/^stale /gm).length, 3);
+  assert.match(again.out, /nothing added: 3 stale hook\(s\) still point at \.claude\/tools\/worklog or \.claude\/tools\/peon/);
+});
+
+test('hooks: stale pattern also matches unquoted .claude/tools/worklog and .claude/tools/peon paths', () => {
+  const home = tempDir('hookstale-unquoted');
+  const file = path.join(home, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const oldSettings = {
+    hooks: {
+      Stop: [
+        { matcher: '', hooks: [{ type: 'command', command: 'powershell -NoProfile -NonInteractive -File ~/.claude/tools/worklog/log-event.ps1 -Kind stop', timeout: 10, async: true }] },
+        { matcher: '', hooks: [{ type: 'command', command: `powershell -NoProfile -NonInteractive -File ${home}\\.claude\\tools\\peon\\peon-hook.ps1`, timeout: 10, async: true }] },
+      ],
+      PostToolUse: [
+        { matcher: 'ArtifactData', hooks: [{ type: 'command', command: 'powershell -NoProfile -NonInteractive -File ~/.claude/tools/worklog/board-title.ps1', timeout: 10 }] },
+      ],
+    },
+  };
+  fs.writeFileSync(file, `${JSON.stringify(oldSettings, null, 2)}\n`);
+  const dry = isolated(['hooks', '--home', home]);
+  assert.equal(dry.code, 0, dry.err);
+  assert.equal(dry.out.match(/^stale /gm)?.length, 3, dry.out);
+  assert.match(dry.out, /stale Stop \(replace by hand; not duplicated\): .*~\/\.claude\/tools\/worklog\/log-event\.ps1 -Kind stop/);
+  assert.match(dry.out, /-> .*\/extras\/worklog\/log-event\.ps1" -Kind stop/);
+  assert.equal(dry.out.match(/^would add /gm)?.length, exampleCommands.length - 3, 'unquoted stale entries are not duplicated');
+  const applied = isolated(['hooks', '--home', home, '--apply']);
+  assert.equal(applied.code, 0, applied.err);
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const stopCmds = after.hooks.Stop.flatMap((g) => g.hooks.map((h) => h.command));
+  assert.equal(stopCmds.filter((c) => /log-event\.ps1/.test(c)).length, 1, 'unquoted worklog Stop hook not duplicated');
+  assert.equal(stopCmds.filter((c) => /peon-hook\.ps1/.test(c)).length, 1, 'unquoted peon Stop hook not duplicated');
+  const ptuCmds = after.hooks.PostToolUse.flatMap((g) => g.hooks.map((h) => h.command));
+  assert.equal(ptuCmds.filter((c) => /board-title\.ps1/.test(c)).length, 1, 'unquoted board-title hook not duplicated');
+});
+
+test('hooks fills <setup> with the running checkout, not --repo', () => {
+  const otherRepo = tempDir('hooks-other-repo');
+  const destDir = path.join(otherRepo, 'adapters', 'claude-code');
+  fs.mkdirSync(destDir, { recursive: true });
+  fs.copyFileSync(path.join(REPO, 'adapters', 'claude-code', 'settings.example.json'), path.join(destDir, 'settings.example.json'));
+  const home = tempDir('hooks-setup-home');
+  const r = isolated(['hooks', '--repo', otherRepo, '--home', home, '--apply']);
+  assert.equal(r.code, 0, r.err);
+  const text = fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8');
+  const runningSetup = fs.realpathSync.native(REPO).replace(/\\/g, '/');
+  const otherSetup = fs.realpathSync.native(otherRepo).replace(/\\/g, '/');
+  assert.ok(text.includes(`${runningSetup}/extras/worklog/log-event.ps1`), text);
+  assert.ok(!text.includes(otherSetup), `expected running checkout, not --repo: ${text}`);
 });
 
 test('hooks: existing settings keep every key and hook byte-for-byte; second run is idempotent', () => {
@@ -664,29 +762,38 @@ test('mergeHooks rejects a non-array event and leaves the input untouched', () =
 
 test('board-reminder.mjs: mark, relay, silence and subagent calls', () => {
   const root = tempDir('reminder');
+  const state = tempDir('reminder-orc');
+  const env = { ORC_DATA_DIR: state };
   const hook = (o) => JSON.stringify({ session_id: 's-1', hook_event_name: 'PostToolUse', ...o });
-  // No board.local.md: silent, writes nothing.
-  assert.equal(reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root), '');
-  assert.deepEqual(fs.readdirSync(root), []);
+  // No config.json (even with a retired board.local.md present): silent, writes nothing.
   fs.writeFileSync(path.join(root, 'board.local.md'), 'http://localhost:8377\n');
-  // Relay with no markers: silent without reading stdin.
-  assert.equal(reminder('relay', 'not json', root), '');
-  // Mark: only builder, refuter, debugger.
-  assert.equal(reminder('mark', hook({ agent_type: 'scout', agent_id: 'a0' }), root), '');
+  assert.equal(reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root, Date.now(), env), '');
   assert.ok(!fs.existsSync(path.join(root, 'board-reminders')));
-  reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root);
-  reminder('mark', hook({ agent_type: 'refuter', agent_id: 'a/2' }), root);
-  reminder('mark', JSON.stringify({ session_id: 'other', agent_type: 'debugger', agent_id: 'x' }), root);
+  // Invalid JSON or config without board.url: silent, writes nothing.
+  for (const raw of ['{ broken', '{}', '{"version":1,"board":{}}', '{"version":1,"board":{"url":"   "}}']) {
+    fs.writeFileSync(path.join(state, 'config.json'), raw);
+    assert.equal(reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root, Date.now(), env), '', raw);
+    assert.ok(!fs.existsSync(path.join(root, 'board-reminders')), raw);
+  }
+  fs.writeFileSync(path.join(state, 'config.json'), JSON.stringify({ version: 1, board: { url: 'http://localhost:8377' } }));
+  // Relay with no markers: silent without reading stdin.
+  assert.equal(reminder('relay', 'not json', root, Date.now(), env), '');
+  // Mark: only builder, refuter, debugger.
+  assert.equal(reminder('mark', hook({ agent_type: 'scout', agent_id: 'a0' }), root, Date.now(), env), '');
+  assert.ok(!fs.existsSync(path.join(root, 'board-reminders')));
+  reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root, Date.now(), env);
+  reminder('mark', hook({ agent_type: 'refuter', agent_id: 'a/2' }), root, Date.now(), env);
+  reminder('mark', JSON.stringify({ session_id: 'other', agent_type: 'debugger', agent_id: 'x' }), root, Date.now(), env);
   const dir = path.join(root, 'board-reminders');
   assert.deepEqual(fs.readdirSync(dir).sort(), ['other.x', 's-1.a1', 's-1.a2']);
   // A relay inside a subagent is ignored.
-  assert.equal(reminder('relay', hook({ agent_id: 'a1' }), root), '');
+  assert.equal(reminder('relay', hook({ agent_id: 'a1' }), root, Date.now(), env), '');
   // An empty marker (killed mid-write) is cleared without naming an agent.
   fs.writeFileSync(path.join(dir, 's-2.e'), '');
-  const empty = JSON.parse(reminder('relay', JSON.stringify({ session_id: 's-2', hook_event_name: 'UserPromptSubmit' }), root));
+  const empty = JSON.parse(reminder('relay', JSON.stringify({ session_id: 's-2', hook_event_name: 'UserPromptSubmit' }), root, Date.now(), env));
   assert.match(empty.hookSpecificOutput.additionalContext, /^Board: An agent finished\./);
   // Relay names the session's agents, clears its markers and keeps others.
-  const out = JSON.parse(reminder('relay', hook({}), root));
+  const out = JSON.parse(reminder('relay', hook({}), root, Date.now(), env));
   assert.equal(out.hookSpecificOutput.hookEventName, 'PostToolUse');
   assert.match(out.hookSpecificOutput.additionalContext, /^Board: builder, refuter finished\. Update this session's now and events/);
   assert.deepEqual(fs.readdirSync(dir), ['other.x']);
@@ -694,15 +801,16 @@ test('board-reminder.mjs: mark, relay, silence and subagent calls', () => {
   const old = path.join(dir, 'other.x');
   const past = new Date(Date.now() - 8 * 24 * 3600 * 1000);
   fs.utimesSync(old, past, past);
-  reminder('mark', hook({ agent_type: 'debugger', agent_id: 'd' }), root);
+  reminder('mark', hook({ agent_type: 'debugger', agent_id: 'd' }), root, Date.now(), env);
   assert.deepEqual(fs.readdirSync(dir), ['s-1.d']);
 });
 
 test('board-reminder.mjs as a hook process: stdin JSON in, context out, exit 0 on bad input', () => {
   const root = tempDir('reminder');
-  fs.writeFileSync(path.join(root, 'board.local.md'), 'x\n');
+  const state = tempDir('reminder-orc');
+  fs.writeFileSync(path.join(state, 'config.json'), JSON.stringify({ version: 1, board: { url: 'http://localhost:8377' } }));
   const script = path.join(REPO, 'tools', 'board-reminder.mjs');
-  const env = { ...process.env, BOARD_REMINDER_ROOT: root };
+  const env = { ...process.env, BOARD_REMINDER_ROOT: root, ORC_DATA_DIR: state };
   const mark = spawnSync(process.execPath, [script, 'mark'], { env, input: JSON.stringify({ session_id: 's', agent_type: 'builder', agent_id: 'b' }), encoding: 'utf8' });
   assert.equal(mark.status, 0);
   assert.equal(mark.stdout, '');
@@ -714,6 +822,39 @@ test('board-reminder.mjs as a hook process: stdin JSON in, context out, exit 0 o
   const bad = spawnSync(process.execPath, [script, 'relay'], { env, input: '{not json', encoding: 'utf8' });
   assert.equal(bad.status, 0);
   assert.match(bad.stderr, /^board-reminder: /);
+});
+
+test('board-reminder.ps1 keys on config.json board.url and stays silent when missing or invalid', { skip: process.platform !== 'win32' && 'PowerShell board-reminder is Windows only' }, () => {
+  const root = tempDir('reminder-ps1');
+  const state = tempDir('reminder-ps1-orc');
+  const script = path.join(REPO, 'tools', 'board-reminder.ps1');
+  const runPs = (mode, input) => spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Mode', mode], {
+    env: { ...process.env, BOARD_REMINDER_ROOT: root, ORC_DATA_DIR: state },
+    input,
+    encoding: 'utf8',
+  });
+  const markIn = JSON.stringify({ session_id: 's', agent_type: 'builder', agent_id: 'b' });
+  // Absent config.json, even with retired board.local.md: silent, writes no marker.
+  fs.writeFileSync(path.join(root, 'board.local.md'), 'http://localhost:8377\n');
+  const off = runPs('mark', markIn);
+  assert.equal(off.status, 0, off.stderr);
+  assert.equal(off.stdout, '');
+  assert.equal(off.stderr, '');
+  assert.ok(!fs.existsSync(path.join(root, 'board-reminders')));
+  // Invalid JSON or missing board.url: silent.
+  for (const raw of ['{ broken', '{"version":1}', '{"version":1,"board":{"url":""}}']) {
+    fs.writeFileSync(path.join(state, 'config.json'), raw);
+    const r = runPs('mark', markIn);
+    assert.equal(r.status, 0, raw);
+    assert.equal(r.stderr, '', raw);
+    assert.ok(!fs.existsSync(path.join(root, 'board-reminders')), raw);
+  }
+  // Valid board.url: mark + relay fire.
+  fs.writeFileSync(path.join(state, 'config.json'), JSON.stringify({ version: 1, board: { url: 'http://localhost:8377' } }));
+  assert.equal(runPs('mark', markIn).status, 0);
+  const relay = runPs('relay', JSON.stringify({ session_id: 's', hook_event_name: 'UserPromptSubmit' }));
+  assert.equal(relay.status, 0, relay.stderr);
+  assert.match(JSON.parse(relay.stdout).hookSpecificOutput.additionalContext, /^Board: builder finished/);
 });
 
 // ---------- models validation ----------
@@ -804,17 +945,17 @@ test('a tool whose tiers share a model in models.json has a gap naming those tie
 });
 
 test('review-tier: prompts count as product; uncommitted changes warn', async () => {
-  for (const p of ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'core/AGENTS.md', 'core/roles/scout.md', '.claude/x.md', '.agents/x.md', '.codex/AGENTS.md',
-    '.cursor/agents/a.md', '.gemini/GEMINI.md', 'profiles/p.md', 'adapters/codex.notes.md', 'skills/x/SKILL.md', 'a/b.agent.md',
-    'review/PROCEDURE.md', 'review/lanes/code-reviewer.md', 'workflows/start.md', 'commands/pre-pr-review.md', 'commands/start.md']) {
+  for (const p of ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'core/AGENTS.md', 'core/roles/scout.md', '.claude/x.md', '.agents/x.md', '.agents/skills/ship-prompts/SKILL.md', '.codex/AGENTS.md',
+    '.cursor/agents/a.md', '.gemini/GEMINI.md', 'profiles/p.md', 'adapters/codex.notes.md', 'adapters/claude-code/commands/start.md', 'adapters/claude-code/skills/orc-permissions/SKILL.md',
+    'skills/x/SKILL.md', 'a/b.agent.md', 'review/PROCEDURE.md', 'review/lanes/code-reviewer.md', 'workflows/start.md']) {
     assert.equal(classify([p]).tier, 'Full', p);
   }
   assert.equal(classify(['README.md', 'docs/rulebook-notes.md', 'tests/a.test.mjs']).tier, 'Light-eligible');
-  // The roles moved to core/roles: a stray top-level roles/ or agents/ page is a doc again.
-  assert.equal(classify(['roles/scout.md', 'agents/scout.md']).tier, 'Light-eligible');
+  // The roles moved to core/roles and commands moved to adapters/claude-code/commands: stray top-level pages are docs again.
+  assert.equal(classify(['roles/scout.md', 'agents/scout.md', 'commands/start.md']).tier, 'Light-eligible');
   // Only the top-level prompt folders: a docs page about them stays Light-eligible.
-  assert.equal(classify(['docs/review/notes.md', 'docs/workflows.md', 'docs/commands/x.md']).tier, 'Light-eligible');
-  for (const p of ['review/PROCEDURE.md', 'workflows/start.md', 'commands/start.md']) {
+  assert.equal(classify(['docs/review/notes.md', 'docs/workflows.md', 'docs/adapters/x.md']).tier, 'Light-eligible');
+  for (const p of ['review/PROCEDURE.md', 'workflows/start.md', 'adapters/claude-code/commands/start.md']) {
     const d = repoWith({ [p]: 'a\n', 'README.md': 'r\n' });
     commit(d, (dir) => fs.writeFileSync(path.join(dir, p), 'b\n'));
     assert.match((await run(['review-tier', '--base', 'base', '--repo-dir', d])).out, new RegExp(`^Full: .*${p.replace('.', '\\.')}`, 'm'), p);
@@ -982,11 +1123,12 @@ test('R2: board-reminder.mjs runs when started through a junction or symlink', (
     return;
   }
   const root = tempDir('reminder');
-  fs.writeFileSync(path.join(root, 'board.local.md'), 'x\n');
+  const state = tempDir('reminder-orc');
+  fs.writeFileSync(path.join(state, 'config.json'), JSON.stringify({ version: 1, board: { url: 'http://localhost:8377' } }));
   fs.mkdirSync(path.join(root, 'board-reminders'));
   fs.writeFileSync(path.join(root, 'board-reminders', 's.a'), 'builder\n');
   const r = spawnSync(process.execPath, [path.join(link, 'board-reminder.mjs'), 'relay'], {
-    env: { ...process.env, BOARD_REMINDER_ROOT: root },
+    env: { ...process.env, BOARD_REMINDER_ROOT: root, ORC_DATA_DIR: state },
     input: JSON.stringify({ session_id: 's', hook_event_name: 'UserPromptSubmit' }),
     encoding: 'utf8',
   });

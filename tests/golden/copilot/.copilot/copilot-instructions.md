@@ -41,7 +41,7 @@ Reports are capped at 40 lines; anything longer goes to a scratch file and the r
 `node tools/orc.mjs brief new|lint` (setup checkout) prints this template and checks a brief.
 
 ## Orchestration Board
-The board address for this machine is in `board.local.md` beside the rulebook (untracked, so the public repo carries no personal link), or in the Board line of the tool notes below.
+The board address for this machine is in the Board line of the tool notes below (added at install from `~/.orc/config.json`, so the public repo carries no personal link).
 - A `http://localhost:<port>` address means the local backend: write with `node <board repo>/local/board.js` (`batch` for the Start write, `append` for progress and events, `update` for fields; exit 2 is a version conflict).
 - A `claude.ai/artifact/...` address means the artifact backend, which only Claude Code can write (see its tool notes).
 - Board times come from the clock at the moment of the write (`date -Iseconds`), never an estimate; estimated times once ran 30 minutes ahead.
@@ -120,7 +120,7 @@ Each tool's specifics (dispatch, model mapping, hooks, what it cannot do) are in
 
 - **Dispatch:** agents live in `~/.copilot/agents/<name>.agent.md`; ask for one by name. Tools are the aliases `read`, `search`, `execute`, `edit`, `web`; no agent gets `agent`.
 - **Tiers:** set model ids per tier in `models.local.json`; until then agents use the default model. Agent bodies are capped at 30,000 characters.
-- **Board:** local backend only; `install --board <address> --board-repo <path>` adds this machine's Board line.
+- **Board:** local backend only; `install` adds this machine's Board line from `--board <address> --board-repo <path>`, else `board` in `~/.orc/config.json`.
 - **Review panel:** no slash command here: follow `review/PROCEDURE.md` in the setup checkout, dispatching the `review-*` agents by name. `metrics capture` reads Claude Code transcripts only, so it is unsupported here.
 
 What GitHub Copilot CLI cannot do (generated from the adapter's gaps):

@@ -152,8 +152,8 @@ export function loadConfig({ tools, roles, env = process.env }) {
   return { file, ...validateConfig(config, { tools, roles, file }) };
 }
 
-// The board default config.json gives `--all` and doctor: null with no board, {error} for a local address with no
-// repo, else {board, boardRepo, file}. `isArtifactBoard` is install's own test for an artifact address.
+// The board default config.json gives install, status, sync and doctor: null with no board, {error} for a local
+// address with no repo, else {board, boardRepo, file}. `isArtifactBoard` is install's own test for an artifact address.
 export function boardDefault(config, file, isArtifactBoard) {
   const b = config?.board;
   if (!b) return null;

@@ -18,7 +18,7 @@ import { listCases, scoreReport } from './lib/corpus.mjs';
 import { capture, loadRuns, metricsReport, repoTop, DEFAULT_PRICES } from './lib/metrics.mjs';
 import { dispatchPlan, runDispatch, formatCommand, argvProblem, binEnv, unavailable } from './lib/dispatch.mjs';
 import { mergeHooks, formatLike, readSettings, writeSettings } from './lib/hooks.mjs';
-import { KIT_HOOK_SCRIPTS, KIT_SKILLS, KIT_NOTES, BOARD_IMPORT, KNOWN_STACKS, presetRules, detectStacks, kitHookExample, planKitSettings, removeKitSettings, kitRecordProblem, guardStatus } from './lib/sprintkit.mjs';
+import { KIT_HOOK_SCRIPTS, KIT_SKILLS, KIT_NOTES, KNOWN_STACKS, presetRules, detectStacks, kitHookExample, planKitSettings, removeKitSettings, kitRecordProblem, guardStatus } from './lib/sprintkit.mjs';
 import { decodeText, readText } from './lib/text.mjs';
 import { USAGE, globalHelp, commandHelp } from './lib/help.mjs';
 import { validateArchive, runStandards, backupPath } from './lib/standards.mjs';
@@ -96,7 +96,7 @@ export function loadModels(repo, { local = true, shared = false, env = process.e
 
 export async function loadAdapters(repo) {
   const dir = path.join(repo, 'adapters');
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.mjs')).sort();
+  const files = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isFile() && e.name.endsWith('.mjs')).map((e) => e.name).sort();
   const adapters = [];
   for (const f of files) {
     const mod = await import(pathToFileURL(path.join(dir, f)).href);
@@ -148,9 +148,10 @@ function boardNotes({ board, boardRepo }, toolId) {
 // Install options (profiles, board) come from the flags; with none of them given, from the manifest's `options`.
 // Each option given replaces the recorded one; --no-profile and --no-board clear them. A --no-board clear is recorded
 // (`noBoard`), so the config.json board does not come back; a later --board drops the mark.
-// `configBoard` ({board, boardRepo, file}, from --all and doctor) is the last default: flag, then manifest, then
-// config.json.
-function installOptions(opt, manifest, io, configBoard = null) {
+// `configBoard` ({board, boardRepo, file}) is the last default: flag, then manifest, then recorded --no-board, then
+// config.json. An artifact address in config.json applies to claude-code only: other tools get no Board line and one
+// notice saying so.
+function installOptions(opt, manifest, io, configBoard = null, toolId = null) {
   const rec = manifest?.options ?? {};
   const reused = [];
   let profiles = opt.profile ?? [];
@@ -173,6 +174,7 @@ function installOptions(opt, manifest, io, configBoard = null) {
   let board = opt.board ?? null;
   let boardRepo = opt['board-repo'] ?? null;
   let noBoard = false;
+  let artifactSkipped = false;
   if (opt['no-board'] || sprintKit) {
     board = boardRepo = null;
     noBoard = !sprintKit && Boolean(opt['no-board']);
@@ -184,13 +186,37 @@ function installOptions(opt, manifest, io, configBoard = null) {
     noBoard = true;
     reused.push('no board (cleared with --no-board; --board sets one)');
   } else if (!opt.board && !opt['board-repo'] && configBoard?.board) {
-    board = configBoard.board;
-    boardRepo = configBoard.boardRepo ?? null;
-    io.out(`using the board from ${configBoard.file}: ${board}`);
+    if (toolId && artifactRefused(configBoard.board, toolId)) {
+      artifactSkipped = true;
+      io.out(`note: skipping the artifact board in ${configBoard.file} for ${toolId} (the artifact board can be written only from Claude Code; no Board line added)`);
+    } else {
+      board = configBoard.board;
+      boardRepo = configBoard.boardRepo ?? null;
+      io.out(`using the board from ${configBoard.file}: ${board}`);
+    }
   }
   const clear = rec.sprintKit === true ? (reused.some((r) => r.startsWith('profile')) ? 'pass --no-profile to clear; uninstall removes the sprint kit' : 'uninstall removes the sprint kit') : 'pass --no-profile or --no-board to clear';
   if (reused.length) io.out(`using the options recorded at install: ${reused.join('; ')} (${clear})`);
-  return { profiles, board, boardRepo, noBoard, sprintKit, stacks };
+  return { profiles, board, boardRepo, noBoard, sprintKit, stacks, artifactSkipped };
+}
+
+// Reads ~/.orc/config.json for the board default when a single-tool install or status did not come through --all.
+// Returns {configBoard} or {error}. An invalid config or a local board with no repo fails only when this tool would
+// actually use the config board; otherwise an invalid config prints one WARN and the run proceeds without it.
+function resolveConfigBoard(repo, opt, manifest, io, env = process.env) {
+  let cfg;
+  try {
+    cfg = loadConfig({ tools: knownTools(repo), roles: loadRoles(repo).map((r) => r.name), env });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (usesConfigBoard(opt, manifest)) return { error: msg };
+    io.err(`WARN ${msg}`);
+    return { configBoard: null };
+  }
+  (cfg.warnings ?? []).forEach((w) => io.err(`WARN ${w}`));
+  const boardRule = boardDefault(cfg.config, cfg.file, isArtifactBoard);
+  if (boardRule?.error && usesConfigBoard(opt, manifest)) return { error: boardRule.error };
+  return { configBoard: boardRule?.error ? null : boardRule };
 }
 
 // True when installOptions will fall through to config.json's board default (no flag, no sprint kit, no recorded
@@ -384,9 +410,8 @@ export function buildTool(adapter, roles, models, agentsMd, { extraNotes = [], p
   return { files, errors, warnings, rulebook };
 }
 
-// `sprintKit` drops the board.local.md import from the tool notes: a kit machine has no board (its KIT_NOTES say so).
 // `env` and `warn` reach loadModels (the shared state home and its warnings).
-async function buildAll(repo, toolId, { local = true, shared = false, extraNotes = [], profiles = [], sprintKit = false, env = process.env, warn = undefined } = {}) {
+async function buildAll(repo, toolId, { local = true, shared = false, extraNotes = [], profiles = [], env = process.env, warn = undefined } = {}) {
   const roles = loadRoles(repo);
   const loaded = loadProfiles(repo, profiles);
   const models = loadModels(repo, { local, shared, env, warn });
@@ -394,15 +419,26 @@ async function buildAll(repo, toolId, { local = true, shared = false, extraNotes
   const adapters = await loadAdapters(repo);
   const picked = !toolId || toolId === 'all' ? adapters : adapters.filter((a) => a.id === toolId);
   if (!picked.length) throw new Error(`unknown tool ${toolId}; known: ${adapters.map((a) => a.id).join(', ')}`);
-  return picked
-    .map((adapter) => (sprintKit ? { ...adapter, notes: adapter.notes.replace(BOARD_IMPORT, '') } : adapter))
-    .map((adapter) => ({ adapter, ...buildTool(adapter, roles, models, agentsMd, { extraNotes, profiles: loaded }) }));
+  return picked.map((adapter) => ({ adapter, ...buildTool(adapter, roles, models, agentsMd, { extraNotes, profiles: loaded }) }));
 }
 
 // The scripts the tool's example hooks run (adapter.hookScripts), as files under its root: install copies them beside
 // the generated files and status compares them, but build, golden and check never emit them.
 function hookScriptFiles(repo, adapter, { sprintKit = false } = {}) {
-  return (adapter.hookScripts ?? []).filter((rel) => !sprintKit || KIT_HOOK_SCRIPTS.includes(rel)).map((rel) => ({ path: `${adapter.home.root}/${rel}`, content: read(path.join(repo, ...rel.split('/'))), hookScript: true }));
+  return (adapter.hookScripts ?? [])
+    .filter((rel) => !sprintKit || KIT_HOOK_SCRIPTS.includes(rel))
+    .map((rel) => ({ path: `${adapter.home.root}/${rel}`, content: read(path.join(repo, ...rel.split('/'))), handCopyLabel: 'hook script' }));
+}
+
+// Static per-tool files (adapter.staticFiles: workflow commands, orc-permissions skill) copied beside the generated
+// files on a full install, with the same safeguards as hook scripts; never part of build, golden, check or sprint-kit.
+function adapterStaticFiles(repo, adapter, { sprintKit = false } = {}) {
+  if (sprintKit) return [];
+  return (adapter.staticFiles ?? []).map(({ from, to, kind }) => ({
+    path: `${adapter.home.root}/${to}`,
+    content: read(path.join(repo, ...from.split('/'))),
+    handCopyLabel: kind,
+  }));
 }
 
 // The build the golden test compares against and the golden command writes: models.json only, no profiles, no extra notes.
@@ -537,23 +573,33 @@ export function parseAgyModels(text, family = 'flash') {
 // The comparison status prints and doctor summarises: every file install would write, against what is in `home`.
 // Prints one line per file through io.out; returns {error} or {adapter, clean, files, missing}, either with
 // `manifestError` when the manifest is corrupt (compared as absent; install refuses it).
-export async function compareInstall(repo, home, toolId, opt, io, configBoard = null, env = process.env) {
+export async function compareInstall(repo, home, toolId, opt, io, configBoard = undefined, env = process.env) {
   const known = (await loadAdapters(repo)).find((a) => a.id === toolId);
   const loaded = known ? loadManifest(home, known) : {};
   if (loaded.error) io.err(`WARN ${loaded.error}; ignoring it`);
   const flagged = (r) => (loaded.error ? { ...r, manifestError: loaded.error } : r);
-  const chosen = installOptions(opt, loaded.manifest, io, configBoard);
+  if (configBoard === undefined) {
+    const resolved = resolveConfigBoard(repo, opt, loaded.manifest, io, env);
+    if (resolved.error) return flagged({ error: resolved.error });
+    configBoard = resolved.configBoard;
+  }
+  const chosen = installOptions(opt, loaded.manifest, io, configBoard, toolId);
   if (artifactRefused(chosen.board, toolId)) return flagged({ error: ARTIFACT_ONLY_CLAUDE });
   let built;
   try {
-    [built] = await buildAll(repo, toolId, { shared: true, extraNotes: installNotes(chosen, toolId), profiles: chosen.profiles, sprintKit: chosen.sprintKit, env, warn: (w) => io.err(`WARN ${w}`) });
+    [built] = await buildAll(repo, toolId, { shared: true, extraNotes: installNotes(chosen, toolId), profiles: chosen.profiles, env, warn: (w) => io.err(`WARN ${w}`) });
   } catch (e) {
     return flagged({ error: e instanceof Error ? e.message : String(e) });
   }
   const { adapter, errors } = built;
   if (errors.length) return flagged({ error: errors.join('\n') });
   const kit = chosen.sprintKit;
-  const installed = [...built.files, ...hookScriptFiles(repo, adapter, { sprintKit: kit }), ...(kit ? kitFiles(repo, adapter) : [])].filter((f) => f.install !== false);
+  const installed = [
+    ...built.files,
+    ...hookScriptFiles(repo, adapter, { sprintKit: kit }),
+    ...adapterStaticFiles(repo, adapter, { sprintKit: kit }),
+    ...(kit ? kitFiles(repo, adapter) : []),
+  ].filter((f) => f.install !== false);
   const recorded = loaded.manifest?.files ?? null;
   const ours = new Set();
   let clean = true;
@@ -566,9 +612,9 @@ export async function compareInstall(repo, home, toolId, opt, io, configBoard = 
     else {
       const line = firstDiffLine(read(target), normalizeEol(f.content));
       if (line && recorded?.[f.path] && diskHash(target) !== recorded[f.path].sha256) state = `edited since install, differs (first difference at line ${line})`;
-      // A hand-copied hook script with no manifest entry is one install keeps: only --force replaces it.
-      else if (line && f.hookScript && !recorded?.[f.path] && !isGenerated(read(target))) {
-        state = `differs (first difference at line ${line}; a hand-copied hook script, which install --apply keeps: install --apply --force replaces it, with a backup)`;
+      // A hand-copied hook script, command or skill with no manifest entry is one install keeps: only --force replaces it.
+      else if (line && f.handCopyLabel && !recorded?.[f.path] && !isGenerated(read(target))) {
+        state = `differs (first difference at line ${line}; a hand-copied ${f.handCopyLabel}, which install --apply keeps: install --apply --force replaces it, with a backup)`;
       } else if (line) state = `differs (first difference at line ${line})`;
     }
     if (state !== 'same') clean = false;
@@ -584,7 +630,7 @@ export async function compareInstall(repo, home, toolId, opt, io, configBoard = 
     try {
       example = kitHookExample(repo);
     } catch (e) {
-      return flagged({ error: `cannot read ${path.join(repo, 'hooks.node.example.json')} (${e instanceof Error ? e.message : String(e)})` });
+      return flagged({ error: `cannot read ${path.join(repo, 'adapters', 'claude-code', 'hooks.node.example.json')} (${e instanceof Error ? e.message : String(e)})` });
     }
     const recordedAllow = Array.isArray(loaded.manifest?.kit?.settings?.allow) ? loaded.manifest.kit.settings.allow.filter((r) => typeof r === 'string') : [];
     try {
@@ -749,7 +795,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         } catch {
           manifest = null;
         }
-        const chosen = installOptions(opt, manifest, { ...io, out: () => {} }, configBoard);
+        const chosen = installOptions(opt, manifest, { ...io, out: () => {} }, configBoard, t);
         if (artifactRefused(chosen.board, t)) refused.push(`${t}: ${ARTIFACT_ONLY_CLAUDE}`);
       }
     }
@@ -899,7 +945,13 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const known = (await loadAdapters(repo)).find((a) => a.id === toolId);
     const early = known ? loadManifest(home, known) : {};
     if (early.error) return fail(`${early.error}; remove or fix the manifest by hand`);
-    const chosen = installOptions(opt, early.manifest, io, ctx.configBoard);
+    let configBoard = ctx.configBoard;
+    if (!Object.hasOwn(ctx, 'configBoard')) {
+      const resolved = resolveConfigBoard(repo, opt, early.manifest, io);
+      if (resolved.error) return fail(resolved.error);
+      configBoard = resolved.configBoard;
+    }
+    const chosen = installOptions(opt, early.manifest, io, configBoard, toolId);
     if (artifactRefused(chosen.board, toolId)) return fail(ARTIFACT_ONLY_CLAUDE);
     const kit = chosen.sprintKit;
     if (kit && (opt.board || opt['board-repo'])) return fail('the sprint kit installs no board: drop --board and --board-repo');
@@ -912,7 +964,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       );
     }
     const extraNotes = installNotes(chosen, toolId);
-    if (!chosen.board && !kit) io.err('WARN the board address is not set: pass --board <address> (with --board-repo <path> for a local board) so the rulebook names it');
+    if (!chosen.board && !kit && !chosen.artifactSkipped) io.err('WARN the board address is not set: pass --board <address> (with --board-repo <path> for a local board) so the rulebook names it');
     let stacks = chosen.stacks ?? [];
     if (kit && !chosen.stacks) {
       // Detection reads the current folder; the checkout itself (which has a package.json) is never the project.
@@ -925,13 +977,18 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     } else if (kit) io.out(`sprint kit: stack ${stacks.join(',')}`);
     let built;
     try {
-      [built] = await buildAll(repo, toolId, { shared: true, extraNotes, profiles: chosen.profiles, sprintKit: kit, warn: (w) => io.err(`WARN ${w}`) });
+      [built] = await buildAll(repo, toolId, { shared: true, extraNotes, profiles: chosen.profiles, warn: (w) => io.err(`WARN ${w}`) });
     } catch (e) {
       return fail(e.message);
     }
     const { adapter, errors } = built;
     if (errors.length) return fail(errors.join('\n'));
-    const files = [...built.files, ...hookScriptFiles(repo, adapter, { sprintKit: kit }), ...(kit ? kitFiles(repo, adapter) : [])];
+    const files = [
+      ...built.files,
+      ...hookScriptFiles(repo, adapter, { sprintKit: kit }),
+      ...adapterStaticFiles(repo, adapter, { sprintKit: kit }),
+      ...(kit ? kitFiles(repo, adapter) : []),
+    ];
     for (const c of adapter.conflicts ?? []) {
       const other = path.join(home, ...c.path.split('/'));
       if (!fs.existsSync(other) || !fs.statSync(other).isFile()) continue;
@@ -982,7 +1039,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       try {
         example = kitHookExample(repo);
       } catch (e) {
-        return fail(`cannot read ${path.join(repo, 'hooks.node.example.json')} (${e instanceof Error ? e.message : String(e)}); nothing written`);
+        return fail(`cannot read ${path.join(repo, 'adapters', 'claude-code', 'hooks.node.example.json')} (${e instanceof Error ? e.message : String(e)}); nothing written`);
       }
       // The guard.mjs the kit is about to write counts as on disk.
       const kitGuard = path.join(home, ...root.split('/'), ...KIT_HOOK_SCRIPTS[0].split('/'));
@@ -1015,8 +1072,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
           // manifest entry only rulebooks and TOML agents carry a marker; any other differing file is hand-written.
           if (m && diskHash(target) !== m.sha256) state = 'REPLACE EDITED';
           else if (!m && !isGenerated(current)) state = 'REPLACE HAND-WRITTEN';
-          // A hook script copied by hand before install shipped them is kept, so it never refuses the whole install.
-          if (state === 'REPLACE HAND-WRITTEN' && f.hookScript && !opt.force) state = 'KEEP';
+          // A hook script, command or skill copied by hand before install shipped them is kept, so it never refuses the whole install.
+          if (state === 'REPLACE HAND-WRITTEN' && f.handCopyLabel && !opt.force) state = 'KEEP';
           // On a borrowed machine the kit replaces the owner's own file after a backup, and uninstall puts it back.
           if (state === 'REPLACE HAND-WRITTEN' && kit) state = KIT_RESTORABLE;
         }
@@ -1058,7 +1115,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     try {
       for (const { f, target, exists, state } of plan) {
         if (state === 'KEEP') {
-          io.out(`${opt.apply ? 'kept' : 'would keep'} (hand-copied hook script, differs; --force replaces it, with a backup): ${target}`);
+          io.out(`${opt.apply ? 'kept' : 'would keep'} (hand-copied ${f.handCopyLabel}, differs; --force replaces it, with a backup): ${target}`);
           continue;
         }
         // A file any install finds already in place, identical and in no manifest, is the owner's: not recorded, so
@@ -1322,7 +1379,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     if (artifactRefused(opt.board, toolId)) return fail(ARTIFACT_ONLY_CLAUDE);
     if (boardPairError(opt, toolId)) return fail('pass --board and --board-repo together, or neither (an artifact --board needs no --board-repo)');
     const home = path.resolve(opt.home ?? os.homedir());
-    const r = await compareInstall(repo, home, toolId, opt, io, ctx.configBoard);
+    const r = await compareInstall(repo, home, toolId, opt, io, Object.hasOwn(ctx, 'configBoard') ? ctx.configBoard : undefined);
     if (r.error) return fail(r.error);
     const { adapter, clean } = r;
     io.out(clean ? `status ${adapter.id}: all same` : `status ${adapter.id}: out of date (install --apply updates it)`);
@@ -1554,15 +1611,23 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   if (cmd === 'hooks') {
     if (!opt.home) return fail('hooks needs --home <dir> (no default)');
     const home = path.resolve(opt.home);
-    const source = path.join(repo, opt.node ? 'hooks.node.example.json' : 'settings.example.json');
+    const source = path.join(repo, 'adapters', 'claude-code', opt.node ? 'hooks.node.example.json' : 'settings.example.json');
     const target = path.join(home, '.claude', 'settings.json');
     const unsafe = escapes(home, '.claude', target);
     if (unsafe) return fail(`hooks: ${unsafe}; nothing written`);
     try {
       const { original, bom, settings } = readSettings(target);
-      const { merged, added } = mergeHooks(settings, JSON.parse(read(source)), home);
+      const { merged, added, stale } = mergeHooks(settings, JSON.parse(read(source)), home, SETUP);
+      for (const s of stale) {
+        io.out(`stale ${s.event}${s.matcher ? ` [${s.matcher}]` : ''} (replace by hand; not duplicated): ${s.oldCommand}`);
+        io.out(`  -> ${s.command}`);
+      }
       if (!added.length) {
-        io.out(`nothing to add: every hook in ${path.basename(source)} is already in ${target}`);
+        io.out(
+          stale.length
+            ? `nothing added: ${stale.length} stale hook(s) still point at .claude/tools/worklog or .claude/tools/peon in ${target}; replace them with the paths above`
+            : `nothing to add: every hook in ${path.basename(source)} is already in ${target}`,
+        );
         return 0;
       }
       for (const a of added) {

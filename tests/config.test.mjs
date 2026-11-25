@@ -639,27 +639,108 @@ test('install --all with no --home installs claude-code into the home folder lik
 });
 
 test('install --all checks every refusal for every tool before writing anything', async () => {
-
   const home = tempDir('home');
+  // An artifact config.board applies to claude-code only: non-Claude tools get no Board line and one notice, never refused.
   const artifact = dataDir({ version: 1, activeTools: ['claude-code', 'antigravity'], board: { url: 'https://claude.ai/artifact/abc' } });
   const a = await run(['install', '--all', '--home', home, '--apply'], artifact);
-  assert.equal(a.code, 1);
-  assert.match(a.err, /refused: antigravity: the artifact board can be written only from Claude Code/);
-  assert.deepEqual(fs.readdirSync(home), [], 'claude-code, first in order, was not written');
-  assert.match((await run(['status', '--all', '--home', home], artifact)).err, /refused: antigravity: the artifact board/);
+  assert.equal(a.code, 0, a.err);
+  assert.match(a.out, /using the board from .*config\.json: https:\/\/claude\.ai\/artifact\/abc/);
+  assert.match(a.out, /skipping the artifact board in .*config\.json for antigravity \(the artifact board can be written only from Claude Code; no Board line added\)/);
+  assert.match(fs.readFileSync(path.join(home, '.claude', 'CLAUDE.md'), 'utf8'), /board address is `https:\/\/claude\.ai\/artifact\/abc`/);
+  assert.doesNotMatch(fs.readFileSync(path.join(home, '.gemini', 'AGENTS.md'), 'utf8'), /board address is/);
+  const ast = await run(['status', '--all', '--home', home], artifact);
+  assert.equal(ast.code, 0, ast.out);
+  assert.match(ast.out, /status claude-code: all same[\s\S]*status antigravity: all same/);
 
   // A hand-written file in the way of the second tool stops the first one too.
-  fs.mkdirSync(path.join(home, '.codex'));
-  fs.writeFileSync(path.join(home, '.codex', 'AGENTS.md'), 'my own rules\n');
+  const home2 = tempDir('home2');
+  fs.mkdirSync(path.join(home2, '.codex'));
+  fs.writeFileSync(path.join(home2, '.codex', 'AGENTS.md'), 'my own rules\n');
   const blocked = dataDir({ version: 1, activeTools: ['antigravity', 'codex'] });
-  const b = await run(['install', '--all', '--home', home, '--apply'], blocked);
+  const b = await run(['install', '--all', '--home', home2, '--apply'], blocked);
   assert.equal(b.code, 1);
   assert.match(b.err, /refused: codex: refused \(hand-written; pass --force to replace it, with a backup\): .*AGENTS\.md/);
   assert.match(b.err, /nothing written: install --all refused for codex$/m);
-  assert.equal(fs.existsSync(path.join(home, '.gemini')), false);
-  assert.equal(fs.readFileSync(path.join(home, '.codex', 'AGENTS.md'), 'utf8'), 'my own rules\n');
+  assert.equal(fs.existsSync(path.join(home2, '.gemini')), false);
+  assert.equal(fs.readFileSync(path.join(home2, '.codex', 'AGENTS.md'), 'utf8'), 'my own rules\n');
   const local = dataDir({ version: 1, activeTools: ['antigravity'], board: { url: 'http://localhost:1' } });
-  assert.match((await run(['status', '--all', '--home', home], local)).err, /board\.repo is needed with the local board address/);
+  assert.match((await run(['status', '--all', '--home', home2], local)).err, /board\.repo is needed with the local board address/);
+});
+
+test('single-tool install and status use config.json board as last default; artifact config board skips non-Claude with one notice', async () => {
+  const home = tempDir('single-board');
+  const localData = dataDir({ version: 1, board: { url: 'http://localhost:8377', repo: REPO } });
+  const inst = await run(['install', '--tool', 'codex', '--home', home, '--apply'], localData);
+  assert.equal(inst.code, 0, inst.err);
+  assert.match(inst.out, /using the board from .*config\.json: http:\/\/localhost:8377/);
+  assert.match(fs.readFileSync(path.join(home, '.codex', 'AGENTS.md'), 'utf8'), /board address is `http:\/\/localhost:8377`/);
+  assert.equal((await run(['status', '--tool', 'codex', '--home', home], localData)).code, 0);
+  // Precedence: flag > manifest > recorded --no-board > config.board.
+  const otherLocal = dataDir({ version: 1, board: { url: 'http://localhost:8399', repo: REPO } });
+  assert.equal((await run(['status', '--tool', 'codex', '--home', home], otherLocal)).code, 0, 'manifest board wins over config.board');
+  assert.equal((await run(['install', '--tool', 'codex', '--home', home, '--no-board', '--apply'], otherLocal)).code, 0);
+  const afterNoBoard = await run(['install', '--tool', 'codex', '--home', home, '--apply'], otherLocal);
+  assert.equal(afterNoBoard.code, 0, afterNoBoard.err);
+  assert.doesNotMatch(afterNoBoard.out, /using the board from/, 'recorded --no-board blocks config.board');
+  assert.doesNotMatch(fs.readFileSync(path.join(home, '.codex', 'AGENTS.md'), 'utf8'), /board address is/);
+  // Artifact config board: claude-code gets it, antigravity gets no Board line + one notice (and no WARN board not set).
+  const artData = dataDir({ version: 1, board: { url: 'https://claude.ai/artifact/xyz' } });
+  const artHome = tempDir('single-art');
+  const cc = await run(['install', '--tool', 'claude-code', '--home', artHome, '--apply'], artData);
+  assert.equal(cc.code, 0, cc.err);
+  assert.match(fs.readFileSync(path.join(artHome, '.claude', 'CLAUDE.md'), 'utf8'), /board address is `https:\/\/claude\.ai\/artifact\/xyz`/);
+  const agy = await run(['install', '--tool', 'antigravity', '--home', artHome, '--apply'], artData);
+  assert.equal(agy.code, 0, agy.err);
+  assert.match(agy.out, /skipping the artifact board in .*config\.json for antigravity/);
+  assert.doesNotMatch(agy.err, /board address is not set/);
+  assert.doesNotMatch(fs.readFileSync(path.join(artHome, '.gemini', 'AGENTS.md'), 'utf8'), /board address is/);
+  const agySt = await run(['status', '--tool', 'antigravity', '--home', artHome], artData);
+  assert.equal(agySt.code, 0, agySt.out);
+  // Explicit --board <artifact> flag on non-Claude is still refused.
+  const refusedFlag = await run(['install', '--tool', 'antigravity', '--home', artHome, '--board', 'https://claude.ai/artifact/xyz'], artData);
+  assert.equal(refusedFlag.code, 1);
+  assert.match(refusedFlag.err, /the artifact board can be written only from Claude Code/);
+  // Single-tool status falls back to config.json board when installed with no board (and no --no-board).
+  const noBoardHome = tempDir('single-status-cfg');
+  const noBoardData = dataDir({ version: 1 });
+  assert.equal((await run(['install', '--tool', 'codex', '--home', noBoardHome, '--apply'], noBoardData)).code, 0);
+  fs.writeFileSync(path.join(noBoardData, 'config.json'), JSON.stringify({ version: 1, board: { url: 'http://localhost:8377', repo: REPO } }));
+  const stCfg = await run(['status', '--tool', 'codex', '--home', noBoardHome], noBoardData);
+  assert.equal(stCfg.code, 1, stCfg.out);
+  assert.match(stCfg.out, /using the board from .*config\.json: http:\/\/localhost:8377/);
+  assert.match(stCfg.out, /differs \(first difference at line \d+\): .*AGENTS\.md/);
+});
+
+test('single-tool install and status fail on an invalid config.json only when they would fall back to its board', async () => {
+  const bad = dataDir('{ not json');
+  const badFile = path.join(bad, 'config.json');
+  const empty = tempDir('badcfg-plain');
+  for (const argv of [['install', '--tool', 'codex', '--home', empty], ['status', '--tool', 'codex', '--home', empty]]) {
+    const r = await run(argv, bad);
+    assert.equal(r.code, 1, argv.join(' '));
+    assert.ok(r.err.includes(`${badFile}: not valid JSON`), r.err);
+  }
+  const home = tempDir('badcfg-flag');
+  const withFlag = await run(['install', '--tool', 'codex', '--home', home, '--board', 'http://localhost:1', '--board-repo', REPO, '--apply'], bad);
+  assert.equal(withFlag.code, 0, withFlag.err);
+  assert.equal(withFlag.err.split('\n').filter((l) => l.startsWith('WARN ')).length, 1, withFlag.err);
+  assert.ok(withFlag.err.includes(`WARN ${badFile}: not valid JSON`), withFlag.err);
+  for (const argv of [['status', '--tool', 'codex', '--home', home], ['install', '--tool', 'codex', '--home', home]]) {
+    const r = await run(argv, bad);
+    assert.equal(r.code, 0, r.err);
+    assert.ok(r.err.includes(`WARN ${badFile}: not valid JSON`), r.err);
+  }
+  const nbHome = tempDir('badcfg-nb');
+  const nbInst = await run(['install', '--tool', 'codex', '--home', nbHome, '--no-board', '--apply'], bad);
+  assert.equal(nbInst.code, 0, nbInst.err);
+  assert.ok(nbInst.err.includes(`WARN ${badFile}: not valid JSON`), nbInst.err);
+  const nbSt = await run(['status', '--tool', 'codex', '--home', nbHome], bad);
+  assert.equal(nbSt.code, 0, nbSt.err);
+  assert.ok(nbSt.err.includes(`WARN ${badFile}: not valid JSON`), nbSt.err);
+  const kitHome = tempDir('badcfg-kit');
+  const kit = await run(['install', '--tool', 'claude-code', '--sprint-kit', '--home', kitHome], bad);
+  assert.equal(kit.code, 0, kit.err);
+  assert.ok(kit.err.includes(`WARN ${badFile}: not valid JSON`), kit.err);
 });
 
 // ---------- rework round 1 ----------
@@ -907,9 +988,89 @@ test('doctor WARN and FAIL branches: setup checkout, no recipe, no model, --vers
   assert.deepEqual(starts(dir), []);
   const noSetup = await run(['doctor', '--home', tempDir('home')], dataDir({ version: 1 }));
   assert.match(noSetup.out, /^WARN setupCheckout: not set in .*config\.json$/m);
-  // The comparison itself failing (the artifact config board on a non-Claude tool) is a WARN naming why.
-  const art = await run(['doctor', '--home', tempDir('home')], dataDir({ version: 1, activeTools: ['antigravity'], binaries: { antigravity: stub(dir) }, board: { url: 'https://claude.ai/artifact/abc' } }));
+  // The comparison itself failing (e.g. a manifest recording an artifact board on a non-Claude tool) is a WARN naming why.
+  const badHome = tempDir('doc-art-manifest');
+  fs.mkdirSync(path.join(badHome, '.gemini'), { recursive: true });
+  fs.writeFileSync(path.join(badHome, '.gemini', '.orc-manifest.antigravity.json'), JSON.stringify({
+    tool: 'antigravity',
+    version: 1,
+    options: { profiles: [], board: 'https://claude.ai/artifact/abc', boardRepo: null },
+    files: {},
+    dirs: [],
+  }));
+  const art = await run(['doctor', '--home', badHome], dataDir({ version: 1, activeTools: ['antigravity'], binaries: { antigravity: stub(dir) } }));
   assert.match(art.out, /^WARN antigravity install: cannot compare with .*: the artifact board can be written only from Claude Code/m);
+});
+
+test('doctor warns when retired ~/.claude/board.local.md still exists, and counts installed Claude static files', async () => {
+  const home = tempDir('doc-retired');
+  const retired = path.join(home, '.claude', 'board.local.md');
+  fs.mkdirSync(path.dirname(retired), { recursive: true });
+  fs.writeFileSync(retired, 'https://claude.ai/artifact/old\n');
+  // Warns even when config.json does not exist yet.
+  const noCfg = dataDir();
+  const r1 = await run(['doctor', '--home', home], noCfg);
+  assert.equal(r1.code, 0, r1.out);
+  assert.ok(
+    r1.out.includes(`WARN board: ${retired} is no longer read by orc; the board address comes from ${path.join(noCfg, 'config.json')}. Reinstall the hook scripts first (install --tool claude-code --apply --force), then delete it`),
+    r1.out,
+  );
+  // Warns alongside the board check when config.json exists, and doctor counts Claude static files for drift.
+  const dir = tempDir('stub');
+  const data = dataDir({ version: 1, activeTools: ['claude-code'], binaries: { 'claude-code': stub(dir) }, board: { url: 'https://claude.ai/artifact/new' } });
+  assert.equal((await run(['install', '--tool', 'claude-code', '--home', home, '--apply'], data)).code, 0);
+  const r2 = await run(['doctor', '--home', home], data);
+  assert.equal(r2.code, 0, r2.out);
+  assert.ok(
+    r2.out.includes(`WARN board: ${retired} is no longer read by orc; the board address comes from ${path.join(data, 'config.json')}. Reinstall the hook scripts first (install --tool claude-code --apply --force), then delete it`),
+    r2.out,
+  );
+  assert.match(r2.out, /^OK claude-code install: clean in /m);
+  // Deleting an installed static workflow command turns claude-code install into drift.
+  fs.rmSync(path.join(home, '.claude', 'commands', 'start.md'));
+  const r3 = await run(['doctor', '--home', home], data);
+  assert.match(r3.out, /^WARN claude-code install: drift in /m);
+  // Removing board.local.md clears the retirement warning.
+  fs.rmSync(retired);
+  const r4 = await run(['doctor', '--home', home], data);
+  assert.doesNotMatch(r4.out, /is no longer read by orc/);
+});
+
+test('doctor warns when a hand-copied board-reminder hook differs from this checkout; --force clears it', async () => {
+  const home = tempDir('doc-hooks-migr');
+  const tools = path.join(home, '.claude', 'tools');
+  const ps1 = path.join(tools, 'board-reminder.ps1');
+  const mjs = path.join(tools, 'board-reminder.mjs');
+  const retired = path.join(home, '.claude', 'board.local.md');
+  fs.mkdirSync(tools, { recursive: true });
+  fs.writeFileSync(ps1, '# old hand-copied board reminder keying on board.local.md\n');
+  fs.writeFileSync(mjs, '// old hand-copied node board reminder\n');
+  fs.writeFileSync(retired, 'https://claude.ai/artifact/old\n');
+  const data = dataDir({ version: 1, board: { url: 'http://localhost:9', repo: REPO } });
+  const cfgPath = path.join(data, 'config.json');
+  const before = await run(['doctor', '--home', home], data);
+  assert.equal(before.code, 0, before.out);
+  assert.ok(
+    before.out.includes(`WARN board: ${retired} is no longer read by orc; the board address comes from ${cfgPath}. Reinstall the hook scripts first (install --tool claude-code --apply --force), then delete it`),
+    before.out,
+  );
+  for (const file of [ps1, mjs]) {
+    assert.ok(
+      before.out.includes(`WARN claude-code hooks: ${file} differs from this checkout (an older board reminder still keys on board.local.md); install --tool claude-code --apply --force replaces it, with a backup`),
+      before.out,
+    );
+  }
+  const forced = await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--force'], data);
+  assert.equal(forced.code, 0, forced.err);
+  assert.equal(fs.readdirSync(tools).filter((f) => f.startsWith('board-reminder.ps1.orc-backup-')).length, 1);
+  const after = await run(['doctor', '--home', home], data);
+  assert.equal(after.code, 0, after.out);
+  assert.doesNotMatch(after.out, /WARN claude-code hooks:/);
+  assert.ok(after.out.includes(`WARN board: ${retired} is no longer read by orc;`), after.out);
+  fs.rmSync(retired);
+  const clean = await run(['doctor', '--home', home], data);
+  assert.doesNotMatch(clean.out, /is no longer read by orc/);
+  assert.doesNotMatch(clean.out, /WARN claude-code hooks:/);
 });
 
 // runDoctor with the real dependencies and `extra` added to the environment it is given (process.env is untouched).

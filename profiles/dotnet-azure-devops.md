@@ -80,7 +80,7 @@ Incidents behind these rules: `docs/rulebook-notes.md`.
 
 ### Versioning the setup
 
-The setup lives in a standalone git repo (public GitHub `Co0pDawg/Orc-istration`) with a standard `.gitignore`, and installs into each tool's home folder (`node tools/orc.mjs sync --apply` or `install --tool <id> --apply`). `core/AGENTS.md`, `core/roles/`, `adapters/`, `models.json`, `settings.example.json`, `orchestration/README.md`, `tests/golden/` and `tools/` are tracked; transcripts, credentials, memory, plugins, `settings.json`, the cost logs, `models.local.json` and `board.local.md` are not (the repo is public). After changing a tracked source, regenerate goldens (`node tools/orc.mjs golden`), run tests and `check`, commit and push in the same session, and run `node tools/orc.mjs sync --apply` to update the live installs; `README.md` covers restoring and installing for each tool. The board is its own repo (`orchestration/board`, `Co0pDawg/Orc-Dashboard`).
+The setup lives in a standalone git repo (public GitHub `Co0pDawg/Orc-istration`) with a standard `.gitignore`, and installs into each tool's home folder (`node tools/orc.mjs sync --apply` or `install --tool <id> --apply`). `core/AGENTS.md`, `core/roles/`, `adapters/` (including `adapters/claude-code/settings.example.json`), `extras/`, `models.json`, `orchestration/README.md`, `tests/golden/` and `tools/` are tracked; transcripts, credentials, memory, plugins, `settings.json`, the cost logs, `models.local.json` and `~/.orc/config.json` are not (the repo is public). After changing a tracked source, regenerate goldens (`node tools/orc.mjs golden`), run tests and `check`, commit and push in the same session, and run `node tools/orc.mjs sync --apply` to update the live installs; `README.md` covers restoring and installing for each tool. The board is its own repo (`orchestration/board`, `Co0pDawg/Orc-Dashboard`).
 
 When anything leaves a public repo's allow-list, scan all of that repo's history for people's names and internal terms, not just the current files. Untracking keeps the old commits.
 
@@ -93,7 +93,7 @@ Every orchestrated task writes one record to `~/.claude/orchestration/log/<date>
 ### Orchestration Board
 
 - In AcmeApp, `/start` Step 15 runs the durable-rules check.
-- Every hours roll-up (`worklog.ps1 <date>`, in any project) ends by running `~/.claude/tools/worklog/sync-timeline.ps1 -Date <date> -Force` and uploading the pending files to the board (worklog README "Uploading"), so the Time page matches the roll-up without a "sync my timeline".
+- Every hours roll-up (`worklog.ps1 <date>`, in any project) ends by running `<setup>/extras/worklog/sync-timeline.ps1 -Date <date> -Force` and uploading the pending files to the board (worklog README "Uploading"), so the Time page matches the roll-up without a "sync my timeline".
 
 ### Test runs
 
