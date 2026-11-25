@@ -75,7 +75,7 @@ export const HELP = {
     },
   },
   models: {
-    summary: 'Turn the output of "agy models" into a models.local.json fragment',
+    summary: 'Turn the output of "agy models" into a models.local.json fragment (Flash slugs only)',
     synopsis: 'models --tool antigravity --from-stdin',
     options: {
       '--tool antigravity': 'the only supported tool',
