@@ -2,9 +2,10 @@
 import { generatedMarker } from '../tools/lib/frontmatter.mjs';
 import { serializeToml } from '../tools/lib/toml.mjs';
 
-// Codex's read-only sandbox blocks every write, temp files included. Only the roles that read and report inline get
-// it; the other read-only roles (refuter, review-*) run tests, build a throwaway worktree and write a scratch report,
-// so they run workspace-write and their no-edit rule rests on the role body, as on the other tools.
+// Codex's read-only sandbox blocks every write, temp files included, so scout and researcher, which get it, report
+// inline (a scratch file cannot be written). Every other role runs workspace-write: the refuter runs tests and builds a
+// throwaway worktree, and the review-* roles write at most an overflow scratch report; their no-edit rule rests on the
+// role body, as on the other tools.
 const READ_ONLY_SANDBOX = new Set(['scout', 'researcher']);
 
 export default {
@@ -14,7 +15,9 @@ export default {
   capabilityTools: null,
   limits: { ruleBytes: 32768 },
   gaps: [
-    'No per-agent tool allowlist, sandbox or approval setting in agents/*.toml: read-only rests on the role body. `orc.mjs dispatch` adds `--sandbox read-only` only for scout and researcher; refuter and review-* run `workspace-write`, because they write test output, worktrees and scratch reports.',
+    'No per-agent tool allowlist, sandbox or approval setting in agents/*.toml: read-only rests on the role body. `orc.mjs dispatch` adds `--sandbox read-only` only for scout and researcher; every other role runs `workspace-write`, because the refuter runs tests and builds a throwaway worktree and the review-* roles write at most an overflow scratch report.',
+    'A headless scout or researcher runs in the read-only sandbox, which cannot write a scratch file: its report must be inline.',
+    'Headless runs (`codex exec`) have no web tool, and network access depends on your Codex sandbox configuration, so web lookups are best routed to another tool.',
     'No imports in AGENTS.md: the whole rulebook is one file (32 KiB default cap).',
     'No hook system in the research: the board update after an agent report is a build-loop step.',
     'Native Windows workspace-write passed with MXC on standalone Codex CLI 0.172.0. See docs/example-prompts.md for the tested configuration and earlier bundled and legacy sandbox errors.',

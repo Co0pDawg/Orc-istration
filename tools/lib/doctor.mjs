@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { orcHome, configFile, loadConfig, routeChain } from './config.mjs';
+import { orcHome, configFile, loadConfig, routeChain, boardDefault } from './config.mjs';
 import { dispatchPlan, resolveExecutable, unavailable, binEnv, killTree } from './dispatch.mjs';
 import { TIERS } from './models.mjs';
 
@@ -75,24 +75,32 @@ export async function runDoctor({ repo, home, json, io, env = process.env, timeo
     cfg = loadConfig({ tools: adapters.map((a) => a.id), roles: roles.map((r) => r.name), env });
     if (cfg.config) add('OK', 'config', cfg.file);
     else add('WARN', 'config', `no ${cfg.file}; write one to route dispatch without --tool and to use --all (docs/cli.md)`);
+    for (const w of cfg.warnings ?? []) add('WARN', 'config', w);
   } catch (e) {
     add('FAIL', 'config', message(e));
   }
   const config = cfg.config;
 
+  // No fallback to the checkout's models alone: dispatch would fail on the same file.
   const sharedModels = path.join(orcHome(env), 'models.json');
   let models = null;
+  const modelWarnings = [];
   try {
-    models = loadModels(repo, { shared: true, env });
+    models = loadModels(repo, { shared: true, env, warn: (w) => modelWarnings.push(w) });
     add('OK', 'models', fs.existsSync(sharedModels) ? sharedModels : `none (no ${sharedModels})`);
+    for (const w of modelWarnings) add('WARN', 'models', w);
   } catch (e) {
     add('FAIL', 'models', message(e));
-    try {
-      models = loadModels(repo);
-    } catch {
-      models = null;
-    }
   }
+
+  // One check that throws becomes that check's WARN; the others still run.
+  const guarded = async (check, tool, fn) => {
+    try {
+      await fn();
+    } catch (e) {
+      add('WARN', check, `the check failed: ${message(e)}`, tool);
+    }
+  };
 
   if (config) {
     const sc = config.setupCheckout;
@@ -101,70 +109,87 @@ export async function runDoctor({ repo, home, json, io, env = process.env, timeo
     else add('WARN', 'setupCheckout', `${sc} does not hold tools/orc.mjs`);
 
     const bins = { binaries: config.binaries ?? null, configFile: cfg.file };
-    const b = config.board;
-    const configBoard = b && (b.repo || isArtifactBoard(b.url)) ? { board: b.url, boardRepo: b.repo ?? null, file: cfg.file } : null;
+    const boardRule = boardDefault(config, cfg.file, isArtifactBoard);
+    const configBoard = boardRule?.error ? null : boardRule;
     const quiet = { ...io, out: () => {}, err: () => {} };
     for (const id of config.activeTools ?? []) {
       const adapter = adapters.find((a) => a.id === id);
-      if (typeof adapter.headless !== 'function') add('WARN', 'headless', 'no headless recipe, so dispatch cannot run it', id);
-      else {
-        const tiers = models?.[id] ?? {};
-        const gaps = TIERS.filter((t) => !(tiers.headless?.[t] ?? tiers[t]?.model));
-        add(gaps.length ? 'WARN' : 'OK', 'headless', gaps.length ? `recipe present; no model for ${gaps.join(', ')}` : 'recipe present; a model for low, mid and high', id);
-        const name = adapter.headless(roles[0], { model: 'probe' }, '').command;
-        const exe = resolveExecutable(name, id, env, bins);
-        const from = { env: `env ${binEnv(id)}`, config: `binaries.${id} in ${cfg.file}`, PATH: 'PATH' }[exe.source];
-        if (exe.shim) add('WARN', 'binary', shimHint(exe, id, cfg.file), id);
-        else if (exe.missing) add('FAIL', 'binary', exe.reason ?? `${name} not found on PATH`, id);
-        else if (exe.unusable) add('FAIL', 'binary', exe.unusable, id);
+      await guarded('headless', id, async () => {
+        if (typeof adapter.headless !== 'function') add('WARN', 'headless', 'no headless recipe, so dispatch cannot run it', id);
         else {
-          add('OK', 'binary', `${exe.pre[0] ?? exe.command} (from ${from})`, id);
-          const v = await probe(exe, ['--version'], timeouts.probeMs);
-          if (v.problem) add('WARN', 'version', `--version: ${v.problem}`, id);
-          else add(v.code === 0 ? 'OK' : 'WARN', 'version', v.code === 0 ? (v.out ?? 'answered') : `--version exited ${v.code}`, id);
-          // The probe's output names the account: only its exit code is reported.
-          if (!adapter.authProbe) add('OK', 'auth', 'not checked (no status command)', id);
+          const tiers = models?.[id] ?? {};
+          const gaps = TIERS.filter((t) => !(tiers.headless?.[t] ?? tiers[t]?.model));
+          if (!models) add('WARN', 'headless', 'recipe present; the models cannot be read (see the models check)', id);
+          else add(gaps.length ? 'WARN' : 'OK', 'headless', gaps.length ? `recipe present; no model for ${gaps.join(', ')}` : 'recipe present; a model for low, mid and high', id);
+          const name = adapter.headless(roles[0], { model: 'probe' }, '').command;
+          const exe = resolveExecutable(name, id, env, bins);
+          const from = { env: `env ${binEnv(id)}`, config: `binaries.${id} in ${cfg.file}`, PATH: 'PATH' }[exe.source];
+          // A shim named in binaries or ORC_TOOL_BIN_* is one dispatch will be told to start: FAIL. One found on PATH
+          // only: WARN.
+          if (exe.shim) add(exe.source === 'PATH' ? 'WARN' : 'FAIL', 'binary', shimHint(exe, id, cfg.file), id);
+          else if (exe.missing) add('FAIL', 'binary', exe.reason ?? `${name} not found on PATH`, id);
+          else if (exe.unusable) add('FAIL', 'binary', exe.unusable, id);
           else {
-            const a = await probe(exe, adapter.authProbe.args, timeouts.probeMs);
-            if (a.code === 0) add('OK', 'auth', 'signed in', id);
-            else add('WARN', 'auth', `not signed in or the check failed (${a.problem ?? (a.code == null ? 'killed by a signal' : `exit ${a.code}`)})`, id);
+            add('OK', 'binary', `${exe.pre[0] ?? exe.command} (from ${from})`, id);
+            const v = await probe(exe, ['--version'], timeouts.probeMs);
+            if (v.problem) add('WARN', 'version', `--version: ${v.problem}`, id);
+            else add(v.code === 0 ? 'OK' : 'WARN', 'version', v.code === 0 ? (v.out ?? 'answered') : `--version exited ${v.code}`, id);
+            // The probe's output names the account: only its exit code is reported.
+            if (!adapter.authProbe) add('OK', 'auth', 'not checked (no status command)', id);
+            else {
+              const a = await probe(exe, adapter.authProbe.args, timeouts.probeMs);
+              if (a.code === 0) add('OK', 'auth', 'signed in', id);
+              else add('WARN', 'auth', `not signed in or the check failed (${a.problem ?? (a.code == null ? 'killed by a signal' : `exit ${a.code}`)})`, id);
+            }
           }
         }
-      }
-      const r = await compareInstall(repo, home, id, {}, quiet, configBoard);
-      if (r.error) add('WARN', 'install', `cannot compare with ${home}: ${r.error.split('\n')[0]}`, id);
-      else if (r.clean) add('OK', 'install', `clean in ${home}`, id);
-      else if (r.missing === r.files) add('WARN', 'install', `not installed in ${home}`, id);
-      else add('WARN', 'install', `drift in ${home} (status --tool ${id} lists the files)`, id);
+      });
+      await guarded('install', id, async () => {
+        const r = await compareInstall(repo, home, id, {}, quiet, configBoard, env);
+        if (r.manifestError) add('FAIL', 'install', `${r.manifestError}; install will refuse`, id);
+        else if (r.error) add('WARN', 'install', `cannot compare with ${home}: ${r.error.split('\n')[0]}`, id);
+        else if (r.clean) add('OK', 'install', `clean in ${home}`, id);
+        else if (r.missing === r.files) add('WARN', 'install', `not installed in ${home}`, id);
+        else add('WARN', 'install', `drift in ${home} (status --tool ${id} lists the files)`, id);
+      });
     }
 
     for (const role of roles) {
-      const chain = routeChain(config, role.name);
-      if (!chain.length) {
-        add('WARN', 'routing', `${role.name}: no route and no fallback; dispatch needs --tool`);
-        continue;
-      }
-      const skipped = [];
-      let first = null;
-      for (const id of chain) {
-        const why = models ? unavailable(dispatchPlan(adapters.find((a) => a.id === id), role, models, '', env, bins)) : 'models cannot be read';
-        if (!why) {
-          first = id;
-          break;
+      await guarded('routing', undefined, async () => {
+        const chain = routeChain(config, role.name);
+        if (!chain.length) {
+          add('WARN', 'routing', `${role.name}: no route and no fallback; dispatch needs --tool`);
+          return;
         }
-        skipped.push(`${id} (${why})`);
-      }
-      const head = `${role.name}: ${chain.join(' > ')}`;
-      if (first) add('OK', 'routing', `${head}; runs ${first}${skipped.length ? `; skips ${skipped.join(', ')}` : ''}`);
-      else add('FAIL', 'routing', `${head}; none available: ${skipped.join(', ')}`);
+        const head = `${role.name}: ${chain.join(' > ')}`;
+        if (!models) {
+          add('FAIL', 'routing', `${head}; the models cannot be read (see the models check), so dispatch cannot run it`);
+          return;
+        }
+        const skipped = [];
+        let first = null;
+        for (const id of chain) {
+          const why = unavailable(dispatchPlan(adapters.find((a) => a.id === id), role, models, '', env, bins));
+          if (!why) {
+            first = id;
+            break;
+          }
+          skipped.push(`${id} (${why})`);
+        }
+        if (first) add('OK', 'routing', `${head}; runs ${first}${skipped.length ? `; skips ${skipped.join(', ')}` : ''}`);
+        else add('FAIL', 'routing', `${head}; none available: ${skipped.join(', ')}`);
+      });
     }
 
-    const url = config.board?.url;
-    if (!url) add('WARN', 'board', `not configured in ${cfg.file}`);
-    else if (isLocalBoard(url)) {
-      const problem = await boardHealth(url, timeouts.boardMs);
-      add(problem ? 'WARN' : 'OK', 'board', problem ? `${url} ${problem}` : `${url} (health ok)`);
-    } else add('OK', 'board', `${url} (not fetched)`);
+    await guarded('board', undefined, async () => {
+      const url = config.board?.url;
+      if (!url) add('WARN', 'board', `not configured in ${cfg.file}`);
+      else if (boardRule?.error) add('FAIL', 'board', `${boardRule.error}; install --all and status --all refuse it`);
+      else if (isLocalBoard(url)) {
+        const problem = await boardHealth(url, timeouts.boardMs);
+        add(problem ? 'WARN' : 'OK', 'board', problem ? `${url} ${problem}` : `${url} (health ok)`);
+      } else add('OK', 'board', `${url} (not fetched)`);
+    });
   }
 
   const ok = !checks.some((c) => c.level === 'FAIL');

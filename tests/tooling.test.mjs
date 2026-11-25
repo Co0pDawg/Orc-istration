@@ -12,6 +12,7 @@ import { classify } from '../tools/lib/reviewtier.mjs';
 import { costlog, dispatchRows } from '../tools/lib/costlog.mjs';
 import { mergeHooks, formatLike } from '../tools/lib/hooks.mjs';
 import { run as reminder } from '../tools/board-reminder.mjs';
+import { q } from './helpers.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORC = path.join(REPO, 'tools', 'orc.mjs');
@@ -448,7 +449,8 @@ test('dispatch codex: read-only sandbox only for scout and researcher, effort on
   const effort = (tier) => (models.codex[tier].effort ? ['-c', `model_reasoning_effort=${JSON.stringify(models.codex[tier].effort)}`] : []);
   assert.equal(models.codex.low.effort, undefined, 'the low tier has no effort, so scout covers the no-effort branch');
   assert.ok(models.codex.high.effort, 'the high tier has an effort');
-  // refuter and review-* are access: read-only but write test output, worktrees and scratch reports.
+  // Only scout and researcher run read-only (they report inline: that sandbox cannot write a scratch file); the refuter
+  // runs tests and builds a throwaway worktree, and the review-* roles write at most an overflow scratch report.
   for (const [role, sandbox] of [['scout', 'read-only'], ['researcher', 'read-only'], ['refuter', 'workspace-write'], ['review-code-explorer', 'workspace-write'], ['builder', 'workspace-write']]) {
     const r0 = roles.find((r) => r.name === role);
     const want = ['exec', '--model', models.codex[r0.tier].model, '--sandbox', sandbox, ...effort(r0.tier), '-'];
@@ -459,7 +461,6 @@ test('dispatch codex: read-only sandbox only for scout and researcher, effort on
     assert.equal(fs.readFileSync(path.join(dir, 'stdin.txt'), 'utf8'), `${r0.body}\n\n---\n\n${text}`, `${role}: role body, separator, brief byte-identical`);
     const dry = isolated(['dispatch', '--tool', 'codex', '--role', role, '--brief', brief, '--dry-run']);
     assert.equal(dry.code, 0, dry.err);
-    const q = (a) => (/^[\w@%+=:,./\\-]+$/.test(a) ? a : JSON.stringify(a));
     assert.ok(dry.out.includes(` ${want.map(q).join(' ')}\n`), dry.out);
     assert.match(dry.out, new RegExp(`stdin: ${Buffer.byteLength(`${r0.body}\n\n---\n\n${text}`)} bytes \\(the role body, then the brief\\)\\n`));
   }
@@ -470,14 +471,20 @@ test('killTree falls back to child.kill when the tree kill fails, and not when i
   // taskkill (Windows) exits non-zero, process.kill(-pid) (POSIX) throws.
   const gone = 2147483647;
   const calls = [];
-  killTree({ pid: gone, kill: (sig) => calls.push(sig) });
+  const said = [];
+  killTree({ pid: gone, kill: (sig) => calls.push(sig) }, (s) => said.push(s));
   assert.deepEqual(calls, ['SIGKILL']);
+  // On Windows the fallback says the grandchildren may survive; the POSIX fallback is silent.
+  if (process.platform === 'win32') assert.deepEqual(said, [`dispatch: taskkill failed for pid ${gone}; killing only the direct child, so its child processes may still run`]);
+  else assert.deepEqual(said, []);
   // A live process: the tree kill works, so the fallback is not called.
   const live = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore', detached: process.platform !== 'win32' });
   const liveCalls = [];
+  const liveSaid = [];
   try {
-    killTree({ pid: live.pid, kill: (sig) => liveCalls.push(sig) });
+    killTree({ pid: live.pid, kill: (sig) => liveCalls.push(sig) }, (s) => liveSaid.push(s));
     assert.deepEqual(liveCalls, []);
+    assert.deepEqual(liveSaid, [], 'nothing to say when the tree kill works');
     const until = Date.now() + 5000;
     while (alive(live.pid) && Date.now() < until) spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},200)']);
     assert.equal(alive(live.pid), false, 'the tree kill ended the process');
@@ -715,7 +722,13 @@ test('dispatch names the executable and the override when the tool is not instal
   const missing = path.join(tempDir('nobin'), 'agy-not-here.exe');
   const r = isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile()], { ORC_TOOL_BIN_ANTIGRAVITY: missing });
   assert.equal(r.code, 127);
-  assert.match(r.err, /cannot start .*agy-not-here\.exe: .*not installed or not on PATH; set ORC_TOOL_BIN_ANTIGRAVITY/);
+  // The override is already set, so the hint names it and the path it gives, not "set it".
+  assert.match(r.err, /cannot start .*agy-not-here\.exe: ORC_TOOL_BIN_ANTIGRAVITY names .*agy-not-here\.exe, which does not exist; point it at the real executable/);
+  assert.doesNotMatch(r.err, /set ORC_TOOL_BIN_ANTIGRAVITY to its full path/);
+  // The dry run says the same before anything starts.
+  const dry = isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile(), '--dry-run'], { ORC_TOOL_BIN_ANTIGRAVITY: missing });
+  assert.equal(dry.code, 0, dry.err);
+  assert.ok(dry.out.includes(`note: ORC_TOOL_BIN_ANTIGRAVITY names ${missing}, which does not exist`), dry.out);
 });
 
 test('gemini-cli gap says the headless syntax exists and why dispatch does not use it', async () => {

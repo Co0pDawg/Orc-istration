@@ -54,7 +54,7 @@ In Claude Code, the `ship-prompts` project skill walks this loop plus the tracke
 - **Review tier.** Editing `AGENTS.md`, `roles/`, `adapters/*.notes.md`, `profiles/`, any `SKILL.md` (such as `skills/repo-standards/SKILL.md`), `standards/`, `review/`, `workflows/`, `commands/`, `orchestration/standards.md` or `orchestration/sprint.md` (or the generated `CLAUDE.md` and `agents/`) makes `node tools/orc.mjs review-tier` say `Full`: prompts count as product, not docs.
 - **The board is another repo.** The board page code in `orchestration/board` is its own repo (Co0pDawg/Orc-Dashboard), not part of this one.
 - **`tools/worklog`** is a Windows-only example with its own `tools/worklog/test.ps1`. Its tests assert US Eastern local times, so CI sets the runner to Eastern time first.
-- **`models.local.json`** is untracked. `check` validates it, but builds and compares from `models.json` only; `sync` and `golden` read `models.json` only. `build`, `install`, `status` and `dispatch` use it.
+- **`models.local.json`** is untracked. `check` validates it, but builds and compares from `models.json` only; `sync` and `golden` read `models.json` only. `build`, `install`, `status`, `dispatch` and `doctor` use it. `~/.orc/models.json` (or `$ORC_DATA_DIR/models.json`) layers between the two for `install`, `status`, `dispatch` and `doctor` only; `build`, `check`, `sync` and `golden` never read `~/.orc`.
 
 ## Adding or refreshing a standards entry
 
@@ -79,12 +79,13 @@ The repo is designed to be checked out as `~/.claude`, but you can develop in a 
 ## Where things are
 
 - `tools/orc.mjs`: the CLI. Loads roles, models and adapters, builds each tool (`buildTool`), and dispatches the commands.
-- `tools/lib/`: `frontmatter.mjs` (frontmatter, generated marker), `roles.mjs` (role parsing), `models.mjs` (models validation), `toml.mjs` (Codex TOML), `manifest.mjs` (install manifest, path safety), `text.mjs` (the one text reader), `help.mjs` (the help table), `brief.mjs`, `reviewtier.mjs`, `costlog.mjs`, `dispatch.mjs`, `hooks.mjs` (the method-tooling commands; also reads and writes `settings.json`), `sprintkit.mjs` (the sprint kit: presets, stack detection, the `settings.json` plan and removal), `standards.mjs` (the standards archive, detect and apply), `calibration.mjs`, `corpus.mjs` and `metrics.mjs` (the review panel's calibration, regression corpus and metrics).
+- `tools/lib/`: `frontmatter.mjs` (frontmatter, generated marker), `roles.mjs` (role parsing), `models.mjs` (models validation), `toml.mjs` (Codex TOML), `manifest.mjs` (install manifest, path safety), `text.mjs` (the one text reader), `help.mjs` (the help table), `brief.mjs`, `reviewtier.mjs`, `costlog.mjs`, `dispatch.mjs`, `hooks.mjs` (the method-tooling commands; also reads and writes `settings.json`), `sprintkit.mjs` (the sprint kit: presets, stack detection, the `settings.json` plan and removal), `standards.mjs` (the standards archive, detect and apply), `config.mjs` (the shared state home `~/.orc`: `config.json` validation, routing chains, the board default), `doctor.mjs` (`orc doctor`), `calibration.mjs`, `corpus.mjs` and `metrics.mjs` (the review panel's calibration, regression corpus and metrics).
 - `tests/orc.test.mjs`: goldens, roles, frontmatter, caps, `check`, `install`, rulebook hygiene.
 - `tests/hardening.test.mjs`: option parsing, refusals, stale agents, YAML quoting, running through a junction, BOM and UTF-16 input, first differing line.
 - `tests/manifest.test.mjs`: install manifest, re-install, `uninstall`, `status`, symlink and junction refusals.
 - `tests/sprintkit.test.mjs`: `install --sprint-kit` over real home shapes (none, populated, invalid, re-applied, a full install), the `settings.json` merge and restore, stack detection, presets, and the onboarding doc.
 - `tests/tooling.test.mjs`: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks`, the board reminder, models validation, `golden`, `help`, the generated marker.
+- `tests/config.test.mjs`: the shared state home (`config.json`, `~/.orc/models.json`), routed `dispatch`, `--prefer`, `--model`, `doctor`, and `install --all` / `status --all`, with no real agent CLI on PATH.
 - `tests/standards.test.mjs`: `standards list`, `show`, `detect` and `apply`, and the archive validation in `check`.
 - `tests/guard.test.mjs`: the git guard, `tools/guard.mjs` and `tools/guard.ps1` through one table of PreToolUse payloads in real temporary repos (both hooks must give the same decision), the read-only role list against `roles/*.md`, fail-open lines, and the example-file wiring.
 - `tests/review-tools.test.mjs`: `calibration`, `corpus` and `metrics`, over the run-log fixtures in `tests/fixtures/reviews/` and the corpus cases in `tests/fixtures/corpus/` (format: `review/corpus.md`).

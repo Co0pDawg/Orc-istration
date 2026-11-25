@@ -32,11 +32,11 @@ export const HELP = {
   },
   install: {
     repo: true,
-    summary: 'Install one tool\'s generated files (for claude-code also its hook scripts) into a home folder (dry run without --apply); the rulebook names this checkout as the setup checkout',
+    summary: 'Install one tool\'s generated files, or with --all every active tool\'s (for claude-code also its hook scripts), into a home folder (dry run without --apply); the rulebook names this checkout as the setup checkout',
     synopsis: 'install (--tool <id> | --all) [--home <dir>] [--apply] [--force] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board] [--sprint-kit [--stack dotnet|node|python]]',
     options: {
       '--tool <id>': 'the adapter to install (this or --all; not all)',
-      '--all': 'every tool in activeTools of ~/.orc/config.json, in order; every refusal is checked for every tool before any is written; the board defaults from board in config.json',
+      '--all': 'every tool in activeTools of ~/.orc/config.json, in order; every refusal is checked for every tool before any is written; the board defaults from board in config.json; the last line names any tool that failed',
       '--home <dir>': 'home folder (default your home; required for claude-code)',
       '--apply': 'write the files (backs up each replaced file)',
       '--force': 'replace hand-written or edited files, with a backup',
@@ -46,7 +46,7 @@ export const HELP = {
       '--no-profile': 'clear the profiles recorded at install',
       '--board <address>': 'this machine\'s board address, added to the rulebook (with --board-repo; an artifact address, Claude Code only, needs none)',
       '--board-repo <dir>': 'the Orc-Dashboard checkout (with --board)',
-      '--no-board': 'clear the board recorded at install',
+      '--no-board': 'clear the board recorded at install; the clear is recorded, so --all does not add the config.json board back (--board sets one)',
     },
   },
   uninstall: {
@@ -168,7 +168,7 @@ export const HELP = {
   },
   doctor: {
     repo: true,
-    summary: 'Check ~/.orc/config.json and models.json, each active tool (binary, --version, install state, headless models), the routing table and the board, without writing',
+    summary: 'Check ~/.orc/config.json and models.json, each active tool (install state; for a tool with a headless recipe also its binary, --version, sign-in and headless models), the routing table and the board, without writing',
     synopsis: 'doctor [--home <dir>] [--json]',
     options: {
       '--home <dir>': 'the home folder the tools install into (default your home)',

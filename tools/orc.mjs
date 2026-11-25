@@ -22,7 +22,7 @@ import { KIT_HOOK_SCRIPTS, KIT_SKILLS, KIT_NOTES, BOARD_IMPORT, KNOWN_STACKS, pr
 import { decodeText, readText } from './lib/text.mjs';
 import { USAGE, globalHelp, commandHelp } from './lib/help.mjs';
 import { validateArchive, runStandards, backupPath } from './lib/standards.mjs';
-import { orcHome, loadConfig, routeChain, jsonProblem } from './lib/config.mjs';
+import { orcHome, configFile, loadConfig, routeChain, jsonProblem, boardDefault } from './lib/config.mjs';
 import { runDoctor } from './lib/doctor.mjs';
 
 const DEFAULT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -50,7 +50,9 @@ export function loadRoles(repo) {
 
 // models.json, then (with `shared`) <orc home>/models.json, then models.local.json; the two over-layers only with
 // `local`. Only install, status, dispatch and doctor pass `shared`: build, check, sync and golden never read ~/.orc.
-export function loadModels(repo, { local = true, shared = false, env = process.env } = {}) {
+// <orc home> is shared by every checkout, so a tool id there that this checkout does not know is skipped, with one
+// line through `warn`; models.json and models.local.json stay strict.
+export function loadModels(repo, { local = true, shared = false, env = process.env, warn = () => {} } = {}) {
   const tools = knownTools(repo);
   const models = JSON.parse(read(path.join(repo, 'models.json')));
   validateModels(models, tools, 'models.json');
@@ -71,6 +73,13 @@ export function loadModels(repo, { local = true, shared = false, env = process.e
       over = JSON.parse(read(sharedFile));
     } catch (e) {
       throw new Error(`${sharedFile}: ${jsonProblem(e)}`);
+    }
+    if (over && typeof over === 'object' && !Array.isArray(over)) {
+      over = { ...over };
+      for (const tool of Object.keys(over).filter((t) => !tools.includes(t))) {
+        warn(`${sharedFile}: unknown tool id "${tool}" (ignored; this checkout does not know it)`);
+        delete over[tool];
+      }
     }
     validateModels(over, tools, sharedFile);
     layer(over);
@@ -136,8 +145,10 @@ function boardNotes({ board, boardRepo }, toolId) {
 }
 
 // Install options (profiles, board) come from the flags; with none of them given, from the manifest's `options`.
-// Each option given replaces the recorded one; --no-profile and --no-board clear them.
-// `configBoard` ({board, boardRepo, file}, from --all) is the last default: flag, then manifest, then config.json.
+// Each option given replaces the recorded one; --no-profile and --no-board clear them. A --no-board clear is recorded
+// (`noBoard`), so the config.json board does not come back; a later --board drops the mark.
+// `configBoard` ({board, boardRepo, file}, from --all and doctor) is the last default: flag, then manifest, then
+// config.json.
 function installOptions(opt, manifest, io, configBoard = null) {
   const rec = manifest?.options ?? {};
   const reused = [];
@@ -160,11 +171,17 @@ function installOptions(opt, manifest, io, configBoard = null) {
   }
   let board = opt.board ?? null;
   let boardRepo = opt['board-repo'] ?? null;
-  if (opt['no-board'] || sprintKit) board = boardRepo = null;
-  else if (!opt.board && typeof rec.board === 'string' && (typeof rec.boardRepo === 'string' || isArtifactBoard(rec.board))) {
+  let noBoard = false;
+  if (opt['no-board'] || sprintKit) {
+    board = boardRepo = null;
+    noBoard = !sprintKit && Boolean(opt['no-board']);
+  } else if (!opt.board && typeof rec.board === 'string' && (typeof rec.boardRepo === 'string' || isArtifactBoard(rec.board))) {
     board = rec.board;
     boardRepo = rec.boardRepo;
     reused.push(`board ${board}`);
+  } else if (!opt.board && !opt['board-repo'] && rec.noBoard === true) {
+    noBoard = true;
+    reused.push('no board (cleared with --no-board; --board sets one)');
   } else if (!opt.board && !opt['board-repo'] && configBoard?.board) {
     board = configBoard.board;
     boardRepo = configBoard.boardRepo ?? null;
@@ -172,7 +189,7 @@ function installOptions(opt, manifest, io, configBoard = null) {
   }
   const clear = rec.sprintKit === true ? (reused.some((r) => r.startsWith('profile')) ? 'pass --no-profile to clear; uninstall removes the sprint kit' : 'uninstall removes the sprint kit') : 'pass --no-profile or --no-board to clear';
   if (reused.length) io.out(`using the options recorded at install: ${reused.join('; ')} (${clear})`);
-  return { profiles, board, boardRepo, sprintKit, stacks };
+  return { profiles, board, boardRepo, noBoard, sprintKit, stacks };
 }
 
 // The rulebook lines install and status add after the tool notes: the Board line (or the kit's no-board line), then
@@ -299,10 +316,11 @@ export function buildTool(adapter, roles, models, agentsMd, { extraNotes = [], p
 }
 
 // `sprintKit` drops the board.local.md import from the tool notes: a kit machine has no board (its KIT_NOTES say so).
-async function buildAll(repo, toolId, { local = true, shared = false, extraNotes = [], profiles = [], sprintKit = false } = {}) {
+// `env` and `warn` reach loadModels (the shared state home and its warnings).
+async function buildAll(repo, toolId, { local = true, shared = false, extraNotes = [], profiles = [], sprintKit = false, env = process.env, warn = undefined } = {}) {
   const roles = loadRoles(repo);
   const loaded = loadProfiles(repo, profiles);
-  const models = loadModels(repo, { local, shared });
+  const models = loadModels(repo, { local, shared, env, warn });
   const agentsMd = read(path.join(repo, 'AGENTS.md'));
   const adapters = await loadAdapters(repo);
   const picked = !toolId || toolId === 'all' ? adapters : adapters.filter((a) => a.id === toolId);
@@ -438,21 +456,23 @@ export function parseAgyModels(text, family = 'flash') {
 }
 
 // The comparison status prints and doctor summarises: every file install would write, against what is in `home`.
-// Prints one line per file through io.out; returns {error} or {adapter, clean, files, missing}.
-async function compareInstall(repo, home, toolId, opt, io, configBoard = null) {
+// Prints one line per file through io.out; returns {error} or {adapter, clean, files, missing}, either with
+// `manifestError` when the manifest is corrupt (compared as absent; install refuses it).
+export async function compareInstall(repo, home, toolId, opt, io, configBoard = null, env = process.env) {
   const known = (await loadAdapters(repo)).find((a) => a.id === toolId);
   const loaded = known ? loadManifest(home, known) : {};
   if (loaded.error) io.err(`WARN ${loaded.error}; ignoring it`);
+  const flagged = (r) => (loaded.error ? { ...r, manifestError: loaded.error } : r);
   const chosen = installOptions(opt, loaded.manifest, io, configBoard);
-  if (artifactRefused(chosen.board, toolId)) return { error: ARTIFACT_ONLY_CLAUDE };
+  if (artifactRefused(chosen.board, toolId)) return flagged({ error: ARTIFACT_ONLY_CLAUDE });
   let built;
   try {
-    [built] = await buildAll(repo, toolId, { shared: true, extraNotes: installNotes(chosen, toolId), profiles: chosen.profiles, sprintKit: chosen.sprintKit });
+    [built] = await buildAll(repo, toolId, { shared: true, extraNotes: installNotes(chosen, toolId), profiles: chosen.profiles, sprintKit: chosen.sprintKit, env, warn: (w) => io.err(`WARN ${w}`) });
   } catch (e) {
-    return { error: e instanceof Error ? e.message : String(e) };
+    return flagged({ error: e instanceof Error ? e.message : String(e) });
   }
   const { adapter, errors } = built;
-  if (errors.length) return { error: errors.join('\n') };
+  if (errors.length) return flagged({ error: errors.join('\n') });
   const kit = chosen.sprintKit;
   const installed = [...built.files, ...hookScriptFiles(repo, adapter, { sprintKit: kit }), ...(kit ? kitFiles(repo, adapter) : [])].filter((f) => f.install !== false);
   const recorded = loaded.manifest?.files ?? null;
@@ -485,7 +505,7 @@ async function compareInstall(repo, home, toolId, opt, io, configBoard = null) {
     try {
       example = kitHookExample(repo);
     } catch (e) {
-      return { error: `cannot read ${path.join(repo, 'hooks.node.example.json')} (${e instanceof Error ? e.message : String(e)})` };
+      return flagged({ error: `cannot read ${path.join(repo, 'hooks.node.example.json')} (${e instanceof Error ? e.message : String(e)})` });
     }
     const recordedAllow = Array.isArray(loaded.manifest?.kit?.settings?.allow) ? loaded.manifest.kit.settings.allow.filter((r) => typeof r === 'string') : [];
     try {
@@ -517,7 +537,7 @@ async function compareInstall(repo, home, toolId, opt, io, configBoard = null) {
       io.out(`extra: ${p}${recorded ? ' (not installed by orc)' : ''}`);
     }
   }
-  return { adapter, clean, files: installed.length, missing: missingCount };
+  return flagged({ adapter, clean, files: installed.length, missing: missingCount });
 }
 
 // `ctx` is internal to --all: {configBoard} (the board default from config.json) and {preflight} (a dry run that
@@ -579,11 +599,11 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     } catch (e) {
       return fail(e instanceof Error ? e.message : String(e));
     }
+    (cfg.warnings ?? []).forEach((w) => io.err(`WARN ${w}`));
     const tools = cfg.config?.activeTools ?? [];
     if (!tools.length) return fail(`--all needs activeTools in ${cfg.file}`);
-    const b = cfg.config.board;
-    const configBoard = b ? { board: b.url, boardRepo: b.repo ?? null, file: cfg.file } : null;
-    if (configBoard && !configBoard.boardRepo && !isArtifactBoard(configBoard.board)) return fail(`${cfg.file}: board.repo is needed with the local board address in board.url`);
+    const configBoard = boardDefault(cfg.config, cfg.file, isArtifactBoard);
+    if (configBoard?.error) return fail(configBoard.error);
     const refused = [];
     for (const t of tools) {
       if (cmd === 'install' && t === 'claude-code' && !opt.home) refused.push(`${t}: refusing --tool claude-code without --home: the live ~/.claude is synced by hand`);
@@ -598,7 +618,9 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         const errs = [];
         const quiet = { ...io, out: () => {}, err: (s) => errs.push(s) };
         const code = await main([...rest.filter((a) => a !== '--apply'), '--tool', t], quiet, { configBoard, preflight: true });
-        if (code) refused.push(...errs.filter((s) => !s.startsWith('WARN ')).map((s) => `${t}: ${s}`));
+        // A non-zero dry run is a refusal even when it printed only WARN lines.
+        const said = errs.filter((s) => !s.startsWith('WARN '));
+        if (code) refused.push(...(said.length ? said : [`dry run exited ${code}`]).map((s) => `${t}: ${s}`));
       }
     } else if (!refused.length) {
       const home = path.resolve(opt.home ?? os.homedir());
@@ -613,11 +635,16 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       refused.forEach((r) => io.err(`refused: ${r}`));
       return fail(`nothing ${cmd === 'install' ? 'written' : 'compared'}: ${cmd} --all refused for ${[...new Set(refused.map((r) => r.split(':')[0]))].join(', ')}`);
     }
+    // One tool's failure does not stop the rest; the last line names every tool that failed.
     let worst = 0;
+    const failed = [];
     for (const t of tools) {
       io.out(`== ${t} ==`);
-      worst = Math.max(worst, await main([...rest, '--tool', t], io, { configBoard }));
+      const code = await main([...rest, '--tool', t], io, { configBoard });
+      if (code) failed.push(`${t} (exit ${code})`);
+      worst = Math.max(worst, code);
     }
+    if (failed.length) io.err(`${cmd} --all: failed for ${failed.join(', ')}`);
     return worst;
   }
 
@@ -775,7 +802,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     }
     if (artifactRefused(opt.board, toolId)) return fail(ARTIFACT_ONLY_CLAUDE);
     if (boardPairError(opt, toolId)) return fail('pass --board and --board-repo together, or neither (an artifact --board needs no --board-repo)');
-    const home = path.resolve(opt.home ?? (await import('node:os')).homedir());
+    const home = path.resolve(opt.home ?? os.homedir());
     const known = (await loadAdapters(repo)).find((a) => a.id === toolId);
     const early = known ? loadManifest(home, known) : {};
     if (early.error) return fail(`${early.error}; remove or fix the manifest by hand`);
@@ -805,7 +832,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     } else if (kit) io.out(`sprint kit: stack ${stacks.join(',')}`);
     let built;
     try {
-      [built] = await buildAll(repo, toolId, { shared: true, extraNotes, profiles: chosen.profiles, sprintKit: kit });
+      [built] = await buildAll(repo, toolId, { shared: true, extraNotes, profiles: chosen.profiles, sprintKit: kit, warn: (w) => io.err(`WARN ${w}`) });
     } catch (e) {
       return fail(e.message);
     }
@@ -920,7 +947,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       tool: adapter.id,
       version: 1,
       installedAt: new Date().toISOString(),
-      options: { profiles: chosen.profiles, board: chosen.board, boardRepo: chosen.boardRepo },
+      options: { profiles: chosen.profiles, board: chosen.board, boardRepo: chosen.boardRepo, ...(chosen.noBoard ? { noBoard: true } : {}) },
       files: {},
       dirs: [...(manifest?.dirs ?? [])],
     };
@@ -1029,7 +1056,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const toolId = opt.tool;
     if (!toolId || toolId === 'all') return fail('uninstall needs --tool <id>');
     if (toolId === 'claude-code' && !opt.home) return fail('refusing --tool claude-code without --home: the live ~/.claude is synced by hand');
-    const home = path.resolve(opt.home ?? (await import('node:os')).homedir());
+    const home = path.resolve(opt.home ?? os.homedir());
     const adapter = (await loadAdapters(repo)).find((a) => a.id === toolId);
     if (!adapter) return fail(`unknown tool ${toolId}`);
     const { manifest, file, error } = loadManifest(home, adapter);
@@ -1198,7 +1225,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     if (!toolId || toolId === 'all') return fail('status needs --tool <id>');
     if (artifactRefused(opt.board, toolId)) return fail(ARTIFACT_ONLY_CLAUDE);
     if (boardPairError(opt, toolId)) return fail('pass --board and --board-repo together, or neither (an artifact --board needs no --board-repo)');
-    const home = path.resolve(opt.home ?? (await import('node:os')).homedir());
+    const home = path.resolve(opt.home ?? os.homedir());
     const r = await compareInstall(repo, home, toolId, opt, io, ctx.configBoard);
     if (r.error) return fail(r.error);
     const { adapter, clean } = r;
@@ -1374,7 +1401,17 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         if (typeof adapter.headless !== 'function') return fail(`no headless recipe for ${adapter.id}`);
       }
       if (opt.prefer && !adapters.some((a) => a.id === opt.prefer)) return fail(`unknown tool ${opt.prefer}`);
-      const cfg = loadConfig({ tools: adapters.map((a) => a.id), roles: loadRoles(repo).map((r) => r.name) });
+      // With --tool only `binaries` is used, so a config.json still invalid after its unknown entries are skipped is
+      // one WARN and the run goes on without it; routing and --prefer need it and fail.
+      let cfg;
+      try {
+        cfg = loadConfig({ tools: adapters.map((a) => a.id), roles: loadRoles(repo).map((r) => r.name) });
+      } catch (e) {
+        if (!opt.tool) throw e;
+        io.err(`WARN ${e instanceof Error ? e.message : String(e)} (dispatch --tool goes on without its binaries)`);
+        cfg = { file: configFile(), config: null };
+      }
+      (cfg.warnings ?? []).forEach((w) => io.err(`WARN ${w}`));
       // An explicit --tool is the whole chain (no fallback); otherwise the role's routing entry, then the fallback,
       // with --prefer moved to the front.
       const chain = opt.tool ? [opt.tool] : [...new Set([...(opt.prefer ? [opt.prefer] : []), ...routeChain(cfg.config, role.name)])];
@@ -1389,7 +1426,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
           return fail(`dispatch refused: the brief fails lint (${problems.length} problem(s)); fix it or pass --no-lint`);
         }
       }
-      const models = loadModels(repo, { shared: true });
+      const models = loadModels(repo, { shared: true, warn: (w) => io.err(`WARN ${w}`) });
       const bins = { binaries: cfg.config?.binaries ?? null, configFile: cfg.file };
       // --model belongs to the first tool in the chain: dropped when another tool runs.
       const plans = chain.map((id, i) => dispatchPlan(adapters.find((a) => a.id === id), role, models, briefText, process.env, { ...bins, model: i === 0 ? opt.model : undefined }));

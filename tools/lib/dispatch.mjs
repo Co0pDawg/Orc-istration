@@ -10,8 +10,9 @@ export const binEnv = (toolId) => `ORC_TOOL_BIN_${toolId.toUpperCase().replace(/
 
 // Finds a real executable: ORC_TOOL_BIN_<TOOL>, then `binaries[toolId]` from config.json, then PATH. `source` says
 // which. A Windows .cmd/.bat shim cannot be started without a shell, so it is not accepted (in `binaries` either). An
-// override that names a path which does not exist, or a .cmd/.bat shim, carries `unusable` (routing skips it; an
-// explicit --tool still tries, and a shim's failure names the shim).
+// ORC_TOOL_BIN_* that names a path which does not exist, or a .cmd/.bat shim, carries `unusable` (routing skips it; an
+// explicit --tool still tries, and the failure names the override). A `binaries` entry that does not exist, is not a
+// file or is a shim is `missing` with a `reason` instead, so neither routing nor --tool starts it.
 export function resolveExecutable(name, toolId, env = process.env, { binaries = null, configFile = null } = {}) {
   const override = env[binEnv(toolId)];
   if (override) {
@@ -84,13 +85,16 @@ export function formatCommand(plan) {
   lines.push(`stdin: ${plan.stdin === null || plan.stdin === undefined ? 'none' : `${Buffer.byteLength(plan.stdin)} bytes (${plan.stdinHolds})`}`);
   if (plan.exe.reason) lines.push(`note: ${plan.exe.reason}`);
   else if (plan.exe.missing) lines.push(`note: ${plan.command} not found on PATH${plan.exe.shim ? ` (only a .cmd/.bat shim at ${plan.exe.shim}; set ${binEnv(plan.toolId)} to the real executable)` : ''}`);
+  else if (plan.exe.unusable) lines.push(`note: ${plan.exe.unusable}`);
   return lines.join('\n');
 }
 
-export function killTree(child) {
+// On Windows a failed taskkill falls back to killing the direct child only, and says so through `err`.
+export function killTree(child, err = () => {}) {
   if (process.platform === 'win32') {
     const r = spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', shell: false });
     if (r.error || r.status !== 0) {
+      err(`dispatch: taskkill failed for pid ${child.pid}; killing only the direct child, so its child processes may still run`);
       try {
         child.kill('SIGKILL');
       } catch {}
@@ -109,6 +113,7 @@ export function runDispatch(plan, { timeoutSec, err = console.error } = {}) {
   return new Promise((resolve) => {
     const cannot = (e) => {
       const hint = plan.exe.shim && plan.exe.source === 'env' ? `: ${plan.exe.shim} is a .cmd/.bat shim, which cannot be started without a shell; set ${binEnv(plan.toolId)} to the real executable`
+        : plan.exe.unusable ? `: ${plan.exe.unusable}; point it at the real executable`
         : e.code === 'ENOENT' ? `: ${plan.exe.command} is not installed or not on PATH; set ${binEnv(plan.toolId)} to its full path` : `: ${e.message}`;
       err(`dispatch: cannot start ${plan.exe.command}${hint}`);
     };
@@ -134,7 +139,7 @@ export function runDispatch(plan, { timeoutSec, err = console.error } = {}) {
       if (signalled) return;
       signalled = sig;
       err(`dispatch: ${sig} received; killing the process tree`);
-      killTree(child);
+      killTree(child, err);
     };
     for (const s of signals) process.on(s, onSignal);
     const unhook = () => signals.forEach((s) => process.off(s, onSignal));
@@ -142,7 +147,7 @@ export function runDispatch(plan, { timeoutSec, err = console.error } = {}) {
       ? setTimeout(() => {
           timedOut = true;
           err(`dispatch: timed out after ${timeoutSec}s; killing the process tree`);
-          killTree(child);
+          killTree(child, err);
         }, timeoutSec * 1000)
       : null;
     child.on('error', (e) => {
