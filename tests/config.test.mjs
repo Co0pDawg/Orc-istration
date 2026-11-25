@@ -1603,4 +1603,30 @@ test('doctor checks antigravity hooks.json: missing file, invalid JSON, missing 
   const d7 = await run(['doctor', '--home', home], data);
   assert.strictEqual(d7.code, 0, d7.out);
   assert.match(d7.out, /^WARN antigravity hooks: orc-guard in .*disabled/m);
+
+  // 8. Wired only on a PreToolUse group whose matcher covers run_command: another tool's matcher or another event
+  // is a WARN saying what differs; "*", no matcher and a regex that matches run_command are OK.
+  const guardEntry = (over) => {
+    const e = JSON.parse(JSON.stringify(parsed['orc-guard']));
+    delete e.enabled;
+    return { ...e, ...over(e) };
+  };
+  const doctorWith = async (entry) => {
+    fs.writeFileSync(hooksFile, JSON.stringify({ 'orca-status': { Stop: [] }, 'orc-guard': entry }, null, 2));
+    const d = await run(['doctor', '--home', home], data);
+    assert.strictEqual(d.code, 0, d.out);
+    return d.out.split('\n').find((l) => / antigravity hooks: /.test(l));
+  };
+  const group = (matcher) => (e) => ({ PreToolUse: [{ ...e.PreToolUse[0], matcher }] });
+  assert.strictEqual(await doctorWith(guardEntry(group('view_file'))), `WARN antigravity hooks: orc-guard in ${hooksFile} does not run on run_command (PreToolUse matcher "view_file"); run node tools/orc.mjs hooks --tool antigravity --home ${home} --apply`);
+  assert.strictEqual(await doctorWith(guardEntry(group('run_commands'))), `WARN antigravity hooks: orc-guard in ${hooksFile} does not run on run_command (PreToolUse matcher "run_commands"); run node tools/orc.mjs hooks --tool antigravity --home ${home} --apply`, 'a regex matches the whole name');
+  const onStop = guardEntry((e) => ({ Stop: e.PreToolUse }));
+  delete onStop.PreToolUse;
+  assert.strictEqual(await doctorWith(onStop), `WARN antigravity hooks: orc-guard in ${hooksFile} has no PreToolUse hook (it is on Stop); run node tools/orc.mjs hooks --tool antigravity --home ${home} --apply`);
+  for (const ok of ['run_command', '*', 'run_.*|view_file', undefined]) {
+    assert.strictEqual(await doctorWith(guardEntry(group(ok))), 'OK antigravity hooks: orc-guard wired', String(ok));
+  }
+  // A second group on another tool does not hide the run_command one.
+  const two = guardEntry((e) => ({ PreToolUse: [{ ...e.PreToolUse[0], matcher: 'view_file', hooks: [{ type: 'command', command: 'node "/elsewhere/other.mjs"' }] }, e.PreToolUse[0]] }));
+  assert.strictEqual(await doctorWith(two), 'OK antigravity hooks: orc-guard wired');
 });

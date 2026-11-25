@@ -38,10 +38,31 @@ const procedureNotes = {
   'calibration-report': [],
 };
 
+// The index of the brace that closes the JSON object opening at `start`, skipping strings; -1 when it never closes.
+function objectEnd(text, start) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let j = start; j < text.length; j++) {
+    const ch = text[j];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') inString = true;
+    else if (ch === '{' || ch === '[') depth++;
+    else if (ch === '}' || ch === ']') {
+      depth--;
+      if (depth === 0) return j;
+    }
+  }
+  return -1;
+}
+
 function renderProcedure(p) {
   const own = procedureNotes[p.name];
   if (!own) throw new Error(`antigravity: no notes for procedure ${p.name} in adapters/antigravity.mjs`);
-  const slash = `On Antigravity this skill is also the slash command \`/${p.name}\`${p.argumentHint ? ', and its arguments are the text after it' : ''}.`;
+  const slash = `On Antigravity this skill is also the slash command \`/${p.name}\`${p.argumentHint ? ", and the user's request after the command name gives its arguments" : ''}.`;
   const args = p.argumentHint ? `with the arguments the user gave (\`${p.argumentHint}\`)` : '';
   const body = `${generatedMarker('antigravity')}\n\n# ${p.title}\n\n1. ${checkoutLookup(`CHECKOUT/${p.source.file}`)}\n2. ${readStep(p, args)}\n3. ${[slash, ...own].join(' ')}\n`;
   return { path: `.gemini/config/skills/${p.name}/SKILL.md`, content: serialize({ name: p.name, description: p.description }, body) };
@@ -100,6 +121,30 @@ export default {
     const args = ['-p', briefText, '--agent', role.name, '--model', tierModel.model, '--output-format', 'json', '--disable-slash-commands'];
     if (tierModel.effort) args.push('--effort', tierModel.effort);
     return { command: 'agy', args, stdin: null };
+  },
+  // `orc dispatch` reads the result object `--output-format json` prints last on stdout
+  // ({"status":"SUCCESS"|"ERROR","response":"...","denied_actions":[...],...}) from the end of the run's stdout.
+  // The last object that starts a line and has a string `status` wins; lines after it are ignored. Null when there is
+  // none. A `{` inside a JSON string is never at a line start, since a string holds no raw newline.
+  headlessResult(stdoutTail) {
+    const text = String(stdoutTail ?? '');
+    const starts = text.startsWith('{') ? [0] : [];
+    for (let i = text.indexOf('\n{'); i >= 0; i = text.indexOf('\n{', i + 1)) starts.push(i + 1);
+    for (const i of starts.reverse()) {
+      const end = objectEnd(text, i);
+      if (end < 0) continue;
+      let obj;
+      try {
+        obj = JSON.parse(text.slice(i, end + 1));
+      } catch {
+        continue;
+      }
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj) || typeof obj.status !== 'string') continue;
+      const response = typeof obj.response === 'string' ? obj.response : '';
+      const denied = Array.isArray(obj.denied_actions) ? obj.denied_actions.length : 0;
+      return { ok: obj.status === 'SUCCESS', status: obj.status, response, denied };
+    }
+    return null;
   },
   renderRulebook(agentsMd, notesMd) {
     return [{ path: '.gemini/AGENTS.md', content: `${generatedMarker('antigravity')}\n${agentsMd}\n${notesMd}` }];

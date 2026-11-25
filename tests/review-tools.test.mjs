@@ -612,6 +612,49 @@ test('metrics capture fails by name on a missing transcript, run log, workflow o
   assert.equal((await run(['metrics', 'nope'])).code, 1);
 });
 
+test('metrics capture outside Claude Code: no session, no transcript and no CLAUDE_CODE_SESSION_ID is a clean skip', async (t) => {
+  // This may run inside Claude Code: its session id is removed, and the home that holds transcripts is a scratch one.
+  const saved = Object.fromEntries(['CLAUDE_CODE_SESSION_ID', 'HOME', 'USERPROFILE'].map((k) => [k, process.env[k]]));
+  delete process.env.CLAUDE_CODE_SESSION_ID;
+  process.env.HOME = process.env.USERPROFILE = tempDir('metrics-home');
+  t.after(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+  const out = tempDir('metrics-skip');
+  const skip = 'metrics: skipped (no Claude Code session; capture reads Claude Code transcripts only)';
+  for (const extra of [[], ['--print'], ['--mode', 'lite', '--version', '1.1.1']]) {
+    const r = await run(['metrics', 'capture', '--workflow', 'pre-pr-review', '--out', out, ...extra]);
+    assert.strictEqual(r.code, 0, r.err);
+    assert.strictEqual(r.out, skip);
+    assert.strictEqual(r.err, '');
+  }
+  assert.deepStrictEqual(fs.readdirSync(out), [], 'writes nothing');
+  // Nothing is written anywhere: not a named folder that does not exist yet, nor the default one under the repo.
+  const never = path.join(out, 'never');
+  assert.strictEqual((await run(['metrics', 'capture', '--workflow', 'pre-pr-review', '--out', never])).code, 0);
+  assert.strictEqual(fs.existsSync(never), false, 'the --out folder is not created');
+  const defaultDir = path.join(REPO, '.orc', 'metrics');
+  const snapshot = () => (fs.existsSync(defaultDir) ? fs.readdirSync(defaultDir, { recursive: true }).sort() : null);
+  const before = snapshot();
+  assert.strictEqual((await run(['metrics', 'capture', '--workflow', 'pre-pr-review'])).code, 0);
+  assert.deepStrictEqual(snapshot(), before, 'the default folder is untouched');
+  // Arguments are still checked first, and a session or transcript that is given but not found stays an error.
+  assert.match((await run(['metrics', 'capture', '--out', out])).err, /metrics: capture needs --workflow/);
+  assert.match((await run(['metrics', 'capture', '--workflow', 'pre-pr-review', '--mode', 'half'])).err, /--mode must be lite or full/);
+  const gone = await run(['metrics', 'capture', '--workflow', 'pre-pr-review', '--session', 'no-such-session', '--out', out]);
+  assert.strictEqual(gone.code, 1);
+  assert.match(gone.err, /metrics: no transcript for session no-such-session under /);
+  const missing = await run(['metrics', 'capture', '--workflow', 'pre-pr-review', '--transcript', path.join(out, 'none.jsonl')]);
+  assert.strictEqual(missing.code, 1);
+  assert.match(missing.err, /metrics: transcript not found/);
+  process.env.CLAUDE_CODE_SESSION_ID = 'no-such-session';
+  assert.strictEqual((await run(['metrics', 'capture', '--workflow', 'pre-pr-review', '--out', out])).code, 1, 'a session from the environment is looked up');
+  assert.deepStrictEqual(fs.readdirSync(out), []);
+});
+
 // ---------- metrics report ----------
 
 test('cost prices every token class and refuses an unknown model', () => {

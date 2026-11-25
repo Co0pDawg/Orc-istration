@@ -15,6 +15,17 @@ export const TIMEOUTS = { probeMs: 5000, boardMs: 3000 };
 const message = (e) => (e instanceof Error ? e.message : String(e));
 const seconds = (ms) => `${ms / 1000} second${ms === 1000 ? '' : 's'}`;
 
+// An Antigravity hook matcher that covers run_command: none, "" or "*" (every tool), or a regex matching the whole name.
+export function matchesRunCommand(matcher) {
+  if (matcher === undefined || matcher === null || matcher === '' || matcher === '*') return true;
+  if (typeof matcher !== 'string') return false;
+  try {
+    return new RegExp(`^(?:${matcher})$`).test('run_command');
+  } catch {
+    return matcher === 'run_command';
+  }
+}
+
 // `<exe> <args>`, killed after `ms`. Resolves to {code, out} or {problem}; `out` is the first line of stdout.
 function probe(exe, args, ms) {
   return new Promise((resolve) => {
@@ -176,11 +187,24 @@ export async function runDoctor({ repo, home, json, io, env = process.env, timeo
             add('WARN', 'hooks', `${hooksFile} has no ${ANTIGRAVITY_GUARD_KEY} entry; run ${wireCmd}`, id);
             return;
           }
-          const { command, script, disabled } = antigravityGuardScript(settings[ANTIGRAVITY_GUARD_KEY]);
-          if (disabled) {
+          const entry = settings[ANTIGRAVITY_GUARD_KEY];
+          if (entry?.enabled === false) {
             add('WARN', 'hooks', `${ANTIGRAVITY_GUARD_KEY} in ${hooksFile} is disabled (enabled: false)`, id);
             return;
           }
+          // Wired means a PreToolUse group whose matcher is run_command, or matches it (none, "*" or a regex).
+          const groups = entry && typeof entry === 'object' && Array.isArray(entry.PreToolUse) ? entry.PreToolUse : [];
+          if (!groups.length) {
+            const events = entry && typeof entry === 'object' && !Array.isArray(entry) ? Object.keys(entry).filter((k) => k !== 'enabled') : [];
+            add('WARN', 'hooks', `${ANTIGRAVITY_GUARD_KEY} in ${hooksFile} has no PreToolUse hook (${events.length ? `it is on ${events.join(', ')}` : 'it has no event'}); run ${wireCmd}`, id);
+            return;
+          }
+          const onRunCommand = groups.filter((g) => matchesRunCommand(g?.matcher));
+          if (!onRunCommand.length) {
+            add('WARN', 'hooks', `${ANTIGRAVITY_GUARD_KEY} in ${hooksFile} does not run on run_command (PreToolUse matcher ${groups.map((g) => JSON.stringify(g?.matcher ?? null)).join(', ')}); run ${wireCmd}`, id);
+            return;
+          }
+          const { command, script } = antigravityGuardScript({ PreToolUse: onRunCommand });
           if (!command || !script) {
             add('WARN', 'hooks', `${ANTIGRAVITY_GUARD_KEY} in ${hooksFile} does not name a guard script; run ${wireCmd}`, id);
             return;

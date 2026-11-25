@@ -84,7 +84,24 @@ export function dispatchPlan(adapter, role, models, briefText, env = process.env
     : spec.stdin === briefText ? 'the brief'
     : spec.stdin.startsWith(role.body) && spec.stdin.endsWith(briefText) ? 'the role body, then the brief'
     : 'not the brief alone';
-  return { ...spec, toolId: adapter.id, exe, argv: [...exe.pre, ...spec.args], stdinHolds };
+  const reader = typeof adapter.headlessResult === 'function' ? { headlessResult: adapter.headlessResult } : {};
+  return { ...spec, toolId: adapter.id, exe, argv: [...exe.pre, ...spec.args], stdinHolds, ...reader };
+}
+
+// How much of stdout runDispatch keeps for an adapter's headlessResult: the result object comes last.
+export const RESULT_TAIL_BYTES = 256 * 1024;
+
+// Why a finished headless run did no work, from the adapter's reading of its result object, or null. The adapter
+// returns null when there is no result object, else {ok, status, response, denied}.
+export function headlessFailure(toolId, result) {
+  if (!result) return null;
+  if (!result.ok) {
+    const first = (result.response ?? '').split('\n').map((l) => l.trim()).find(Boolean);
+    const reason = first ? (first.length > 160 ? `${first.slice(0, 157)}...` : first) : 'no response';
+    return `dispatch: ${toolId} reported ${result.status}: ${reason}`;
+  }
+  if (!(result.response ?? '').trim() && result.denied > 0) return `dispatch: ${toolId} ended with a denied permission and no report`;
+  return null;
 }
 
 // An argv recipe cannot carry a NUL byte, and Windows caps the whole command line near 32,767 characters.
@@ -134,26 +151,51 @@ export function killTree(child, { platform = process.platform, runSync = spawnSy
 
 // Streams the tool's output through; resolves to its exit code, or 124 after a timeout kill.
 // ORC_HEADLESS=1 tells a hook the tool runs (the git guard) that nobody can answer a prompt in this run.
-export async function runDispatch(plan, { timeoutSec, err = console.error, env = process.env } = {}) {
-  return (await runTool(plan, { timeoutSec, err, env: { ...env, ORC_HEADLESS: '1' } })).code;
+// When the adapter can read its result object (headlessResult), stdout is passed through `out` unchanged while its
+// last RESULT_TAIL_BYTES are kept; a run that ends with a result object saying it did no work exits 1 with one stderr
+// line. A timeout or signal code always wins, and output with no result object keeps the process exit code.
+export async function runDispatch(plan, { timeoutSec, err = console.error, env = process.env, out = process.stdout } = {}) {
+  const reads = typeof plan.headlessResult === 'function';
+  const tee = { out, bytes: RESULT_TAIL_BYTES, broken: false };
+  const r = await runTool(plan, { timeoutSec, err, env: { ...env, ORC_HEADLESS: '1' }, ...(reads ? { tee } : {}) });
+  if (!reads) return r.code;
+  // isMain exits as soon as this resolves: let the passed-through output drain first (not once its reader is gone).
+  if (!tee.broken) await new Promise((resolve) => out.write('', () => resolve()));
+  // A broken reader keeps the handler, so a late error cannot end orc with a stack trace.
+  if (!tee.broken && tee.onError) out.off('error', tee.onError);
+  if (r.timedOut || r.signalled || r.code === 127) return r.code;
+  let result = null;
+  try {
+    result = plan.headlessResult(r.tail);
+  } catch {
+    result = null;
+  }
+  const failure = headlessFailure(plan.toolId, result);
+  if (!failure) return r.code;
+  err(failure);
+  return 1;
 }
 
 // The spawn, timeout, kill-tree and signal handling behind runDispatch. With `capture`, stdout is collected and
 // returned instead of streamed, and `captureStderr` does the same for stderr; `cwd` sets the working folder; `env`
-// replaces the environment; `label` prefixes the messages. Resolves to {code, stdout, stderr, timedOut, signalled}:
+// replaces the environment; `label` prefixes the messages; `tee: {out, bytes}` (not with `capture`) passes stdout
+// through to `out` chunk by chunk and keeps its last `bytes` as `tail`. Resolves to
+// {code, stdout, stderr, tail, timedOut, signalled}:
 // code is the exit code, 124 after a timeout kill, 128+signal after Ctrl-C or a kill of orc, 127 when the tool cannot
 // start.
-export function runTool(plan, { timeoutSec, err = console.error, capture = false, captureStderr = false, cwd, env, label = 'dispatch' } = {}) {
+export function runTool(plan, { timeoutSec, err = console.error, capture = false, captureStderr = false, cwd, env, label = 'dispatch', tee = null } = {}) {
   return new Promise((resolve) => {
     const chunks = [];
     const errChunks = [];
+    let tail = [];
+    let tailLength = 0;
     const cannot = (e) => {
       const hint = plan.exe.shim && plan.exe.source === 'env' ? `: ${plan.exe.shim} is a .cmd/.bat shim, which cannot be started without a shell; set ${binEnv(plan.toolId)} to the real executable`
         : plan.exe.unusable ? `: ${plan.exe.unusable}; point it at the real executable`
         : e.code === 'ENOENT' ? `: ${plan.exe.command} is not installed or not on PATH; set ${binEnv(plan.toolId)} to its full path` : `: ${e.message}`;
       err(`${label}: cannot start ${plan.exe.command}${hint}`);
     };
-    const done = (code, extra = {}) => resolve({ code, stdout: Buffer.concat(chunks).toString('utf8'), stderr: Buffer.concat(errChunks).toString('utf8'), timedOut: false, signalled: null, ...extra });
+    const done = (code, extra = {}) => resolve({ code, stdout: Buffer.concat(chunks).toString('utf8'), stderr: Buffer.concat(errChunks).toString('utf8'), tail: tee ? Buffer.concat(tail).subarray(-tee.bytes).toString('utf8') : '', timedOut: false, signalled: null, ...extra });
     let child;
     try {
       child = spawn(plan.exe.command, plan.argv, {
@@ -162,7 +204,7 @@ export function runTool(plan, { timeoutSec, err = console.error, capture = false
         detached: process.platform !== 'win32',
         ...(cwd ? { cwd } : {}),
         ...(env ? { env } : {}),
-        stdio: [plan.stdin == null ? 'ignore' : 'pipe', capture ? 'pipe' : 'inherit', captureStderr ? 'pipe' : 'inherit'],
+        stdio: [plan.stdin == null ? 'ignore' : 'pipe', capture || tee ? 'pipe' : 'inherit', captureStderr ? 'pipe' : 'inherit'],
       });
     } catch (e) {
       cannot(e);
@@ -170,6 +212,35 @@ export function runTool(plan, { timeoutSec, err = console.error, capture = false
       return;
     }
     if (capture) child.stdout.on('data', (c) => chunks.push(c));
+    else if (tee) {
+      // A reader that goes away (a closed pipe or terminal: EPIPE) stops the pass-through only; the tail is still kept
+      // and the run ends with its own code.
+      tee.onError = () => {
+        if (!tee.broken) child.stdout.resume();
+        tee.broken = true;
+      };
+      tee.out.on('error', tee.onError);
+      child.stdout.on('data', (c) => {
+        if (!tee.broken && !tee.out.write(c)) {
+          child.stdout.pause();
+          tee.out.once('drain', () => child.stdout.resume());
+        }
+        tail.push(c);
+        tailLength += c.length;
+        if (tailLength > 2 * tee.bytes) {
+          tail = [Buffer.concat(tail).subarray(-tee.bytes)];
+          tailLength = tail[0].length;
+        }
+      });
+      // A grandchild that inherited the pipe would hold 'close' open after the tool itself exited: two seconds after
+      // the exit, with nothing left to pass through, the pipe is closed.
+      const settle = () => {
+        if (child.stdout.readableEnded || child.stdout.destroyed) return;
+        if (child.stdout.isPaused() || child.stdout.readableLength) setTimeout(settle, 2000).unref();
+        else child.stdout.destroy();
+      };
+      child.on('exit', () => setTimeout(settle, 2000).unref());
+    }
     if (captureStderr) child.stderr.on('data', (c) => errChunks.push(c));
     let timedOut = false;
     let signalled = null;

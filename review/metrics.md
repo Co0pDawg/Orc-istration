@@ -8,13 +8,13 @@ This file is the single source for the report schema, the privacy rules and the 
 
 Capture reads **Claude Code session transcripts only**. Claude Code records each session under `~/.claude/projects/<project>/`: `<session>.jsonl` for the main thread, and `<session>/subagents/agent-<id>.jsonl` with `agent-<id>.meta.json` (agent type, description) for each subagent. Each API message carries its `usage` and model. Tool calls and tool results give the files read and their sizes.
 
-Other tools (Codex, Gemini CLI, Copilot, Cursor, OpenCode, Antigravity) are unsupported: they write no transcript in this shape. A review run in one of them skips the metrics step; its run log still feeds `calibration`.
+Other tools (Codex, Gemini CLI, Copilot, Cursor, OpenCode, Antigravity) are unsupported: they write no transcript in this shape. In one of them there is no session to read, so `metrics capture` prints `metrics: skipped (no Claude Code session; capture reads Claude Code transcripts only)`, exits 0 and writes nothing, and the review goes on; its run log still feeds `calibration`.
 
 Nothing is counted during the run. Capture reads the transcripts afterwards, so a run cannot under-report by skipping a step.
 
 ## Capture
 
-```bash
+```
 node <orc checkout>/tools/orc.mjs metrics capture --workflow pre-pr-review [--session <id>] [--transcript <path>] [--log <run log>] [--mode lite|full] [--version <v>] [--out <dir>] [--print]
 ```
 
@@ -22,7 +22,7 @@ node <orc checkout>/tools/orc.mjs metrics capture --workflow pre-pr-review [--se
 - **Window:** `--workflow pre-pr-review` starts the run at the session's last `/pre-pr-review` invocation (a typed command or a Skill tool call) and ends it at the last activity of any agent. `--workflow session` covers the whole transcript. Any other name is matched against invocations the same way. When the session holds no matching invocation, the report covers the whole session and the command prints a `WARN` line on stderr. A run log whose `Leads:` line lacks a count warns the same way, and that count is `null`.
 - **Output:** one file at `<out>/<yyyy-MM>/<runId>.json`, where `--out` defaults to `.orc/metrics/` under the current repo. The command prints the file's path. `--print` writes nothing and prints the report instead.
 - **Re-capture:** a run keeps its `runId` (the start time does not change), so running the same command again replaces the report. The review procedure does this after its verdict sweep, so the report carries the final verdict counts.
-- **Errors:** a missing transcript, session, run log or workflow name exits 1 with a `metrics:` error. The review procedure reports it and carries on.
+- **Errors:** a transcript or session that is given but not found, a missing run log or a missing workflow name exits 1 with a `metrics:` error. The review procedure reports it and carries on. With no `--session`, no `--transcript` and no `CLAUDE_CODE_SESSION_ID`, capture is skipped instead (above).
 
 ## Nested runs
 
@@ -72,7 +72,7 @@ Characters, not tokens, measure tool output and files: a token is roughly three 
 
 ## Report
 
-```bash
+```
 node <orc checkout>/tools/orc.mjs metrics report [--dir <dir>] [--prices <file>] [--out <file>]
 ```
 

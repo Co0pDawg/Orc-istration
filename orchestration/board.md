@@ -11,7 +11,7 @@ The protocol is the "Writing protocol" section of the board's `README.md`: read 
 
 ## Every write
 
-- Take times from `date -Iseconds` at the moment of the write, never an estimate.
+- Take times from the clock at the moment of the write, ISO 8601 with offset (`2026-11-25T14:03:07-05:00`), never an estimate. On any platform, `node <setup>/tools/orc.mjs now` prints it (`<setup>` is the setup checkout); in a POSIX shell, `date -Iseconds`; in PowerShell, `Get-Date -Format "yyyy-MM-ddTHH:mm:sszzz"`.
 - Pin each write to an existing doc to the version last read. On a conflict, re-read and redo.
 - Bump the session's `updated`, so it sorts first.
 - Write more than one doc in one `batch`.

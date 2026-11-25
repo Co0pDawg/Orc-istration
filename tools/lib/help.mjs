@@ -112,6 +112,40 @@ export const HELP = {
       '--repo-dir <dir>': 'the git repo to read (default the current folder)',
     },
   },
+  'pr-size': {
+    summary: 'Size a PR diff for workflows/peer-review.md: product, test and doc lines, the score and the size tier, then one risk: line per sensitive path',
+    synopsis: 'pr-size --base <ref> --head <ref> [--sensitive <regex>] [--repo-dir <dir>]',
+    options: {
+      '--base <ref>': 'the target the PR merges into, e.g. origin/main (required)',
+      '--head <ref>': 'the PR\'s source branch, e.g. origin/feature/42-export (required)',
+      '--sensitive <regex>': 'the "Sensitive paths:" line of the repo\'s review rules (case-insensitive); each matching product path prints risk: <path>',
+      '--repo-dir <dir>': 'the git repo to read (default the current folder)',
+    },
+  },
+  'text-check': {
+    summary: 'Count a file\'s words and bytes and, with --ascii, list the lines holding a character outside printable ASCII; exit 1 when a limit is exceeded or such a line is found',
+    synopsis: 'text-check <file> [--max-words <n>] [--max-bytes <n>] [--ascii]',
+    options: {
+      '--max-words <n>': 'fail above this many words (runs of non-whitespace)',
+      '--max-bytes <n>': 'fail above this many bytes',
+      '--ascii': 'print non-ascii: <line>: <text> for each line with a character other than tab or printable ASCII, and fail when there is one',
+    },
+  },
+  poll: {
+    summary: 'Run a command (no shell) every interval until its trimmed stdout matches a regex, then print that stdout; a run that exits non-zero is retried',
+    synopsis: 'poll --every <seconds> --until <regex> [--timeout <seconds>] -- <command> [args...]',
+    options: {
+      '--every <seconds>': 'the wait between runs (1 to 3600; required)',
+      '--until <regex>': 'stop when a run exits 0 and its trimmed stdout matches this (required)',
+      '--timeout <seconds>': 'give up after this many seconds with exit 124 and the last output on stderr (1 to 86400; default none)',
+      '-- <command> [args...]': 'the command and its arguments, run without a shell; exit 1 when it cannot start',
+    },
+  },
+  now: {
+    summary: 'Print the current local time as ISO 8601 with its UTC offset, to the second (the board\'s timestamp)',
+    synopsis: 'now',
+    options: {},
+  },
   costlog: {
     summary: 'Draft a cost log for one board session',
     synopsis: 'costlog --session <id> (--board-export <file> | --board <http://localhost:port> --board-repo <dir>) [--out <file>] [--force]',
@@ -188,7 +222,7 @@ export const HELP = {
     synopsis: 'metrics capture --workflow <name> [--session <id> | --transcript <path>] [--log <run log>] [--mode lite|full] [--version <v>] [--out <dir>] [--print] | metrics report [--dir <dir>] [--prices <file>] [--out <file>] [--force]',
     options: {
       '--workflow <name>': 'capture: the workflow that ran (required)',
-      '--session <id>': 'capture: the session (default CLAUDE_CODE_SESSION_ID)',
+      '--session <id>': 'capture: the session (default CLAUDE_CODE_SESSION_ID; with no session and no --transcript, as outside Claude Code, capture prints metrics: skipped and exits 0)',
       '--transcript <path>': 'capture: read this transcript instead of the session\'s',
       '--log <run log>': 'capture: the run log to attach',
       '--mode lite|full': 'capture: the run mode',

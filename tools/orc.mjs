@@ -12,6 +12,9 @@ import { sha256, diskHash, loadManifest, writeManifest, safeRel, escapes } from 
 import { knownTools, validateModels } from './lib/models.mjs';
 import { briefTemplate, lintBrief, parseMarchingOrders } from './lib/brief.mjs';
 import { reviewTier } from './lib/reviewtier.mjs';
+import { prSize } from './lib/prsize.mjs';
+import { textCheck } from './lib/textcheck.mjs';
+import { pollUntil } from './lib/poll.mjs';
 import { costlog, readBoardExport } from './lib/costlog.mjs';
 import { calibrationReport, DEFAULT_MIN_PRECISION } from './lib/calibration.mjs';
 import { listCases, scoreReport } from './lib/corpus.mjs';
@@ -595,12 +598,20 @@ export function firstDiffLine(a, b) {
   return 0;
 }
 
+// Local time with its UTC offset, to the second (2026-11-25T12:01:43-05:00): the board's timestamp, `orc now`.
+export function isoNow(d = new Date()) {
+  const p = (n) => String(Math.abs(n)).padStart(2, '0');
+  const off = -d.getTimezoneOffset();
+  const zone = `${off < 0 ? '-' : '+'}${p(Math.trunc(off / 60))}:${p(off % 60)}`;
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}${zone}`;
+}
+
 function stamp(d = new Date()) {
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices', 'stack', 'from', 'case', 'report', 'variant', 'models', 'budget-usd', 'runs', 'label', 'author', 'max', 'until', 'model', 'allow', 'state', 'issue', 'family', 'prefer'];
+const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices', 'stack', 'from', 'case', 'report', 'variant', 'models', 'budget-usd', 'runs', 'label', 'author', 'max', 'until', 'model', 'allow', 'state', 'issue', 'family', 'prefer', 'head', 'sensitive', 'max-words', 'max-bytes', 'every'];
 
 // Value options that may repeat; each value may also be comma-separated.
 const LIST_OPTIONS = ['profile', 'stack'];
@@ -608,7 +619,7 @@ const LIST_OPTIONS = ['profile', 'stack'];
 // Value options that may repeat but are never comma-split (paths, case ids, logins, tool rules).
 const REPEAT_OPTIONS = ['from', 'case', 'author', 'allow'];
 
-const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print', 'json', 'sprint-kit', 'keep', 'keep-output', 'all', 'remove'];
+const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print', 'json', 'sprint-kit', 'keep', 'keep-output', 'all', 'remove', 'ascii'];
 
 // The argv index of the command word (the first argument that is neither an option nor an option's value).
 function commandIndex(argv) {
@@ -775,13 +786,18 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     io.err(msg);
     return 1;
   };
+  // `poll ... -- <command> [args...]`: everything after the first `--` is the polled command's argv, never parsed as
+  // orc options (its own `--help` or `-h` included).
+  const dashes = argv.indexOf('--');
+  const polled = dashes < 0 ? null : argv.slice(dashes + 1);
   let opt;
   try {
-    opt = args(argv);
+    opt = args(dashes < 0 ? argv : argv.slice(0, dashes));
   } catch (e) {
     return fail(e.message);
   }
   const cmd = opt._[0];
+  if (polled && cmd !== 'poll') return fail('`--` applies to poll only (poll --every <seconds> --until <regex> -- <command> [args...])');
   if (opt.help || opt._.includes('-h') || cmd === 'help') {
     const topic = cmd === 'help' || cmd === '-h' ? opt._.find((a, i) => i > 0 && a !== '-h') : cmd;
     if (!topic) {
@@ -835,8 +851,12 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const unknown = opt.stack.filter((s) => !KNOWN_STACKS.includes(s));
     if (unknown.length) return fail(`unknown stack(s) ${unknown.join(', ')} for the sprint kit; known: ${KNOWN_STACKS.join(', ')}`);
   }
-  const queueOnly = ['label', 'author', 'max', 'until', 'allow', 'state', 'issue'].filter((k) => opt[k] !== undefined);
+  const queueOnly = ['label', 'author', 'max', 'allow', 'state', 'issue'].filter((k) => opt[k] !== undefined);
   if (queueOnly.length && cmd !== 'queue') return fail(`${queueOnly.map((k) => `--${k}`).join(', ')} apply to queue only`);
+  if (opt.until !== undefined && !['queue', 'poll'].includes(cmd)) return fail('--until applies to queue and poll only');
+  if (opt.every !== undefined && cmd !== 'poll') return fail('--every applies to poll only');
+  if ((opt.head !== undefined || opt.sensitive !== undefined) && cmd !== 'pr-size') return fail('--head and --sensitive apply to pr-size only');
+  if ((opt['max-words'] !== undefined || opt['max-bytes'] !== undefined || opt.ascii) && cmd !== 'text-check') return fail('--max-words, --max-bytes and --ascii apply to text-check only');
   const benchOnly = ['variant', 'models', 'runs', 'keep', 'keep-output'].filter((k) => opt[k] !== undefined);
   if (benchOnly.length && cmd !== 'bench') return fail(`${benchOnly.map((k) => `--${k}`).join(', ')} apply to bench only`);
   if (opt['budget-usd'] !== undefined && !['bench', 'queue'].includes(cmd)) return fail('--budget-usd applies to bench and queue only');
@@ -1345,9 +1365,25 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         io.err(`WARN ${mismatch}`);
       }
     }
+    // Antigravity: orc-guard lives in hooks.json, which no manifest records, so it is named on every uninstall.
+    const agyGuardNote = () => {
+      if (adapter.id !== 'antigravity') return;
+      const hooksFile = path.join(home, '.gemini', 'config', 'hooks.json');
+      try {
+        if (fs.existsSync(hooksFile) && Object.hasOwn(readSettings(hooksFile).settings, ANTIGRAVITY_GUARD_KEY)) {
+          const homeArg = /\s/.test(home) ? `"${home}"` : home;
+          io.out(`note: ${hooksFile} still has ${ANTIGRAVITY_GUARD_KEY}; run node tools/orc.mjs hooks --tool antigravity --home ${homeArg} --remove --apply to remove it`);
+        }
+      } catch {
+        // Unreadable hooks.json never blocks uninstalling the manifest files.
+      }
+    };
     const { manifest, file, error } = loadManifest(home, adapter);
     if (error) return fail(error);
-    if (!manifest) return fail(`no install manifest at ${file}: remove ${adapter.id}'s files by hand`);
+    if (!manifest) {
+      agyGuardNote();
+      return fail(`no install manifest at ${file}: remove ${adapter.id}'s files by hand`);
+    }
     const when = stamp(io.now ? io.now() : new Date());
     // Validate every entry and build the whole plan before deleting anything.
     const root = adapter.home.root;
@@ -1503,17 +1539,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         io.out(`kept manifest listing ${Object.keys(kept).length} kept file(s): ${file}`);
       } else io.out(`removed manifest: ${file}`);
     } else io.out(`dry run for ${adapter.id}; add --apply to delete`);
-    if (adapter.id === 'antigravity') {
-      const hooksFile = path.join(home, '.gemini', 'config', 'hooks.json');
-      try {
-        if (fs.existsSync(hooksFile) && Object.hasOwn(readSettings(hooksFile).settings, ANTIGRAVITY_GUARD_KEY)) {
-          const homeArg = /\s/.test(home) ? `"${home}"` : home;
-          io.out(`note: ${hooksFile} still has ${ANTIGRAVITY_GUARD_KEY}; run node tools/orc.mjs hooks --tool antigravity --home ${homeArg} --remove --apply to remove it`);
-        }
-      } catch {
-        // Unreadable hooks.json never blocks uninstalling the manifest files.
-      }
-    }
+    agyGuardNote();
     return 0;
   }
 
@@ -1587,6 +1613,64 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     } catch (e) {
       return fail(e.message);
     }
+  }
+
+  if (cmd === 'pr-size') {
+    if (!opt.base || !opt.head || opt._.length !== 1) return fail('usage: pr-size --base <ref> --head <ref> [--sensitive <regex>] [--repo-dir <dir>]');
+    try {
+      prSize(path.resolve(opt['repo-dir'] ?? process.cwd()), opt.base, opt.head, opt.sensitive).forEach((l) => io.out(l));
+      return 0;
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  if (cmd === 'text-check') {
+    const usage = 'usage: text-check <file> [--max-words <n>] [--max-bytes <n>] [--ascii]';
+    if (opt._.length !== 2) return fail(usage);
+    const limit = (key) => {
+      if (opt[key] === undefined) return undefined;
+      if (!/^\d+$/.test(opt[key])) throw new Error(`--${key} needs a whole number, got ${opt[key]}`);
+      return Number(opt[key]);
+    };
+    let checked;
+    try {
+      const file = path.resolve(opt._[1]);
+      if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return fail(`text-check: no file at ${file}`);
+      checked = textCheck(fs.readFileSync(file), { maxWords: limit('max-words'), maxBytes: limit('max-bytes'), ascii: Boolean(opt.ascii) });
+    } catch (e) {
+      return fail(`text-check: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    checked.out.forEach((l) => io.out(l));
+    return checked.problems.length ? fail(`text-check: ${checked.problems.join('; ')}`) : 0;
+  }
+
+  if (cmd === 'poll') {
+    const usage = 'usage: poll --every <seconds> --until <regex> [--timeout <seconds>] -- <command> [args...]';
+    if (!polled?.length || opt._.length !== 1 || opt.every === undefined || opt.until === undefined) return fail(usage);
+    const every = /^\d+$/.test(opt.every) ? Number(opt.every) : NaN;
+    if (!(every >= 1 && every <= 3600)) return fail(`--every needs a whole number of seconds from 1 to 3600, got ${opt.every}`);
+    let timeoutSec = 0;
+    if (opt.timeout !== undefined) {
+      timeoutSec = /^\d+$/.test(opt.timeout) ? Number(opt.timeout) : NaN;
+      if (!(timeoutSec >= 1 && timeoutSec <= 86400)) return fail(`--timeout needs a whole number of seconds from 1 to 86400, got ${opt.timeout}`);
+    }
+    let until;
+    try {
+      until = new RegExp(opt.until);
+    } catch (e) {
+      return fail(`--until is not a valid regular expression: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const r = await pollUntil({ argv: polled, everyMs: every * 1000, until, timeoutMs: timeoutSec * 1000 });
+    if (r.out !== undefined) io.out(r.out);
+    if (r.err) io.err(r.err);
+    return r.code;
+  }
+
+  if (cmd === 'now') {
+    if (opt._.length !== 1) return fail('usage: now');
+    io.out(isoNow());
+    return 0;
   }
 
   if (cmd === 'costlog') {
@@ -1708,7 +1792,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     try {
       if (sub === 'capture' && opt._.length === 2) {
         if (opt.mode && !['lite', 'full'].includes(opt.mode)) return fail(`metrics: --mode must be lite or full, got ${opt.mode}`);
-        const { report, file, warnings } = capture({
+        const captured = capture({
           cwd: process.cwd(),
           workflow: opt.workflow,
           session: opt.session ?? process.env.CLAUDE_CODE_SESSION_ID,
@@ -1718,6 +1802,11 @@ export async function main(argv, io = { out: console.log, err: console.error, st
           version: opt.version,
           out: opt.out,
         });
+        if (captured.skipped) {
+          io.out(captured.skipped);
+          return 0;
+        }
+        const { report, file, warnings } = captured;
         warnings.forEach((w) => io.err(`WARN ${w}`));
         const json = JSON.stringify(report, null, 2);
         if (opt.print) {
@@ -1828,23 +1917,29 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       if (unsafe) return fail(`hooks: ${unsafe}; nothing written`);
       try {
         const { original, bom, settings } = readSettings(target);
+        // Antigravity's hooks.json is keyed by hook name: a Claude-style `{"hooks": {...}}` wrapper loads as one hook
+        // named "hooks". It is not ours, so it is left alone.
+        if (settings && typeof settings === 'object' && Object.hasOwn(settings, 'hooks')) {
+          io.err(`WARN ${target} has a top-level key named "hooks", which Antigravity loads as a hook named "hooks" (a Claude Code-style wrapper?); orc leaves it alone`);
+        }
         if (opt.remove) {
           const { status, merged } = removeAntigravityGuard(settings);
           if (status === 'absent') {
             io.out(`nothing to remove: ${ANTIGRAVITY_GUARD_KEY} is not in ${target}`);
             return 0;
           }
-          io.out(`${opt.apply ? 'removed' : 'would remove'} ${ANTIGRAVITY_GUARD_KEY} from ${target}`);
           if (original !== null && formatLike(original, settings) !== original) {
             io.err(`WARN ${target} is not in plain indented JSON layout; writing it re-indents the existing content (values and order unchanged)`);
           }
           if (!opt.apply) {
+            io.out(`would remove ${ANTIGRAVITY_GUARD_KEY} from ${target}`);
             io.out(`dry run: would update ${target}; add --apply to write`);
             return 0;
           }
           const backup = backupPath(target, stamp(io.now ? io.now() : new Date()));
           writeSettings(target, bom + formatLike(original, merged), backup);
           io.out(`backed up: ${backup}`);
+          io.out(`removed ${ANTIGRAVITY_GUARD_KEY} from ${target}`);
           io.out(`updated ${target}`);
           return 0;
         }

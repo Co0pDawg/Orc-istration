@@ -44,7 +44,7 @@ Reports are capped at 40 lines; anything longer goes to a scratch file and the r
 The board address for this machine is in the Board line of the tool notes below (added at install from `~/.orc/config.json`, so the public repo carries no personal link).
 - A `http://localhost:<port>` address means the local backend: write with `node <board repo>/local/board.js` (`batch` for the Start write, `append` for progress and events, `update` for fields; exit 2 is a version conflict).
 - A `claude.ai/artifact/...` address means the artifact backend, which only Claude Code can write (see its tool notes).
-- Board times come from the clock at the moment of the write (`date -Iseconds`), never an estimate; estimated times once ran 30 minutes ahead.
+- Board times come from the clock at the moment of the write, ISO 8601 with offset, never an estimate; estimated times once ran 30 minutes ahead.
 
 Every orchestrated task (any task that dispatches a builder, refuter or debugger) goes on the live board, so the user can watch progress from any device. Inline work and lone scout/researcher lookups stay off it.
 - **Start:** before the first dispatch, create the session doc and one card per task in a single batch.
@@ -124,7 +124,15 @@ Each tool's specifics (dispatch, model mapping, hooks, what it cannot do) are in
 - **Shared `~/.gemini`:** Antigravity may load both `AGENTS.md` and a Gemini CLI `GEMINI.md` there; `install` warns whether the other file is orc-generated (remove it unless you also use Gemini CLI) or hand-written.
 - **Mid-flight messages:** a chat message sent to an Antigravity orchestrator while subagents or background commands run force-cancels all of them. To relay a message mid-flight, wait for the agents to finish, or run the orchestrator on another tool.
 - **Skills:** `install` and `sync` generate every routine, workflow and review procedure from `core/procedures.mjs` as a skill in `~/.gemini/config/skills/<name>/SKILL.md`, which is also the slash command `/<name>`: `board`, `brief`, `wrap-up`, `sprint`, `repo-standards`, `start`, `grill`, `draft-pr`, `peer-review`, `create`, `fix-ci`, `pre-pr-review`, `review-verdict` and `calibration-report`. Each is a thin wrapper over the tool-neutral file in the setup checkout. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `~/.orc/config.json`, else ask the user. Call it CHECKOUT and confirm `CHECKOUT/tools/orc.mjs` exists there; if it does not, stop and say so.
-- **Review panel:** `/pre-pr-review` follows `review/PROCEDURE.md` in the setup checkout, dispatching the `review-*` agents by name. `metrics capture` reads Claude Code transcripts only, so it is unsupported here.
+- **Review panel:** `/pre-pr-review` follows `review/PROCEDURE.md` in the setup checkout, dispatching the `review-*` agents by name; `/review-verdict` and `/calibration-report` are its verdict and calibration commands. `metrics capture` reads Claude Code transcripts only, so here it prints `metrics: skipped` and exits 0, and the review goes on.
+- **Agents:** generated agents are `~/.gemini/config/agents/<name>.md`. `invoke_subagent` runs an agent at its own model; to run one dispatch at another tier, run it headless with `node CHECKOUT/tools/orc.mjs dispatch --role <name> --brief <file> --model <slug>`.
+- **Resume and worktrees:** no resume tool is documented here: send a rework to the same subagent with `@<name>`, or dispatch a fresh one with the brief and its last report. There is no per-agent worktree setting: make one with `git worktree add` and pass its path in the brief.
+- **Ask:** ask the user through Antigravity's own question prompt when the session offers one, else as a plain numbered question in chat (for several picks, ask for the numbers).
+- **Timed sessions (sprint mode):** orc knows no setting that pre-approves Antigravity's permission prompts: expect them and answer them quickly. A headless `agy -p` run cannot answer one: it is denied, which can end the run with no report (`orc dispatch` then exits 1).
+- **Board:** the artifact backend is written only from Claude Code; use a local board here.
+- **Mockups:** there is no artifact page here: write a UI mockup as an HTML file in the scratch folder and give the developer its path.
+- **Cost log:** orc knows no context-size readout here: write `Orchestrator context: unmeasured (Antigravity)`.
+- **Pull request footer:** end the description with the rulebook's `Built with [Orc-istration](https://github.com/Co0pDawg/Orc-istration) 🧌` line; Antigravity adds no generated-with line of its own that orc knows of.
 
 What Antigravity CLI cannot do (generated from the adapter's gaps):
 - Per-agent model is only inherit, flash or pro: Mid and Low both map to flash, and what flash and pro resolve to is not documented.

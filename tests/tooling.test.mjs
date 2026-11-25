@@ -461,6 +461,137 @@ test('dispatch real run passes the brief byte-identical, with no shell, and retu
   }
 });
 
+// A stub agy that prints STUB_PAD bytes of plain lines, then the contents of STUB_STDOUT_FILE, and exits STUB_EXIT
+// (with STUB_HANG, it then stays running instead).
+function resultStub(dir) {
+  const file = path.join(dir, 'result-stub.mjs');
+  fs.writeFileSync(file, `import fs from 'node:fs';
+const pad = Number(process.env.STUB_PAD ?? 0);
+const line = 'x'.repeat(99) + '\\n';
+let out = line.repeat(Math.floor(pad / 100));
+if (process.env.STUB_STDOUT_FILE) out += fs.readFileSync(process.env.STUB_STDOUT_FILE, 'utf8');
+process.stdout.write(out, () => (process.env.STUB_HANG ? setTimeout(() => {}, 60000) : process.exit(Number(process.env.STUB_EXIT ?? 0))));
+`);
+  return file;
+}
+
+// The two result objects recorded from real agy runs on 2026-11-24 (issue 51), and a normal success.
+const AGY_DENIED = '{"conversation_id":"x","status":"SUCCESS","response":"","duration_seconds":80.4,"num_turns":1,"usage":{"total_tokens":40019},"denied_actions":[{"action":"command","display_name":"Bash"}]}';
+const AGY_ERROR = '{"conversation_id":"y","status":"ERROR","response":"","duration_seconds":236,"num_turns":1,"usage":{"total_tokens":349212}}';
+const AGY_OK = '{"conversation_id":"z","status":"SUCCESS","response":"STATUS: DONE\\nCHANGED: a.mjs","duration_seconds":12,"num_turns":3,"usage":{"total_tokens":900},"denied_actions":[]}';
+
+test('dispatch antigravity: exit 1 with one stderr line when agy reports ERROR or a denied permission and no report (issue 51)', () => {
+  const dir = tempDir('stub-result');
+  const brief = briefFile();
+  const runWith = (stdout, extra = {}) => {
+    const outFile = path.join(dir, 'stdout.txt');
+    fs.writeFileSync(outFile, stdout);
+    return isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', brief], { ORC_TOOL_BIN_ANTIGRAVITY: resultStub(dir), STUB_STDOUT_FILE: outFile, ...extra });
+  };
+  const command = (out) => out.split('\n').slice(2).join('\n');
+
+  const denied = runWith(`${AGY_DENIED}\n`);
+  assert.strictEqual(denied.code, 1);
+  assert.strictEqual(denied.err, 'dispatch: antigravity ended with a denied permission and no report\n');
+  assert.strictEqual(command(denied.out), `${AGY_DENIED}\n`, 'the output passes through unchanged');
+
+  const error = runWith(AGY_ERROR);
+  assert.strictEqual(error.code, 1);
+  assert.strictEqual(error.err, 'dispatch: antigravity reported ERROR: no response\n');
+  assert.strictEqual(command(error.out), AGY_ERROR);
+  // A pretty-printed ERROR object after other lines, with a reason in its response, and a non-zero tool exit.
+  const pretty = runWith(`working...\n${JSON.stringify({ ...JSON.parse(AGY_ERROR), response: 'quota reached\nmore' }, null, 2)}\n`, { STUB_EXIT: '2' });
+  assert.strictEqual(pretty.code, 1);
+  assert.strictEqual(pretty.err, 'dispatch: antigravity reported ERROR: quota reached\n');
+
+  const ok = runWith(`${AGY_OK}\n`);
+  assert.strictEqual(ok.code, 0, ok.err);
+  assert.strictEqual(ok.err, '');
+  assert.strictEqual(command(ok.out), `${AGY_OK}\n`);
+  // A successful run keeps the tool's own exit code; output that is not a result object keeps it too.
+  assert.strictEqual(runWith(`${AGY_OK}\n`, { STUB_EXIT: '3' }).code, 3);
+  const plain = runWith('no json here\n{"status": broken\n', { STUB_EXIT: '0' });
+  assert.strictEqual(plain.code, 0);
+  assert.strictEqual(plain.err, '');
+});
+
+test('dispatch antigravity: a large output streams through whole before the result object is read', () => {
+  const dir = tempDir('stub-result-big');
+  const outFile = path.join(dir, 'stdout.txt');
+  fs.writeFileSync(outFile, `${AGY_ERROR}\n`);
+  const pad = 600 * 1024;
+  const r = isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile()], { ORC_TOOL_BIN_ANTIGRAVITY: resultStub(dir), STUB_STDOUT_FILE: outFile, STUB_PAD: String(pad) });
+  assert.strictEqual(r.code, 1, r.err);
+  const body = r.out.split('\n').slice(2).join('\n');
+  assert.strictEqual(body.length, pad + AGY_ERROR.length + 1, 'every byte arrives, in order');
+  assert.ok(body.endsWith(`x\n${AGY_ERROR}\n`));
+  assert.strictEqual(r.err, 'dispatch: antigravity reported ERROR: no response\n');
+});
+
+test('dispatch: a tool with no headlessResult keeps its own exit code and stream, whatever it prints', () => {
+  const dir = tempDir('stub-result-nojson');
+  const outFile = path.join(dir, 'stdout.txt');
+  fs.writeFileSync(outFile, `${AGY_ERROR}\n${AGY_DENIED}\n`);
+  for (const [tool, role] of [['claude-code', 'builder'], ['codex', 'builder']]) {
+    const env = { [`ORC_TOOL_BIN_${tool.toUpperCase().replace('-', '_')}`]: resultStub(dir), STUB_STDOUT_FILE: outFile };
+    const r = isolated(['dispatch', '--tool', tool, '--role', role, '--brief', briefFile()], env);
+    assert.strictEqual(r.code, 0, `${tool}: ${r.err}`);
+    assert.strictEqual(r.err, '', tool);
+    assert.ok(r.out.endsWith(`${AGY_ERROR}\n${AGY_DENIED}\n`), tool);
+    assert.strictEqual(isolated(['dispatch', '--tool', tool, '--role', role, '--brief', briefFile()], { ...env, STUB_EXIT: '4' }).code, 4, tool);
+  }
+});
+
+test('dispatch antigravity: a timeout wins over a result object already printed', () => {
+  const dir = tempDir('stub-result-hang');
+  const outFile = path.join(dir, 'stdout.txt');
+  for (const printed of [AGY_ERROR, AGY_DENIED, AGY_OK]) {
+    fs.writeFileSync(outFile, `${printed}\n`);
+    const r = isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile(), '--timeout', '2'], { ORC_TOOL_BIN_ANTIGRAVITY: resultStub(dir), STUB_STDOUT_FILE: outFile, STUB_HANG: '1' });
+    assert.strictEqual(r.code, 124, r.err);
+    assert.match(r.err, /^dispatch: timed out after 2s; killing the process tree\n$/);
+    assert.ok(r.out.endsWith(`${printed}\n`));
+  }
+});
+
+test('dispatch antigravity: a reader that closes early stops the pass-through, not the run (no EPIPE stack trace)', async () => {
+  const dir = tempDir('stub-result-epipe');
+  const outFile = path.join(dir, 'stdout.txt');
+  fs.writeFileSync(outFile, `${AGY_ERROR}\n`);
+  const fakeHome = tempDir('fakehome');
+  const env = agentFree({ ...process.env, HOME: fakeHome, USERPROFILE: fakeHome }, { ORC_TOOL_BIN_ANTIGRAVITY: resultStub(dir), STUB_STDOUT_FILE: outFile, STUB_PAD: String(2 * 1024 * 1024) });
+  const child = spawn(process.execPath, [ORC, 'dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile()], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let read = 0;
+  let stderr = '';
+  child.stderr.on('data', (c) => (stderr += c));
+  child.stdout.on('data', (c) => {
+    read += c.length;
+    if (read >= 100 * 1024) child.stdout.destroy();
+  });
+  const code = await new Promise((resolve) => child.on('close', (c) => resolve(c)));
+  assert.ok(read >= 100 * 1024 && read < 2 * 1024 * 1024, `the reader closed early (${read} bytes)`);
+  assert.strictEqual(stderr, 'dispatch: antigravity reported ERROR: no response\n', 'the tail was still read; no stack trace');
+  assert.strictEqual(code, 1);
+});
+
+test('antigravity headlessResult reads the last result object; null when there is none', async () => {
+  const agy = (await import('../adapters/antigravity.mjs')).default;
+  assert.deepStrictEqual(agy.headlessResult(`${AGY_DENIED}\n`), { ok: true, status: 'SUCCESS', response: '', denied: 1 });
+  assert.deepStrictEqual(agy.headlessResult(`log line\r\n${AGY_ERROR}\r\n`), { ok: false, status: 'ERROR', response: '', denied: 0 });
+  assert.deepStrictEqual(agy.headlessResult(`{"note":1}\n${JSON.stringify(JSON.parse(AGY_OK), null, 2)}`), { ok: true, status: 'SUCCESS', response: 'STATUS: DONE\nCHANGED: a.mjs', denied: 0 });
+  // Lines after the result object are ignored; of two objects the last wins; an object written inside the response
+  // text is part of that string, not a result.
+  assert.deepStrictEqual(agy.headlessResult(`${AGY_ERROR}\nshutdown noise\n`), { ok: false, status: 'ERROR', response: '', denied: 0 });
+  assert.deepStrictEqual(agy.headlessResult(`${AGY_ERROR}\n{"oops":1}\n{"status": cut`), { ok: false, status: 'ERROR', response: '', denied: 0 });
+  assert.deepStrictEqual(agy.headlessResult(`${AGY_OK}\n${AGY_ERROR}\n`).status, 'ERROR');
+  assert.deepStrictEqual(agy.headlessResult(`${AGY_ERROR}\n${AGY_OK}\n`).status, 'SUCCESS');
+  const nested = JSON.stringify({ status: 'SUCCESS', response: 'saw\n{"status":"ERROR","response":""}\nand {"status":"ERROR"} in a log', usage: { inner: { status: 'ERROR' } } }, null, 2);
+  assert.deepStrictEqual(agy.headlessResult(`${nested}\n`), { ok: true, status: 'SUCCESS', response: 'saw\n{"status":"ERROR","response":""}\nand {"status":"ERROR"} in a log', denied: 0 });
+  for (const none of ['', 'plain text\n', '{"status": cut off', '[1,2]', '{"no_status":true}', AGY_ERROR.slice(10)]) {
+    assert.strictEqual(agy.headlessResult(none), null, JSON.stringify(none));
+  }
+});
+
 test('dispatch codex: read-only sandbox only for scout and researcher, effort only when the tier has one, role body and brief on stdin', () => {
   const brief = briefFile(goodBrief({ 7: NASTY.replace(/\n/g, '\n   ') }));
   const text = fs.readFileSync(brief, 'utf8');
@@ -1053,6 +1184,47 @@ test('hooks --tool antigravity: existing differing orc-guard reports what differ
   assert.deepStrictEqual(left['first-hook'], initial['first-hook']);
   assert.deepStrictEqual(left['last-hook'], initial['last-hook']);
   assert.ok(fs.readdirSync(path.dirname(target)).filter((f) => f.startsWith('hooks.json.orc-backup-')).length >= 2, 'each write is backed up');
+});
+
+test('hooks --tool antigravity: one WARN for a Claude-style "hooks" key, left alone; --remove says removed only after the write', async () => {
+  const home = tempDir('agy-hooks-wrapper');
+  const target = path.join(home, '.gemini', 'config', 'hooks.json');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const wrapper = { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'node x.mjs' }] }] };
+  fs.writeFileSync(target, `${JSON.stringify({ hooks: wrapper }, null, 2)}\n`);
+  const add = await run(['hooks', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.strictEqual(add.code, 0, add.err);
+  const warns = add.err.split('\n').filter((l) => l.includes('top-level key named "hooks"'));
+  assert.deepStrictEqual(warns, [`WARN ${target} has a top-level key named "hooks", which Antigravity loads as a hook named "hooks" (a Claude Code-style wrapper?); orc leaves it alone`]);
+  const added = JSON.parse(fs.readFileSync(target, 'utf8'));
+  assert.deepStrictEqual(Object.keys(added), ['hooks', 'orc-guard']);
+  assert.deepStrictEqual(added.hooks, wrapper, 'the "hooks" key is left alone');
+
+  // A write that fails: the temp file writeSettings writes first is a folder, so nothing is said to be removed.
+  const blocker = `${target}.orc-tmp-${process.pid}`;
+  fs.mkdirSync(blocker);
+  const failed = await run(['hooks', '--tool', 'antigravity', '--home', home, '--remove', '--apply']);
+  fs.rmSync(blocker, { recursive: true });
+  assert.strictEqual(failed.code, 1);
+  assert.doesNotMatch(failed.out, /removed/);
+  assert.deepStrictEqual(Object.keys(JSON.parse(fs.readFileSync(target, 'utf8'))), ['hooks', 'orc-guard'], 'still there');
+  const rem = await run(['hooks', '--tool', 'antigravity', '--home', home, '--remove', '--apply']);
+  assert.strictEqual(rem.code, 0, rem.err);
+  assert.match(rem.out, /^backed up: .*\nremoved orc-guard from .*hooks\.json\nupdated /);
+  assert.match(rem.err, /top-level key named "hooks"/);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(target, 'utf8')), { hooks: wrapper });
+});
+
+test('uninstall --tool antigravity with no manifest still names a wired orc-guard', async () => {
+  const home = tempDir('agy-uninstall-nomanifest');
+  const target = path.join(home, '.gemini', 'config', 'hooks.json');
+  assert.strictEqual((await run(['hooks', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
+  const un = await run(['uninstall', '--tool', 'antigravity', '--home', home]);
+  assert.strictEqual(un.code, 1);
+  assert.match(un.err, /no install manifest at .*: remove antigravity's files by hand/);
+  assert.strictEqual(un.out, `note: ${target} still has orc-guard; run node tools/orc.mjs hooks --tool antigravity --home ${home} --remove --apply to remove it`);
+  assert.strictEqual((await run(['hooks', '--tool', 'antigravity', '--home', home, '--remove', '--apply'])).code, 0);
+  assert.strictEqual((await run(['uninstall', '--tool', 'antigravity', '--home', home])).out, '', 'no note once it is gone');
 });
 
 test('hooks --tool antigravity: keeps CRLF, tab indentation and BOM; refuses invalid JSON and non-object files', () => {
