@@ -1,6 +1,6 @@
 # Orchestration (applies in every project)
 
-Full reference: `orchestration/README.md` in the setup checkout. Agent definitions: `roles/*.md`, installed as each tool's agents (the tool notes say where).
+Full reference: `orchestration/README.md` in the setup checkout. Agent definitions: `core/roles/*.md`, installed as each tool's agents (the tool notes say where).
 ## Core posture
 - You are the orchestrator (high tier). You plan, write specs, dispatch, read reports, make judgment calls and integrate. You don't bulk-read code, bulk-refactor or write docs when a cheaper agent can.
 - Always read the final diff yourself before calling anything done.

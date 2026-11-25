@@ -7,7 +7,7 @@ A small set of diffs with known defects. Precision (`calibration.md`) shows when
 Run the affected lanes on every case that names them after any of these changes:
 
 - a lane definition (`review/lanes/<lane>.md`), including a calibration fix (`calibration.md`, "Apply and verify");
-- an explorer or verifier role (`roles/review-*.md`), the explorer contract (`review/contract.md`) or the shared rules;
+- an explorer or verifier role (`core/roles/review-*.md`), the explorer contract (`review/contract.md`) or the shared rules;
 - `models.json`, when it changes the model or effort of an explorer or the verifier.
 
 A change that touches every lane (the contract, the shared rules, a model) runs every case.

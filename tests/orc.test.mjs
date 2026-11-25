@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { isolateHome } from './helpers.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,6 +10,9 @@ import { parseRole } from '../tools/lib/roles.mjs';
 import { serializeToml, parseToml, tomlMultiline } from '../tools/lib/toml.mjs';
 import { main, loadRoles, loadModels, loadAdapters, buildTool, buildGolden, allowedTools, parseAgyModels, firstDiffLine } from '../tools/orc.mjs';
 import { spawnSync } from 'node:child_process';
+
+// No test in this file can reach the real home folder: commands that default --home use this scratch one.
+isolateHome();
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const GOLDEN = path.join(REPO, 'tests', 'golden');
@@ -30,14 +34,15 @@ process.env.ORC_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'orc-data-'));
 async function buildRepo() {
   const roles = loadRoles(REPO);
   const models = loadModels(REPO, { local: false });
-  const agentsMd = read(path.join(REPO, 'AGENTS.md'));
+  const agentsMd = read(path.join(REPO, 'core', 'AGENTS.md'));
   const adapters = await loadAdapters(REPO);
   return { roles, models, agentsMd, adapters };
 }
 
 test('frontmatter round-trips the real agent files', () => {
-  for (const f of fs.readdirSync(path.join(REPO, 'agents'))) {
-    const text = read(path.join(REPO, 'agents', f));
+  const agents = path.join(GOLDEN, 'claude-code', '.claude', 'agents');
+  for (const f of fs.readdirSync(agents)) {
+    const text = read(path.join(agents, f));
     const { data, body } = parse(text);
     assert.equal(serialize(data, body), text, f);
   }
@@ -136,18 +141,29 @@ test('antigravity rejects a 30 KB rulebook', async () => {
   assert.match(errors.join('\n'), /limit is under 24000/);
 });
 
-test('check passes on the repo and fails on a mutated agents/scout.md', async () => {
+test('check passes on the repo and fails on a differing, a missing and a stale golden file', async () => {
   assert.equal((await run(['check'])).code, 0);
   const copy = tempDir('check');
-  for (const p of ['AGENTS.md', 'CLAUDE.md', 'models.json', 'roles', 'adapters', 'agents', 'commands', 'tools/lib']) {
+  for (const p of ['core', 'models.json', 'adapters', 'tools/lib', 'tests/golden']) {
     fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
   }
   assert.equal((await run(['check', '--repo', copy])).code, 0);
-  const scout = path.join(copy, 'agents', 'scout.md');
+  const gold = path.join(copy, 'tests', 'golden');
+  const scout = path.join(gold, 'claude-code', '.claude', 'agents', 'scout.md');
   fs.writeFileSync(scout, read(scout).replace('model: haiku', 'model: sonnet'));
+  fs.rmSync(path.join(gold, 'codex', '.codex', 'AGENTS.md'));
+  fs.writeFileSync(path.join(gold, 'antigravity', '.gemini', 'config', 'agents', 'gone.md'), 'x\n');
   const r = await run(['check', '--repo', copy]);
   assert.equal(r.code, 1);
-  assert.match(r.err, /agents\/scout\.md: differs/);
+  const fails = r.err.split('\n').filter((l) => l.startsWith('FAIL '));
+  assert.deepEqual(fails, [
+    'FAIL tests/golden/antigravity/.gemini/config/agents/gone.md: stale (no source generates it; run node tools/orc.mjs golden)',
+    'FAIL tests/golden/claude-code/.claude/agents/scout.md: differs from the build at line 4 (generated from core/roles/scout.md; edit that, then run node tools/orc.mjs golden)',
+    'FAIL tests/golden/codex/.codex/AGENTS.md: missing (generated from core/AGENTS.md / adapters/codex.notes.md / adapters/codex.mjs; run node tools/orc.mjs golden)',
+  ]);
+  // check reads tests/golden only: nothing in the copy is written, and no checked-in Claude Code build is compared.
+  assert.equal(fs.existsSync(path.join(copy, 'CLAUDE.md')), false);
+  assert.equal(fs.existsSync(path.join(copy, 'agents')), false);
 });
 
 test('install: dry run, apply, backup, claude-code guard', async () => {
@@ -175,9 +191,20 @@ test('install: dry run, apply, backup, claude-code guard', async () => {
   assert.match(backups[0], /^AGENTS\.md\.orc-backup-\d{8}-\d{6}$/);
   assert.equal(read(path.join(path.dirname(rule), backups[0])), older);
 
-  const refused = await run(['install', '--tool', 'claude-code']);
-  assert.equal(refused.code, 1);
-  assert.match(refused.err, /refusing --tool claude-code without --home/);
+  // --tool claude-code with no --home installs into the user's home, like every other tool. In a child with a
+  // scratch HOME and USERPROFILE (and the scratch state home this file sets), so the real home is never reached.
+  const fakeHome = tempDir('defaulthome');
+  const env = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome };
+  const cli = (...a) => spawnSync(process.execPath, [path.join(REPO, 'tools', 'orc.mjs'), ...a], { env, encoding: 'utf8' });
+  const dryDefault = cli('install', '--tool', 'claude-code');
+  assert.equal(dryDefault.status, 0, dryDefault.stderr);
+  assert.doesNotMatch(dryDefault.stderr, /refusing/);
+  assert.ok(dryDefault.stdout.includes(path.join(fakeHome, '.claude', 'CLAUDE.md')), dryDefault.stdout);
+  assert.deepEqual(fs.readdirSync(fakeHome), [], 'the dry run writes nothing');
+  const applied = cli('install', '--tool', 'claude-code', '--apply');
+  assert.equal(applied.status, 0, applied.stderr);
+  assert.ok(fs.existsSync(path.join(fakeHome, '.claude', 'CLAUDE.md')));
+  assert.ok(fs.existsSync(path.join(fakeHome, '.claude', 'agents', 'scout.md')));
 });
 
 const SAMPLE = `gemini-3.8-flash-high     Gemini 3.8 Flash (High)
@@ -281,12 +308,24 @@ test('antigravity agents are main agents and subagents, and name only agy 1.5.16
   assert.ok(Buffer.byteLength(rulebook.content) < 24000, 'Antigravity rulebook under its cap');
 });
 
-test('AGENTS.md hygiene', () => {
-  const text = read(path.join(REPO, 'AGENTS.md'));
-  assert.ok(Buffer.byteLength(text) < 24000, 'AGENTS.md over 24,000 bytes');
+test('core/AGENTS.md hygiene', () => {
+  const text = read(path.join(REPO, 'core', 'AGENTS.md'));
+  assert.ok(Buffer.byteLength(text) < 24000, 'core/AGENTS.md over 24,000 bytes');
   const banned = /subagent_type|ArtifactData|claude -p|haiku|sonnet|opus|fable|board-reminder|@board\.local\.md|~\/\.claude|AcmeApp|dotnet|Playwright|ticket-env|ado\.ps1|UITests|vstest|Azure DevOps/i;
   const hits = text.split('\n').filter((l) => banned.test(l));
   assert.deepEqual(hits, []);
+});
+
+test('the root AGENTS.md and CLAUDE.md are contributor files, not a second copy of the product rulebook', () => {
+  const root = read(path.join(REPO, 'AGENTS.md'));
+  assert.ok(Buffer.byteLength(root) < 4000, `root AGENTS.md is ${Buffer.byteLength(root)} bytes; keep it under 4,000`);
+  assert.doesNotMatch(root, /^#+\s+Marching orders\b/im);
+  assert.equal(read(path.join(REPO, 'CLAUDE.md')), '@AGENTS.md\n');
+  // No section heading of the product rulebook appears in the root file.
+  const core = read(path.join(REPO, 'core', 'AGENTS.md'));
+  const headings = core.split('\n').filter((l) => /^#{1,3} /.test(l));
+  assert.ok(headings.length > 5, 'core/AGENTS.md has its headings');
+  for (const h of headings) assert.ok(!root.split('\n').includes(h), `root AGENTS.md repeats "${h}"`);
 });
 
 test('every generated rulebook carries the pull request signature', async () => {
@@ -351,7 +390,7 @@ test('claude-code agent frontmatter matches the roster', () => {
     'review-verifier': { model: 'opus', effort: 'high', tools: 'Glob, Grep, Read, Bash' },
   };
   for (const [name, fm] of Object.entries(want)) {
-    const { data } = parse(read(path.join(REPO, 'agents', `${name}.md`)));
+    const { data } = parse(read(path.join(GOLDEN, 'claude-code', '.claude', 'agents', `${name}.md`)));
     assert.deepEqual(data, { name, description: data.description, ...fm }, name);
   }
 });
@@ -389,7 +428,7 @@ test('--profile appends after the tool notes; bad profiles fail', async () => {
   const prof = rule.indexOf('\n# Profile: dotnet-azure-devops\n');
   assert.ok(notes > 0 && prof > notes, 'profile follows the tool notes');
   assert.match(rule.slice(prof), /## Stack-specific/);
-  assert.doesNotMatch(read(path.join(REPO, 'AGENTS.md')), /# Profile:/);
+  assert.doesNotMatch(read(path.join(REPO, 'core', 'AGENTS.md')), /# Profile:/);
   const twice = await run(['build', '--tool', 'opencode', '--profile', 'dotnet-azure-devops', '--profile=dotnet-azure-devops', '--out', out]);
   assert.equal(twice.code, 0);
   assert.equal(read(path.join(out, 'opencode', '.config', 'opencode', 'AGENTS.md')).split('# Profile: ').length, 3);
@@ -406,7 +445,7 @@ test('--profile appends after the tool notes; bad profiles fail', async () => {
 
 test('--profile over the Antigravity cap fails with the size message', async () => {
   const copy = tempDir('bigprofile');
-  for (const p of ['AGENTS.md', 'models.json', 'roles', 'adapters', 'tools/lib']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
+  for (const p of ['core', 'models.json', 'adapters', 'tools/lib']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
   fs.mkdirSync(path.join(copy, 'profiles'));
   fs.writeFileSync(path.join(copy, 'profiles', 'big.md'), `${'x'.repeat(20000)}\n`);
   const r = await run(['build', '--repo', copy, '--tool', 'antigravity', '--profile', 'big', '--out', path.join(copy, 'dist')]);

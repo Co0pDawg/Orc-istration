@@ -29,7 +29,7 @@ Below the table:
 - **Totals** — tokens and wall clock across dispatches, plus a `Orchestrator context: <start>k → <end>k` line read from the status line or `/context` at task start and when the record is written. Thirteen records in the first week all said `unmeasured`, which left the main question (did the orchestrator's share drop?) unanswerable; the line is mandatory from 2026-09-15.
 - **Loop signal** — what the builder→refuter loop actually caught: spec defects found by the builder, refuter must-fixes confirmed vs. rejected, SPEC VS INTENT entries, REWORK rounds. This is the precision/recall analog.
   - **Escaped defects** — one line per defect found after the loop accepted: what it was, who caught it (review panel, teammate, live run, owner), and why the loop missed it. Write `none` when there were none.
-- **Spec misses** — anything the orchestrator's marching orders got wrong that cost a dispatch or a rework round. These are the source material for tightening the marching orders in the rulebook (`AGENTS.md`).
+- **Spec misses** — anything the orchestrator's marching orders got wrong that cost a dispatch or a rework round. These are the source material for tightening the marching orders in the rulebook (`core/AGENTS.md`).
 
 ## First review (2026-09-15, 13 records)
 

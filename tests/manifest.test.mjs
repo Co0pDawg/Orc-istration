@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { isolateHome } from './helpers.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,6 +8,9 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { main } from '../tools/orc.mjs';
 import { createHash } from 'node:crypto';
+
+// No test in this file can reach the real home folder: commands that default --home use this scratch one.
+isolateHome();
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORC = path.join(REPO, 'tools', 'orc.mjs');
@@ -24,7 +28,7 @@ async function run(argv) {
 
 function copyRepo() {
   const copy = tempDir('repo');
-  for (const p of ['AGENTS.md', 'models.json', 'roles', 'adapters', 'profiles', 'tools/lib']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
+  for (const p of ['core', 'models.json', 'adapters', 'profiles', 'tools/lib']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
   return copy;
 }
 
@@ -44,7 +48,7 @@ test('manifest: written on apply; a role edit re-installs without --force; a han
   assert.equal(mf.version, 1);
   assert.ok(mf.files['.gemini/config/agents/scout.md'].sha256.match(/^[0-9a-f]{64}$/));
   assert.deepEqual(tree(home).filter((f) => f.includes('.tmp-')), [], 'no temp file left');
-  fs.appendFileSync(path.join(repo, 'roles', 'scout.md'), '\nOne more line.\n');
+  fs.appendFileSync(path.join(repo, 'core', 'roles', 'scout.md'), '\nOne more line.\n');
   const re = await agy(home, repo, '--apply');
   assert.equal(re.code, 0, re.err);
   assert.match(re.out, /applied replace: .*scout\.md/);
@@ -68,8 +72,8 @@ test('manifest: a removed role is deleted on re-install, kept when edited; statu
   const repo = copyRepo();
   assert.equal((await agy(home, repo, '--apply')).code, 0);
   const agents = path.join(home, '.gemini', 'config', 'agents');
-  fs.rmSync(path.join(repo, 'roles', 'scout.md'));
-  fs.rmSync(path.join(repo, 'roles', 'researcher.md'));
+  fs.rmSync(path.join(repo, 'core', 'roles', 'scout.md'));
+  fs.rmSync(path.join(repo, 'core', 'roles', 'researcher.md'));
   fs.appendFileSync(path.join(agents, 'researcher.md'), 'mine\n');
   const st = await run(['status', '--tool', 'antigravity', '--home', home, '--repo', repo]);
   assert.equal(st.code, 1);
@@ -268,7 +272,10 @@ test('uninstall: shared .gemini keeps two manifests; uninstalling one leaves the
   assert.ok(!fs.existsSync(path.join(home, '.gemini', 'config', 'agents', 'refuter.md')));
   assert.ok(tree(home).some((f) => /config\/agents\/refuter\.md\.orc-backup-/.test(f)));
   assert.equal(cli('status', '--tool', 'gemini-cli').status, 0);
-  assert.match(spawnSync(process.execPath, [ORC, 'uninstall', '--tool', 'claude-code'], { env, encoding: 'utf8' }).stderr, /without --home/);
+  // With no --home, uninstall reads the (scratch) home folder like every other tool: no manifest there, nothing touched.
+  const noManifest = spawnSync(process.execPath, [ORC, 'uninstall', '--tool', 'claude-code'], { env, encoding: 'utf8' });
+  assert.equal(noManifest.status, 1);
+  assert.ok(noManifest.stderr.includes(`no install manifest at ${path.join(fakeHome, '.claude', '.orc-manifest.claude-code.json')}`), noManifest.stderr);
   assert.deepEqual(fs.readdirSync(fakeHome), [], 'the isolated HOME stays empty');
 });
 

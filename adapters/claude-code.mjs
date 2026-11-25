@@ -1,4 +1,4 @@
-// Claude Code: generates the checked-in CLAUDE.md, agents/*.md and commands/*.md (the repo is rooted at ~/.claude).
+// Claude Code: generates <home>/.claude/CLAUDE.md, AGENTS.md, agents/*.md and the review panel's commands/*.md.
 import { serialize, generatedMarker } from '../tools/lib/frontmatter.mjs';
 import { ALL_CAPABILITIES } from '../tools/lib/roles.mjs';
 

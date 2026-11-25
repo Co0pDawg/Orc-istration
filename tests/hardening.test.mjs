@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { isolateHome } from './helpers.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,6 +8,9 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parse, serialize, normalizeEol } from '../tools/lib/frontmatter.mjs';
 import { main, loadRoles, loadModels, loadAdapters, buildTool, firstDiffLine, decodeText } from '../tools/orc.mjs';
+
+// No test in this file can reach the real home folder: commands that default --home use this scratch one.
+isolateHome();
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORC = path.join(REPO, 'tools', 'orc.mjs');
@@ -24,7 +28,7 @@ async function run(argv, stdin = '', extra = {}) {
 
 function copyRepo(name) {
   const copy = tempDir(name);
-  for (const p of ['AGENTS.md', 'CLAUDE.md', 'models.json', 'roles', 'adapters', 'agents', 'commands', 'tools/lib']) {
+  for (const p of ['core', 'models.json', 'adapters', 'tools/lib', 'tests/golden']) {
     fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
   }
   return copy;
@@ -95,7 +99,7 @@ test('V6: one hand-written file refuses the whole install; nothing is half appli
 test('V2: the read-only guard finds roles for every file type', async () => {
   const roles = loadRoles(REPO);
   const models = loadModels(REPO, { local: false });
-  const agentsMd = read(path.join(REPO, 'AGENTS.md'));
+  const agentsMd = read(path.join(REPO, 'core', 'AGENTS.md'));
   const copilot = (await loadAdapters(REPO)).find((a) => a.id === 'copilot');
   const leaky = {
     ...copilot,
@@ -123,19 +127,23 @@ test('V3: a tool missing from models.json reports its message, no crash', async 
   assert.match(c.err, /FAIL cursor: no entry in models\.json/);
 });
 
-test('V5: stale agents fail check; sync deletes only generated-shaped ones', async () => {
+test('V5: a golden agent file with no role fails check; sync never writes into the checkout', async () => {
   const copy = copyRepo('stale');
-  fs.writeFileSync(path.join(copy, 'agents', 'old.md'), '---\nname: old\ndescription: gone\nmodel: haiku\n---\n\nbody\n');
-  fs.writeFileSync(path.join(copy, 'agents', 'mine.md'), '---\nname: mine\ndescription: hand\nmodel: haiku\ncolor: red\n---\n\nbody\n');
+  const old = path.join(copy, 'tests', 'golden', 'claude-code', '.claude', 'agents', 'old.md');
+  fs.writeFileSync(old, '---\nname: old\ndescription: gone\nmodel: haiku\n---\n\nbody\n');
   const c = await run(['check', '--repo', copy]);
   assert.equal(c.code, 1);
-  assert.match(c.err, /agents\/old\.md: no matching role/);
-  assert.match(c.err, /agents\/mine\.md: no matching role/);
-  const s = await run(['sync', '--repo', copy]);
-  assert.match(s.out, /deleted agents\/old\.md/);
-  assert.match(s.err, /agents\/mine\.md has no matching role and is not in the generated shape; left in place/);
-  assert.ok(!fs.existsSync(path.join(copy, 'agents', 'old.md')));
-  assert.ok(fs.existsSync(path.join(copy, 'agents', 'mine.md')));
+  assert.match(c.err, /^FAIL tests\/golden\/claude-code\/\.claude\/agents\/old\.md: stale \(no source generates it; run node tools\/orc\.mjs golden\)$/m);
+  // This file's state home is an empty scratch folder (no config.json), so sync refuses and writes nothing anywhere.
+  const home = tempDir('stale-home');
+  const listing = (dir) => fs.readdirSync(dir, { recursive: true }).sort();
+  const before = listing(copy);
+  const s = await run(['sync', '--repo', copy, '--home', home, '--apply']);
+  assert.equal(s.code, 1);
+  assert.match(s.err, /sync needs activeTools in /);
+  assert.deepEqual(listing(copy), before);
+  assert.ok(fs.existsSync(old), 'sync deletes nothing from the goldens');
+  assert.deepEqual(fs.readdirSync(home), []);
 });
 
 test('V6: hand-written targets need --force; generated ones replace normally', async () => {
@@ -218,7 +226,7 @@ test('V9: BOM and UTF-16 input', async () => {
   const local = JSON.stringify({ copilot: { high: { model: 'x-high' } } });
   fs.writeFileSync(path.join(copy, 'models.local.json'), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(local, 'utf16le')]));
   assert.deepEqual(loadModels(copy).copilot.high, { model: 'x-high' });
-  const scoutRole = path.join(copy, 'roles', 'scout.md');
+  const scoutRole = path.join(copy, 'core', 'roles', 'scout.md');
   fs.writeFileSync(scoutRole, `﻿${read(scoutRole)}`);
   assert.equal(loadRoles(copy).find((x) => x.name === 'scout').tier, 'low');
 });
@@ -231,11 +239,11 @@ test('V10: first differing line, including prefixes', () => {
   assert.equal(firstDiffLine('', 'a'), 1);
 });
 
-test('V10: check names the line when a checked-in file is a prefix of the generated one', async () => {
+test('V10: check names the line when a golden file is a prefix of the build', async () => {
   const copy = copyRepo('prefix');
-  const scout = path.join(copy, 'agents', 'scout.md');
+  const scout = path.join(copy, 'tests', 'golden', 'claude-code', '.claude', 'agents', 'scout.md');
   const lines = read(scout).split('\n');
   fs.writeFileSync(scout, lines.slice(0, 5).join('\n'));
   const r = await run(['check', '--repo', copy]);
-  assert.match(r.err, /agents\/scout\.md: differs from generated at line 6 \(generated from roles\/scout\.md; edit that, then run node tools\/orc\.mjs sync\)/);
+  assert.match(r.err, /tests\/golden\/claude-code\/\.claude\/agents\/scout\.md: differs from the build at line 6 \(generated from core\/roles\/scout\.md; edit that, then run node tools\/orc\.mjs golden\)/);
 });

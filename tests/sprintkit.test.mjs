@@ -1,12 +1,17 @@
 import { test } from 'node:test';
+import { isolateHome } from './helpers.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { main } from '../tools/orc.mjs';
 import { presetRules, detectStacks, removeKitSettings, planKitSettings, kitHookExample, hasGuard, guardStatus, KIT_NOTES, KNOWN_STACKS as KNOWN } from '../tools/lib/sprintkit.mjs';
 import { normalizeEol } from '../tools/lib/frontmatter.mjs';
+
+// No test in this file can reach the real home folder: commands that default --home use this scratch one.
+isolateHome();
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tempDir = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `orc-${name}-`));
@@ -227,7 +232,6 @@ test('sprint kit: option gates', async () => {
     [['install', '--tool', 'claude-code', '--home', home, '--sprint-kit', '--board', 'https://claude.ai/artifact/x'], /the sprint kit installs no board/],
     [['install', '--tool', 'claude-code', '--home', home, '--sprint-kit', '--stack', 'cobol'], /unknown stack\(s\) cobol for the sprint kit; known: dotnet, node, python/],
     [['uninstall', '--tool', 'claude-code', '--home', home, '--sprint-kit'], /--sprint-kit applies to install and status only/],
-    [['install', '--tool', 'claude-code', '--sprint-kit'], /refusing --tool claude-code without --home/],
   ];
   for (const [argv, msg] of cases) {
     const r = await run(argv);
@@ -235,6 +239,15 @@ test('sprint kit: option gates', async () => {
     assert.match(r.err, msg, argv.join(' '));
   }
   assert.deepEqual(fs.readdirSync(home), []);
+  // With no --home the kit targets the home folder, like a full install: a dry run in a child whose HOME and
+  // USERPROFILE are a scratch folder (never the real home), which stays empty.
+  const fakeHome = tempDir('kit-defaulthome');
+  const env = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome };
+  const dry = spawnSync(process.execPath, [path.join(REPO, 'tools', 'orc.mjs'), 'install', '--tool', 'claude-code', '--sprint-kit', '--stack', 'node'], { env, encoding: 'utf8', cwd: tempDir('kit-cwd') });
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.doesNotMatch(dry.stderr, /refusing/);
+  assert.ok(dry.stdout.includes(path.join(fakeHome, '.claude', 'CLAUDE.md')), dry.stdout);
+  assert.deepEqual(fs.readdirSync(fakeHome), [], 'the dry run writes nothing');
 });
 
 test('sprint kit: refused over a full install (dry run too), home byte-identical; a plain install over a kit stays a kit', async () => {

@@ -336,7 +336,7 @@ for (const [label, runner, runnerAsync, skip] of RUNNERS) {
     assert.deepEqual(failures, []);
   });
 
-  test(`${label}: denies every role marked access: read-only in roles/*.md, and only those`, { skip }, () => {
+  test(`${label}: denies every role marked access: read-only in core/roles/*.md, and only those`, { skip }, () => {
     const roles = loadRoles(REPO);
     assert.ok(roles.some((r) => r.access === 'read-only') && roles.some((r) => r.access !== 'read-only'), 'roles of both kinds');
     for (const r of roles) {

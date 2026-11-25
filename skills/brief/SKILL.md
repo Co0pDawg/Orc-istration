@@ -7,7 +7,7 @@ description: Write the marching orders for a roster dispatch (scout, researcher,
 
 This skill exists only where `~/.claude/skills` holds a copy of it. Elsewhere, follow the rulebook's "Marching orders" section directly.
 
-The template is the numbered "Marching orders" list in the rulebook (`AGENTS.md`); `orc brief` parses it, so the linter is the source of truth for the items. Resolve `<setup>` in this order: the `ORC_HOME` environment variable, the "Setup checkout (this machine)" line in the rulebook's tool notes, `~/.claude` when it has `tools/orc.mjs`, else ask the user. Commands run as `node "<setup>/tools/orc.mjs" brief ...`, quoted for paths with spaces.
+The template is the numbered "Marching orders" list in the rulebook (`core/AGENTS.md`); `orc brief` parses it, so the linter is the source of truth for the items. Resolve `<setup>` in this order: the `ORC_HOME` environment variable, the "Setup checkout (this machine)" line in the rulebook's tool notes, `~/.claude` when it has `tools/orc.mjs`, else ask the user. Commands run as `node "<setup>/tools/orc.mjs" brief ...`, quoted for paths with spaces.
 
 1. Print the template into the session scratchpad: `brief new --role <role> --out "<scratchpad>/brief-<role>-<topic>.md"`.
 2. Fill every item. For each one:

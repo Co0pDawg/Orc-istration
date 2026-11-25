@@ -1,4 +1,4 @@
-// Pre-PR review tier from the changed paths. The rule lives in AGENTS.md "Pre-PR review tiers", condition 1
+// Pre-PR review tier from the changed paths. The rule lives in core/AGENTS.md "Pre-PR review tiers", condition 1
 // ("diff is tests/docs only"); keep this table in step with it. Conditions 2 and 3 need a refuter and cannot be computed.
 import { spawnSync } from 'node:child_process';
 
@@ -16,7 +16,7 @@ export const LIGHT_PATTERNS = [
 export const PRODUCT_PATTERNS = [
   /(^|\/)(AGENTS|CLAUDE|GEMINI|SKILL)\.md$/i,
   /(^|\/)[^/]+\.agent\.md$/i,
-  /^(roles|agents|profiles|\.claude|\.agents|\.codex|\.cursor|\.gemini)\//,
+  /^(core|profiles|\.claude|\.agents|\.codex|\.cursor|\.gemini)\//,
   /^adapters\/[^/]+\.notes\.md$/,
   /^standards\//,
   /^review\//,

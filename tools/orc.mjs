@@ -40,16 +40,17 @@ export { decodeText };
 const read = readText;
 
 export function loadRoles(repo) {
-  const dir = path.join(repo, 'roles');
+  const dir = path.join(repo, 'core', 'roles');
   return fs
     .readdirSync(dir)
     .filter((f) => f.endsWith('.md'))
     .sort()
-    .map((f) => parseRole(read(path.join(dir, f)), `roles/${f}`));
+    .map((f) => parseRole(read(path.join(dir, f)), `core/roles/${f}`));
 }
 
 // models.json, then (with `shared`) <orc home>/models.json, then models.local.json; the two over-layers only with
-// `local`. Only install, status, dispatch and doctor pass `shared`: build, check, sync and golden never read ~/.orc.
+// `local`. Only install (and sync, which is install --all), status, dispatch and doctor pass `shared`: build, check
+// and golden never read ~/.orc.
 // <orc home> is shared by every checkout, so a tool id there that this checkout does not know is skipped, with one
 // line through `warn`; models.json and models.local.json stay strict.
 export function loadModels(repo, { local = true, shared = false, env = process.env, warn = () => {} } = {}) {
@@ -321,7 +322,7 @@ async function buildAll(repo, toolId, { local = true, shared = false, extraNotes
   const roles = loadRoles(repo);
   const loaded = loadProfiles(repo, profiles);
   const models = loadModels(repo, { local, shared, env, warn });
-  const agentsMd = read(path.join(repo, 'AGENTS.md'));
+  const agentsMd = read(path.join(repo, 'core', 'AGENTS.md'));
   const adapters = await loadAdapters(repo);
   const picked = !toolId || toolId === 'all' ? adapters : adapters.filter((a) => a.id === toolId);
   if (!picked.length) throw new Error(`unknown tool ${toolId}; known: ${adapters.map((a) => a.id).join(', ')}`);
@@ -347,42 +348,42 @@ function walkFiles(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walkFiles(path.join(dir, e.name)) : [path.join(dir, e.name)]));
 }
 
-// What to edit for a checked-in generated file.
-function sourceOf(rel) {
-  if (rel === 'CLAUDE.md') return { src: 'AGENTS.md / adapters/claude-code.notes.md / adapters/claude-code.mjs', those: true };
-  if (/^commands\/.+\.md$/.test(rel)) return { src: 'adapters/claude-code.mjs', those: false };
-  const m = /^agents\/(.+)\.md$/.exec(rel);
-  return m ? { src: `roles/${m[1]}.md`, those: false } : null;
+// What to edit for a built file: an agent file comes from its role, a command from the adapter, and the other
+// rulebook files from the core rulebook, the tool notes and the adapter.
+function sourceOf(adapter, file) {
+  if (file.role) return { src: `core/roles/${file.role}.md`, those: false };
+  if (/(^|\/)commands\/[^/]+\.md$/.test(file.path)) return { src: `adapters/${adapter.id}.mjs`, those: false };
+  return { src: `core/AGENTS.md / adapters/${adapter.id}.notes.md / adapters/${adapter.id}.mjs`, those: true };
 }
 
-function checkedInTargets(results) {
-  const claude = results.find((r) => r.adapter.id === 'claude-code');
-  const prefix = `${claude.adapter.home.root}/`;
-  return claude.files
-    .filter((f) => f.path !== `${prefix}AGENTS.md`)
-    .map((f) => ({ rel: f.path.slice(prefix.length), content: f.content }));
-}
+// A case-insensitive file system (win32, darwin) folds names; `golden` and `check` compare names the same way.
+const fileKey = (p) => (['win32', 'darwin'].includes(process.platform) ? p.toLowerCase() : p);
 
-// Checked-in agents/*.md with no role. `deletable` when it holds only generated-shaped frontmatter and a body.
-function staleAgents(repo, roles) {
-  const dir = path.join(repo, 'agents');
-  if (!fs.existsSync(dir)) return [];
-  const names = new Set(roles.map((r) => r.name));
-  const shape = ['name', 'description', 'model', 'effort', 'tools'];
-  return fs
-    .readdirSync(dir)
-    .filter((f) => f.endsWith('.md') && !names.has(f.slice(0, -3)))
-    .map((f) => {
-      let deletable = false;
-      try {
-        const { data } = parse(read(path.join(dir, f)));
-        const keys = Object.keys(data);
-        deletable = data.name === f.slice(0, -3) && keys.every((k) => shape.includes(k)) && typeof data.model === 'string';
-      } catch {
-        deletable = false;
+// The build compared with tests/golden/<tool>/ as `golden` writes it (the same reader, the same folded names): one
+// problem per missing, differing or stale golden file of every adapter that built without errors.
+function goldenProblems(repo, results) {
+  const problems = [];
+  for (const { adapter, files, errors } of results) {
+    if (errors.length) continue;
+    const dir = path.join(repo, 'tests', 'golden', adapter.id);
+    const onDisk = new Map(walkFiles(dir).map((p) => [fileKey(p), p]));
+    const wanted = new Set();
+    for (const f of files) {
+      const target = path.join(dir, ...f.path.split('/'));
+      wanted.add(fileKey(target));
+      const rel = `tests/golden/${adapter.id}/${f.path}`;
+      const { src, those } = sourceOf(adapter, f);
+      const disk = onDisk.get(fileKey(target));
+      if (!disk) problems.push(`${rel}: missing (generated from ${src}; run node tools/orc.mjs golden)`);
+      else if (read(disk) !== f.content) {
+        problems.push(`${rel}: differs from the build at line ${firstDiffLine(read(disk), f.content)} (generated from ${src}; edit ${those ? 'those' : 'that'}, then run node tools/orc.mjs golden)`);
       }
-      return { rel: `agents/${f}`, deletable };
-    });
+    }
+    for (const [k, file] of onDisk) {
+      if (!wanted.has(k)) problems.push(`tests/golden/${adapter.id}/${path.relative(dir, file).replace(/\\/g, '/')}: stale (no source generates it; run node tools/orc.mjs golden)`);
+    }
+  }
+  return problems;
 }
 
 // 1-based number of the first line that differs, also when one text is a line-wise prefix of the other.
@@ -407,6 +408,16 @@ const LIST_OPTIONS = ['profile', 'stack'];
 const REPEAT_OPTIONS = ['from'];
 
 const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print', 'json', 'sprint-kit', 'all'];
+
+// The argv index of the command word (the first argument that is neither an option nor an option's value).
+function commandIndex(argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a.startsWith('--')) return i;
+    if (!a.includes('=') && VALUE_OPTIONS.includes(a.slice(2))) i++;
+  }
+  return -1;
+}
 
 // Accepts `--key value` and `--key=value`. An unknown option is an error, never a silent boolean: a mistyped
 // `--home=<dir>` once fell through to the real home directory.
@@ -566,6 +577,23 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     return 0;
   }
   const repo = path.resolve(opt.repo ?? DEFAULT_REPO);
+  // sync is install --all under another name: the same code installs every tool in activeTools (a dry run without
+  // --apply). It writes nothing into the checkout.
+  if (cmd === 'sync') {
+    if (opt.tool) return fail('sync installs every tool in activeTools; --tool does not apply (install --tool <id> installs one tool)');
+    if (opt.all || opt['sprint-kit']) return fail('--all and --sprint-kit do not apply to sync (it installs every tool in activeTools)');
+    let cfg;
+    try {
+      cfg = loadConfig({ tools: knownTools(repo), roles: loadRoles(repo).map((r) => r.name) });
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e));
+    }
+    if (!cfg.config?.activeTools?.length) {
+      return fail(`sync needs activeTools in ${cfg.file}${cfg.config ? '' : ' (the file does not exist)'}; to install one tool instead, run install --tool <id> [--home <dir>] --apply`);
+    }
+    const at = commandIndex(argv);
+    return main([...argv.slice(0, at), 'install', ...argv.slice(at + 1), '--all'], io, ctx);
+  }
   const profiles = opt.profile ?? [];
   if (profiles.length && !['build', 'install', 'status'].includes(cmd)) return fail('--profile applies to build, install and status only');
   if ((opt['no-profile'] || opt['no-board']) && !['install', 'status'].includes(cmd)) return fail('--no-profile and --no-board apply to install and status only');
@@ -606,7 +634,6 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     if (configBoard?.error) return fail(configBoard.error);
     const refused = [];
     for (const t of tools) {
-      if (cmd === 'install' && t === 'claude-code' && !opt.home) refused.push(`${t}: refusing --tool claude-code without --home: the live ~/.claude is synced by hand`);
       if (artifactRefused(opt.board, t)) refused.push(`${t}: ${ARTIFACT_ONLY_CLAUDE}`);
       if (boardPairError(opt, t)) refused.push(`${t}: pass --board and --board-repo together, or neither (an artifact --board needs no --board-repo)`);
     }
@@ -683,19 +710,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       r.warnings.forEach((w) => io.err(`WARN ${w}`));
       if (r.rulebook) io.out(`${r.adapter.id}: ${r.rulebook.path} ${r.rulebook.size} bytes, headroom ${r.rulebook.headroom}`);
     }
-    if (results.some((r) => r.adapter.id === 'claude-code' && !r.errors.length)) {
-      for (const { rel, content } of checkedInTargets(results)) {
-        const file = path.join(repo, ...rel.split('/'));
-        const from = sourceOf(rel);
-        const gen = from ? `generated from ${from.src}; ` : '';
-        if (!fs.existsSync(file)) problems.push(`${rel}: missing (${gen}run node tools/orc.mjs sync)`);
-        else if (read(file) !== content) {
-          const edit = from ? `edit ${from.those ? 'those' : 'that'}, then ` : '';
-          problems.push(`${rel}: differs from generated at line ${firstDiffLine(read(file), content)} (${gen}${edit}run node tools/orc.mjs sync)`);
-        }
-      }
-      for (const s of staleAgents(repo, loadRoles(repo))) problems.push(`${s.rel}: no matching role in roles/ (stale)`);
-    }
+    problems.push(...goldenProblems(repo, results));
     problems.push(...validateArchive(path.join(repo, 'standards')));
     if (problems.length) {
       problems.forEach((p) => io.err(`FAIL ${p}`));
@@ -703,26 +718,6 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     }
     io.out(`check ok: ${results.length} adapters, ${results.reduce((n, r) => n + r.files.length, 0)} files`);
     return 0;
-  }
-
-  if (cmd === 'sync') {
-    const results = await buildAll(repo, 'claude-code', { local: false });
-    if (results[0].errors.length) return fail(results[0].errors.join('\n'));
-    for (const { rel, content } of checkedInTargets(results)) {
-      fs.writeFileSync(path.join(repo, ...rel.split('/')), content);
-      io.out(`wrote ${rel}`);
-    }
-    let code = 0;
-    for (const s of staleAgents(repo, loadRoles(repo))) {
-      if (s.deletable) {
-        fs.rmSync(path.join(repo, ...s.rel.split('/')));
-        io.out(`deleted ${s.rel} (generated, no matching role)`);
-      } else {
-        io.err(`WARN ${s.rel} has no matching role and is not in the generated shape; left in place`);
-        code = 1;
-      }
-    }
-    return code;
   }
 
   if (cmd === 'golden') {
@@ -745,7 +740,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     }
     // On a case-insensitive file system (win32, darwin) a golden that differs from the built name only by case is
     // the same file: it is renamed, never deleted. A folder that differs only by case is refused before any write.
-    const key = ['win32', 'darwin'].includes(process.platform) ? (p) => p.toLowerCase() : (p) => p;
+    const key = fileKey;
     const onDiskOf = new Map(results.map(({ adapter }) => [adapter.id, new Map(walkFiles(path.join(root, adapter.id)).map((p) => [key(p), p]))]));
     const badDirs = new Map();
     for (const { adapter, files } of results) {
@@ -797,9 +792,6 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   if (cmd === 'install') {
     const toolId = opt.tool;
     if (!toolId || toolId === 'all') return fail('install needs --tool <id>');
-    if (toolId === 'claude-code' && !opt.home) {
-      return fail('refusing --tool claude-code without --home: the live ~/.claude is synced by hand');
-    }
     if (artifactRefused(opt.board, toolId)) return fail(ARTIFACT_ONLY_CLAUDE);
     if (boardPairError(opt, toolId)) return fail('pass --board and --board-repo together, or neither (an artifact --board needs no --board-repo)');
     const home = path.resolve(opt.home ?? os.homedir());
@@ -1055,7 +1047,6 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   if (cmd === 'uninstall') {
     const toolId = opt.tool;
     if (!toolId || toolId === 'all') return fail('uninstall needs --tool <id>');
-    if (toolId === 'claude-code' && !opt.home) return fail('refusing --tool claude-code without --home: the live ~/.claude is synced by hand');
     const home = path.resolve(opt.home ?? os.homedir());
     const adapter = (await loadAdapters(repo)).find((a) => a.id === toolId);
     if (!adapter) return fail(`unknown tool ${toolId}`);
@@ -1249,7 +1240,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       io.out(`wrote ${path.resolve(opt.out)}`);
     } else io.out(text.replace(/\n$/, ''));
   };
-  const marchingOrders = () => parseMarchingOrders(read(path.join(repo, 'AGENTS.md')));
+  const marchingOrders = () => parseMarchingOrders(read(path.join(repo, 'core', 'AGENTS.md')));
   const knownRole = (name) => {
     const roles = loadRoles(repo);
     const role = roles.find((r) => r.name === name);

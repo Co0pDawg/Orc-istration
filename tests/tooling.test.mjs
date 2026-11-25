@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { isolateHome } from './helpers.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -14,9 +15,12 @@ import { mergeHooks, formatLike } from '../tools/lib/hooks.mjs';
 import { run as reminder } from '../tools/board-reminder.mjs';
 import { q } from './helpers.mjs';
 
+// No test in this file can reach the real home folder: commands that default --home use this scratch one.
+isolateHome();
+
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORC = path.join(REPO, 'tools', 'orc.mjs');
-const AGENTS = fs.readFileSync(path.join(REPO, 'AGENTS.md'), 'utf8').replace(/\r\n/g, '\n');
+const AGENTS = fs.readFileSync(path.join(REPO, 'core', 'AGENTS.md'), 'utf8').replace(/\r\n/g, '\n');
 const tempDir = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `orc-${name}-`));
 // No test reads this machine's ~/.orc: the shared state home is an empty scratch folder, which children inherit.
 process.env.ORC_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'orc-data-'));
@@ -77,7 +81,7 @@ function goodBrief(extra = {}) {
 
 // ---------- brief ----------
 
-test('brief new follows the AGENTS.md list, also after the list changes', async () => {
+test('brief new follows the core/AGENTS.md list, also after the list changes', async () => {
   const items = parseMarchingOrders(AGENTS);
   assert.equal(items.length, 11);
   const r = await run(['brief', 'new', '--role', 'builder']);
@@ -93,8 +97,10 @@ test('brief new follows the AGENTS.md list, also after the list changes', async 
   assert.match(scout.out, /^8\. \*\*Scratch path\*\*/m);
 
   const copy = tempDir('brief');
-  fs.cpSync(path.join(REPO, 'roles'), path.join(copy, 'roles'), { recursive: true });
-  fs.writeFileSync(path.join(copy, 'AGENTS.md'), AGENTS.replace('5. **Do not**: known traps.', '5. **Do not**: known traps and the new rule.\n6. **Budget**: one line.').replace(/^6\. \*\*Output/m, '7. **Output'));
+  fs.cpSync(path.join(REPO, 'core', 'roles'), path.join(copy, 'core', 'roles'), { recursive: true });
+  // The root AGENTS.md is the contributor file with no "Marching orders": brief never reads it.
+  fs.writeFileSync(path.join(copy, 'AGENTS.md'), '# Contributing\n\nShort rules for this repo.\n');
+  fs.writeFileSync(path.join(copy, 'core', 'AGENTS.md'), AGENTS.replace('5. **Do not**: known traps.', '5. **Do not**: known traps and the new rule.\n6. **Budget**: one line.').replace(/^6\. \*\*Output/m, '7. **Output'));
   const mutated = await run(['brief', 'new', '--repo', copy]);
   assert.equal(mutated.code, 0, mutated.err);
   assert.match(mutated.out, /5\. \*\*Do not\*\*: known traps and the new rule\./);
@@ -335,7 +341,7 @@ test('the cost-log template follows the Record format in orchestration/README.md
   for (const h of ['- Date:', '- Project:', '- Branch:', '- Task:', '- Outcome:', '## Totals', 'Orchestrator context:', '## Loop signal', 'Escaped defects:', '## Spec misses']) assert.ok(template.includes(h), h);
 });
 
-test('.gitignore tracks the cost-log template and ignores the cost logs', () => {
+test('.gitignore: a standard deny-list; the cost-log template and every source stay tracked', () => {
   // --no-index judges the rules alone, whatever the index holds; exit 0 = ignored, 1 = not ignored.
   const ignored = (p) => {
     const r = spawnSync('git', ['check-ignore', '--no-index', '-q', p], { cwd: REPO, encoding: 'utf8' });
@@ -345,6 +351,18 @@ test('.gitignore tracks the cost-log template and ignores the cost logs', () => 
   assert.equal(ignored('orchestration/log/TEMPLATE.md'), false, 'the template is tracked');
   assert.equal(ignored('orchestration/log/2026-01-01-x.md'), true, 'a cost log stays local');
   assert.equal(ignored('orchestration/log/anomalies.md'), true, 'the anomaly log stays local');
+  for (const p of ['node_modules/x/index.js', 'tools/node_modules/x.js', 'dist/codex/.codex/AGENTS.md', 'models.local.json', '.orc/reviews/run.md', 'orchestration/board/index.html',
+    '.claude/settings.local.json', '.claude/worktrees/a/x.md', '.claude/skills/mine/SKILL.md', '.vscode/settings.json', '.idea/x.xml', 'a.swp', 'notes.md~', '.DS_Store', 'docs/Thumbs.db', 'desktop.ini']) {
+    assert.equal(ignored(p), true, `${p} is ignored`);
+  }
+  for (const p of ['AGENTS.md', 'CLAUDE.md', 'core/AGENTS.md', 'core/roles/scout.md', '.claude/skills/ship-prompts/SKILL.md', 'tests/golden/claude-code/.claude/CLAUDE.md',
+    'tests/golden/claude-code/.claude/agents/scout.md', 'commands/start.md', 'skills/brief/SKILL.md', 'tools/orc.mjs', 'orchestration/README.md', 'new-top-level-file.md']) {
+    assert.equal(ignored(p), false, `${p} can be tracked`);
+  }
+  // No tracked file is matched by an ignore rule.
+  const tracked = spawnSync('git', ['ls-files', '-ci', '--exclude-standard'], { cwd: REPO, encoding: 'utf8' });
+  assert.equal(tracked.status, 0, tracked.stderr);
+  assert.equal(tracked.stdout, '');
 });
 
 test('costlog --board reads through the board CLI export', async () => {
@@ -683,7 +701,7 @@ test('board-reminder.mjs as a hook process: stdin JSON in, context out, exit 0 o
 
 test('models validation rejects bad ids, tiers, efforts and values in both files; check reports it', async () => {
   const copy = tempDir('models');
-  for (const p of ['AGENTS.md', 'CLAUDE.md', 'models.json', 'roles', 'adapters', 'agents', 'tools/lib']) {
+  for (const p of ['core', 'models.json', 'adapters', 'tools/lib', 'tests/golden']) {
     fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
   }
   const base = JSON.parse(fs.readFileSync(path.join(REPO, 'models.json'), 'utf8'));
@@ -766,12 +784,14 @@ test('a tool whose tiers share a model in models.json has a gap naming those tie
 });
 
 test('review-tier: prompts count as product; uncommitted changes warn', async () => {
-  for (const p of ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'roles/scout.md', 'agents/scout.md', '.claude/x.md', '.agents/x.md', '.codex/AGENTS.md',
+  for (const p of ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'core/AGENTS.md', 'core/roles/scout.md', '.claude/x.md', '.agents/x.md', '.codex/AGENTS.md',
     '.cursor/agents/a.md', '.gemini/GEMINI.md', 'profiles/p.md', 'adapters/codex.notes.md', 'skills/x/SKILL.md', 'a/b.agent.md',
     'review/PROCEDURE.md', 'review/lanes/code-reviewer.md', 'workflows/start.md', 'commands/pre-pr-review.md', 'commands/start.md']) {
     assert.equal(classify([p]).tier, 'Full', p);
   }
   assert.equal(classify(['README.md', 'docs/rulebook-notes.md', 'tests/a.test.mjs']).tier, 'Light-eligible');
+  // The roles moved to core/roles: a stray top-level roles/ or agents/ page is a doc again.
+  assert.equal(classify(['roles/scout.md', 'agents/scout.md']).tier, 'Light-eligible');
   // Only the top-level prompt folders: a docs page about them stays Light-eligible.
   assert.equal(classify(['docs/review/notes.md', 'docs/workflows.md', 'docs/commands/x.md']).tier, 'Light-eligible');
   for (const p of ['review/PROCEDURE.md', 'workflows/start.md', 'commands/start.md']) {
@@ -1060,7 +1080,7 @@ test('R6: install options are remembered; plain status and install reuse them; -
 // A temp copy of the repo with its goldens, for the golden command.
 function goldenRepo(name) {
   const copy = tempDir(name);
-  for (const p of ['AGENTS.md', 'CLAUDE.md', 'models.json', 'roles', 'adapters', 'agents', 'tools/lib', 'tests/golden']) {
+  for (const p of ['core', 'models.json', 'adapters', 'tools/lib', 'tests/golden']) {
     fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
   }
   return copy;
@@ -1078,7 +1098,7 @@ test('golden: an unchanged copy reports every file unchanged', async () => {
 
 test('golden: a role edit rewrites that role in every adapter; a stale golden is deleted', async () => {
   const copy = goldenRepo('golden-edit');
-  const role = path.join(copy, 'roles', 'scout.md');
+  const role = path.join(copy, 'core', 'roles', 'scout.md');
   fs.writeFileSync(role, `${fs.readFileSync(role, 'utf8').replace(/\r\n/g, '\n')}Extra golden line.\n`);
   const stale = path.join(copy, 'tests', 'golden', 'codex', '.codex', 'agents', 'gone.toml');
   fs.writeFileSync(stale, 'old\n');
@@ -1152,16 +1172,20 @@ test('generated marker: the old and new forms are recognised, including a Codex 
   assert.ok(!isGenerated('my own rules\n'));
 });
 
-test('check names the source to edit for CLAUDE.md and a missing agent', async () => {
+test('check names the source to edit for a golden rulebook, agent and command', async () => {
   const copy = goldenRepo('check-src');
-  fs.appendFileSync(path.join(copy, 'CLAUDE.md'), 'hand edit\n');
-  fs.rmSync(path.join(copy, 'agents', 'refuter.md'));
+  const gold = path.join(copy, 'tests', 'golden', 'claude-code', '.claude');
+  fs.appendFileSync(path.join(gold, 'CLAUDE.md'), 'hand edit\n');
+  fs.rmSync(path.join(gold, 'agents', 'refuter.md'));
+  fs.rmSync(path.join(gold, 'commands', 'pre-pr-review.md'));
   const r = await run(['check', '--repo', copy]);
   assert.equal(r.code, 1);
-  assert.match(r.err, /CLAUDE\.md: differs from generated at line \d+ \(generated from AGENTS\.md \/ adapters\/claude-code\.notes\.md \/ adapters\/claude-code\.mjs; edit those, then run node tools\/orc\.mjs sync\)/);
-  assert.match(r.err, /agents\/refuter\.md: missing \(generated from roles\/refuter\.md; run node tools\/orc\.mjs sync\)/);
-  // goldenRepo copies no commands/, so every generated command is missing and names its source.
-  assert.match(r.err, /commands\/pre-pr-review\.md: missing \(generated from adapters\/claude-code\.mjs; run node tools\/orc\.mjs sync\)/);
+  assert.match(r.err, /tests\/golden\/claude-code\/\.claude\/CLAUDE\.md: differs from the build at line \d+ \(generated from core\/AGENTS\.md \/ adapters\/claude-code\.notes\.md \/ adapters\/claude-code\.mjs; edit those, then run node tools\/orc\.mjs golden\)/);
+  assert.match(r.err, /tests\/golden\/claude-code\/\.claude\/agents\/refuter\.md: missing \(generated from core\/roles\/refuter\.md; run node tools\/orc\.mjs golden\)/);
+  assert.match(r.err, /tests\/golden\/claude-code\/\.claude\/commands\/pre-pr-review\.md: missing \(generated from adapters\/claude-code\.mjs; run node tools\/orc\.mjs golden\)/);
+  // golden repairs every one of them, and check passes again.
+  assert.equal((await run(['golden', '--repo', copy])).code, 0);
+  assert.equal((await run(['check', '--repo', copy])).code, 0);
 });
 
 const canLink = (() => {

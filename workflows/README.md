@@ -33,7 +33,7 @@ Generated files (ticket dumps, descriptions, comment bodies, downloads) go in th
 
 ## Orchestration
 
-The rulebook (`AGENTS.md` in this checkout) governs every dispatch: marching orders, the build loop, the rate-limit guard, test runs, the pre-PR review tiers and the board. Dispatch agents by roster name. Ask the developer through the tool's question prompt (in Claude Code, `AskUserQuestion`), never only in prose.
+The rulebook (`core/AGENTS.md` in this checkout) governs every dispatch: marching orders, the build loop, the rate-limit guard, test runs, the pre-PR review tiers and the board. Dispatch agents by roster name. Ask the developer through the tool's question prompt (in Claude Code, `AskUserQuestion`), never only in prose.
 
 **Lite mode** saves usage on a tight plan: `--lite`, or the line `Orc orchestration: lite` in the developer's rulebook (`--full` overrides it). Each workflow says what it changes. A change in an extra-scrutiny area the target repo's rulebook or review rules name always runs full.
 

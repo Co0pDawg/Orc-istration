@@ -14,15 +14,24 @@ export const HELP = {
   },
   check: {
     repo: true,
-    summary: 'Build every tool, check the caps and models.json, and compare CLAUDE.md, agents/*.md and the generated commands/*.md with the build',
+    summary: 'Build every tool, check the caps, models.json and the standards archive, and compare every tool\'s build with tests/golden/<tool>/ (a missing, differing or stale golden file fails, naming the source to edit)',
     synopsis: 'check',
     options: {},
   },
   sync: {
     repo: true,
-    summary: 'Regenerate the checked-in CLAUDE.md, agents/*.md and the generated commands/*.md; delete generated agents with no role',
-    synopsis: 'sync',
-    options: {},
+    summary: 'Rebuild and install every tool in activeTools of ~/.orc/config.json, exactly as install --all does (dry run without --apply); writes nothing into this checkout',
+    synopsis: 'sync [--home <dir>] [--apply] [--force] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board]',
+    options: {
+      '--home <dir>': 'home folder (default your home)',
+      '--apply': 'write the files (backs up each replaced file)',
+      '--force': 'replace hand-written or edited files, with a backup',
+      '--profile <name>': 'append profiles/<name>.md (repeatable or comma-separated); recorded in each manifest',
+      '--no-profile': 'clear the profiles recorded at install',
+      '--board <address>': 'this machine\'s board address (with --board-repo); default: the one recorded at install, else board in config.json',
+      '--board-repo <dir>': 'the Orc-Dashboard checkout (with --board)',
+      '--no-board': 'clear the board recorded at install',
+    },
   },
   golden: {
     repo: true,
@@ -37,7 +46,7 @@ export const HELP = {
     options: {
       '--tool <id>': 'the adapter to install (this or --all; not all)',
       '--all': 'every tool in activeTools of ~/.orc/config.json, in order; every refusal is checked for every tool before any is written; the board defaults from board in config.json; the last line names any tool that failed',
-      '--home <dir>': 'home folder (default your home; required for claude-code)',
+      '--home <dir>': 'home folder (default your home)',
       '--apply': 'write the files (backs up each replaced file)',
       '--force': 'replace hand-written or edited files, with a backup',
       '--sprint-kit': 'claude-code only: also the sprint skill, the Node git guard hook and a stack permission preset in settings.json (merged, backed up), no board; uninstall removes it and restores what it replaced (docs/interview-machine.md)',
@@ -55,7 +64,7 @@ export const HELP = {
     synopsis: 'uninstall --tool <id> [--home <dir>] [--apply] [--force]',
     options: {
       '--tool <id>': 'the adapter to uninstall (required; not all)',
-      '--home <dir>': 'home folder (default your home; required for claude-code)',
+      '--home <dir>': 'home folder (default your home)',
       '--apply': 'delete the files',
       '--force': 'also delete files edited since install, after a backup',
     },

@@ -1,5 +1,5 @@
-// The shared state home (~/.orc, or ORC_DATA_DIR): config.json and models.json, read by install, status, dispatch
-// and doctor, never by build, check, sync or golden. Reading never creates anything.
+// The shared state home (~/.orc, or ORC_DATA_DIR): config.json and models.json, read by install (and sync,
+// which is install --all), status, dispatch and doctor, never by build, check or golden. Reading never creates anything.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

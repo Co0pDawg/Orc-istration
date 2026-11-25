@@ -1,14 +1,14 @@
 // Marching-orders briefs: the template and the lint both read the numbered list under the rulebook's
-// "Marching orders" heading, so neither can drift from AGENTS.md.
+// "Marching orders" heading, so neither can drift from core/AGENTS.md.
 
 export const WRITER_ROLES = ['builder', 'refuter', 'debugger'];
 
-// [{n, text, label, writerOnly, refuterOnly}] from AGENTS.md. A "(refuters)" item is printed for every writer role but
+// [{n, text, label, writerOnly, refuterOnly}] from core/AGENTS.md. A "(refuters)" item is printed for every writer role but
 // must be filled only for a refuter; builders and debuggers may write `n/a`.
 export function parseMarchingOrders(agentsMd) {
   const lines = agentsMd.split('\n');
   const start = lines.findIndex((l) => /^#+\s+Marching orders\b/i.test(l));
-  if (start < 0) throw new Error('AGENTS.md has no "Marching orders" heading');
+  if (start < 0) throw new Error('core/AGENTS.md has no "Marching orders" heading');
   const items = [];
   for (const l of lines.slice(start + 1)) {
     if (/^#/.test(l)) break;
@@ -18,7 +18,7 @@ export function parseMarchingOrders(agentsMd) {
     const refuterOnly = /\(refuters?[;)]/i.test(m[2]);
     items.push({ n: Number(m[1]), text: m[2], label, writerOnly: refuterOnly || /\(builders?\/refuters?\)/i.test(m[2]), refuterOnly });
   }
-  if (!items.length) throw new Error('AGENTS.md "Marching orders" has no numbered items');
+  if (!items.length) throw new Error('core/AGENTS.md "Marching orders" has no numbered items');
   return items;
 }
 

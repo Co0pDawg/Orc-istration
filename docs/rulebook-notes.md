@@ -1,8 +1,8 @@
 # Rulebook notes: the incidents behind the rules
 
-Reference material moved out of the rulebook (`AGENTS.md`) to keep it under Antigravity's 24,000-byte rules cap. Each
+Reference material moved out of the rulebook (`core/AGENTS.md`) to keep it under Antigravity's 24,000-byte rules cap. Each
 entry is the incident behind a rule, under the rule it explains, reworded without ticket numbers or product detail. The
-rules themselves live in the core rulebook (`AGENTS.md`) and the optional profile (`profiles/dotnet-azure-devops.md`).
+rules themselves live in the core rulebook (`core/AGENTS.md`) and the optional profile (`profiles/dotnet-azure-devops.md`).
 
 ## Marching orders
 - Board line, full `cards/<id>` path: on one ticket a builder looked the card up wrong, reported it missing and skipped every board write. [1 incident]
@@ -86,7 +86,7 @@ A rule stays because its evidence holds, not because it is written down. On a mo
 - A new entry records its date and evidence count; older entries carry a date only where one was known.
 
 ## Examples and rationale moved later (original wording, by rule)
-A reason the rulebook carries again is dropped from this list (its board, inline-work, batching, handoff, live-app and data-precondition reasons are back in `AGENTS.md`).
+A reason the rulebook carries again is dropped from this list (its board, inline-work, batching, handoff, live-app and data-precondition reasons are back in `core/AGENTS.md`).
 - Data precondition, examples of the rows to name: (which senders populate a customer-id column, which users have two locations).
 - Never `dotnet test` a solution with a UI project: AcmeApp's UI-test project waits on an app forever.
 - Cross-cutting rule, example: "a missing weight reads as 0".

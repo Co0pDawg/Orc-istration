@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { isolateHome } from './helpers.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -14,9 +15,12 @@ import { knownTools } from '../tools/lib/models.mjs';
 import { parseMarchingOrders } from '../tools/lib/brief.mjs';
 import { q, esc } from './helpers.mjs';
 
+// No test in this file can reach the real home folder: commands that default --home use this scratch one.
+isolateHome();
+
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORC = path.join(REPO, 'tools', 'orc.mjs');
-const AGENTS = fs.readFileSync(path.join(REPO, 'AGENTS.md'), 'utf8').replace(/\r\n/g, '\n');
+const AGENTS = fs.readFileSync(path.join(REPO, 'core', 'AGENTS.md'), 'utf8').replace(/\r\n/g, '\n');
 const tempDir = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `orc-${name}-`));
 // No test reads this machine's ~/.orc: the shared state home is an empty scratch folder, which children inherit.
 process.env.ORC_DATA_DIR = tempDir('data');
@@ -42,15 +46,21 @@ function dataDir(config, models) {
   return dir;
 }
 
-// The CLI in a child with an empty scratch HOME (which must stay empty) and the given state home.
-function cli(argv, data, extraEnv = {}) {
-  const fakeHome = tempDir('fakehome');
+// The CLI in a child with an empty scratch HOME (which must stay empty unless `fakeHome` is passed) and the given
+// state home.
+function cli(argv, data, extraEnv = {}, { fakeHome = null } = {}) {
+  const home = fakeHome ?? tempDir('fakehome');
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith('ORC_TOOL_BIN_')) delete env[k];
-  for (const [k, v] of Object.entries({ PATH: SAFE_PATH, HOME: fakeHome, USERPROFILE: fakeHome, ORC_DATA_DIR: data, ...extraEnv })) setEnv(env, k, v);
+  for (const [k, v] of Object.entries({ PATH: SAFE_PATH, HOME: home, USERPROFILE: home, ORC_DATA_DIR: data, ...extraEnv })) setEnv(env, k, v);
   const r = spawnSync(process.execPath, [ORC, ...argv], { env, encoding: 'utf8', timeout: 60000 });
-  assert.deepEqual(fs.readdirSync(fakeHome), [], 'scratch home stays empty');
+  if (!fakeHome) assert.deepEqual(fs.readdirSync(home), [], 'scratch home stays empty');
   return { code: r.status, out: r.stdout, err: r.stderr };
+}
+
+// Every file below dir, relative with forward slashes, sorted.
+function tree(dir) {
+  return fs.readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => path.relative(dir, path.join(e.parentPath, e.name)).replace(/\\/g, '/')).sort();
 }
 
 async function run(argv, data) {
@@ -224,7 +234,7 @@ test('config.json: wrong types and shapes are errors, each named', () => {
 
 test('an unknown tool in ~/.orc/models.json is skipped with a warning; models.json and models.local.json stay strict', () => {
   const repo = tempDir('repo');
-  for (const p of ['AGENTS.md', 'models.json', 'roles', 'adapters', 'tools/lib']) fs.cpSync(path.join(REPO, p), path.join(repo, p), { recursive: true });
+  for (const p of ['core', 'models.json', 'adapters', 'tools/lib']) fs.cpSync(path.join(REPO, p), path.join(repo, p), { recursive: true });
   const data = dataDir(undefined, { 'future-tool': { high: { model: 'x' } }, codex: { high: { model: 'shared-high' } } });
   const said = [];
   const m = loadModels(repo, { shared: true, env: { ORC_DATA_DIR: data }, warn: (w) => said.push(w) });
@@ -303,7 +313,7 @@ test('an invalid config.json: dispatch --tool warns and goes on without binaries
 
 test('~/.orc/models.json layers between models.json and models.local.json, only for the commands that pass shared', async () => {
   const repo = tempDir('repo');
-  for (const p of ['AGENTS.md', 'models.json', 'roles', 'adapters', 'tools/lib']) fs.cpSync(path.join(REPO, p), path.join(repo, p), { recursive: true });
+  for (const p of ['core', 'models.json', 'adapters', 'tools/lib']) fs.cpSync(path.join(REPO, p), path.join(repo, p), { recursive: true });
   const data = dataDir(undefined, { codex: { high: { model: 'shared-high' }, headless: { low: 'shared-low' } } });
   const env = { ORC_DATA_DIR: data };
   const m = loadModels(repo, { shared: true, env });
@@ -543,6 +553,50 @@ test('--all needs activeTools, excludes --tool, and applies to install and statu
   assert.match(cli(['uninstall', '--all'], data).err, /--all applies to install and status only/);
 });
 
+test('sync with no config or no activeTools exits 1 naming the config file; --tool, --all and --sprint-kit are errors', () => {
+  const empty = dataDir();
+  const none = cli(['sync', '--home', tempDir('home')], empty);
+  assert.equal(none.code, 1);
+  assert.ok(none.err.includes(`sync needs activeTools in ${path.join(empty, 'config.json')} (the file does not exist); to install one tool instead, run install --tool <id> [--home <dir>] --apply`), none.err);
+  const noTools = dataDir({ version: 1 });
+  const r = cli(['sync', '--home', tempDir('home'), '--apply'], noTools);
+  assert.equal(r.code, 1);
+  assert.ok(r.err.includes(`sync needs activeTools in ${path.join(noTools, 'config.json')}; to install one tool instead`), r.err);
+  const data = dataDir({ version: 1, activeTools: ['antigravity'] });
+  const home = tempDir('home');
+  const tool = cli(['sync', '--tool', 'antigravity', '--home', home, '--apply'], data);
+  assert.equal(tool.code, 1);
+  assert.match(tool.err, /sync installs every tool in activeTools; --tool does not apply \(install --tool <id> installs one tool\)/);
+  assert.match(cli(['sync', '--all', '--home', home], data).err, /--all and --sprint-kit do not apply to sync/);
+  assert.match(cli(['sync', '--sprint-kit', '--home', home], data).err, /--all and --sprint-kit do not apply to sync/);
+  assert.deepEqual(fs.readdirSync(home), []);
+});
+
+test('sync is install --all: the dry run writes nothing, --apply installs what install --all installs, the checkout is untouched', async () => {
+  const copy = tempDir('sync-repo');
+  for (const p of ['core', 'models.json', 'adapters', 'tools/lib', 'tools/guard.mjs', 'tools/guard.ps1', 'tools/board-reminder.mjs', 'tools/board-reminder.ps1']) {
+    fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
+  }
+  const snap = () => Object.fromEntries(tree(copy).map((f) => [f, fs.readFileSync(path.join(copy, f), 'utf8')]));
+  const before = snap();
+  const data = dataDir({ version: 1, activeTools: ['codex', 'antigravity', 'claude-code'], board: { url: 'http://localhost:8399', repo: REPO } });
+  const home = tempDir('sync');
+  const dry = await run(['sync', '--repo', copy, '--home', home], data);
+  assert.equal(dry.code, 0, dry.err);
+  assert.deepEqual(dry.out.split('\n').filter((l) => l.startsWith('== ')), ['== codex ==', '== antigravity ==', '== claude-code ==']);
+  assert.match(dry.out, /dry run for codex; add --apply to write[\s\S]*dry run for claude-code; add --apply to write/);
+  assert.deepEqual(fs.readdirSync(home), [], 'the dry run writes nothing');
+  const applied = await run(['sync', '--repo', copy, '--home', home, '--apply'], data);
+  assert.equal(applied.code, 0, applied.err);
+  const viaInstall = tempDir('sync-install');
+  assert.equal((await run(['install', '--all', '--repo', copy, '--home', viaInstall, '--apply'], data)).code, 0);
+  assert.deepEqual(tree(home), tree(viaInstall));
+  for (const f of tree(home).filter((f) => !f.includes('.orc-manifest.'))) assert.equal(fs.readFileSync(path.join(home, f), 'utf8'), fs.readFileSync(path.join(viaInstall, f), 'utf8'), f);
+  for (const f of ['.codex/AGENTS.md', '.gemini/AGENTS.md', '.claude/CLAUDE.md']) assert.match(fs.readFileSync(path.join(home, f), 'utf8'), /board address is `http:\/\/localhost:8399`/, f);
+  assert.equal((await run(['status', '--all', '--repo', copy, '--home', home], data)).code, 0, 'status --all is clean after sync --apply');
+  assert.deepEqual(snap(), before, 'sync wrote nothing into the checkout');
+});
+
 test('install --all and status --all run every active tool in order with a header; the board defaults from config.json', async () => {
   const home = tempDir('home');
   const data = dataDir({ version: 1, activeTools: ['codex', 'antigravity'], board: { url: 'http://localhost:8399', repo: REPO } });
@@ -569,12 +623,21 @@ test('install --all and status --all run every active tool in order with a heade
   assert.doesNotMatch(s.err, /--all: failed for/, 'no summary line when every tool exits 0');
 });
 
-test('install --all checks every refusal for every tool before writing anything', async () => {
+test('install --all with no --home installs claude-code into the home folder like every other tool', () => {
   const withClaude = dataDir({ version: 1, activeTools: ['antigravity', 'claude-code'] });
-  // In a child with a scratch HOME (asserted empty), so a regression here cannot write the real home.
-  const noHome = cli(['install', '--all', '--apply'], withClaude);
-  assert.equal(noHome.code, 1);
-  assert.match(noHome.err, /refused: claude-code: refusing --tool claude-code without --home/);
+  // In a child with a scratch HOME and USERPROFILE, so the default home is that scratch folder, never the real one.
+  const fakeHome = tempDir('defaulthome');
+  const dry = cli(['install', '--all'], withClaude, {}, { fakeHome });
+  assert.equal(dry.code, 0, dry.err);
+  assert.doesNotMatch(dry.err, /refus/);
+  assert.match(dry.out, /== antigravity ==[\s\S]*== claude-code ==/);
+  assert.deepEqual(fs.readdirSync(fakeHome), [], 'the dry run writes nothing');
+  const applied = cli(['install', '--all', '--apply'], withClaude, {}, { fakeHome });
+  assert.equal(applied.code, 0, applied.err);
+  for (const f of ['.gemini/AGENTS.md', '.claude/CLAUDE.md', '.claude/AGENTS.md', '.claude/agents/scout.md']) assert.ok(fs.existsSync(path.join(fakeHome, ...f.split('/'))), f);
+});
+
+test('install --all checks every refusal for every tool before writing anything', async () => {
 
   const home = tempDir('home');
   const artifact = dataDir({ version: 1, activeTools: ['claude-code', 'antigravity'], board: { url: 'https://claude.ai/artifact/abc' } });
