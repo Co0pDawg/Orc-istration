@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadRoles } from '../tools/orc.mjs';
 
@@ -257,9 +257,13 @@ function envFor(c) {
   return { ...env, ...((typeof c.env === 'function' ? c.env() : c.env) ?? {}) };
 }
 
-function check(runner, c) {
-  const r = runner(payload(c), envFor(c));
+const check = (runner, c) => judge(c, runner(payload(c), envFor(c)));
+
+function judge(c, r) {
   assert.equal(r.status, 0, `${c.name}: exit ${r.status}; stderr ${r.stderr}`);
+  // A git probe that timed out is judged as "no branch": a row whose answer matches that fallback would pass
+  // without testing its path, so a timeout fails the row instead.
+  assert.doesNotMatch(r.stderr ?? '', /git did not answer/, `${c.name}: the guard's git probe timed out`);
   if (c.expect === 'allow') {
     assert.equal(r.stdout.trim(), '', `${c.name}: expected no decision, got ${r.stdout}`);
     return;
@@ -272,28 +276,73 @@ function check(runner, c) {
   assert.ok(!out.permissionDecisionReason.includes('\n'), 'one line');
 }
 
+// The same cold-started process with the payload on stdin, as the hook runs it, without blocking: the payload
+// table runs its cases side by side. A process still running after CASE_TIMEOUT_MS is killed and reported as
+// timedOut, so a hung guard fails its case instead of hanging the run.
+const CASE_TIMEOUT_MS = 60_000;
+const spawnAsync = (cmd, args, input, env) =>
+  new Promise((resolve) => {
+    const p = spawn(cmd, args, { env });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      p.kill();
+      p.stdout.destroy();
+      p.stderr.destroy();
+      resolve({ status: null, stdout, stderr, timedOut: true });
+    }, CASE_TIMEOUT_MS);
+    p.stdout.setEncoding('utf8').on('data', (d) => (stdout += d));
+    p.stderr.setEncoding('utf8').on('data', (d) => (stderr += d));
+    p.stdin.on('error', () => {});
+    p.on('error', (e) => {
+      clearTimeout(timer);
+      resolve({ status: null, stdout, stderr: `${stderr}${e.message}` });
+    });
+    p.on('close', (status) => {
+      clearTimeout(timer);
+      resolve({ status, stdout, stderr });
+    });
+    p.stdin.end(input);
+  });
+
+const PS_ARGS = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', PS1];
 const viaNode = (input, env) => spawnSync(process.execPath, [MJS], { input, env, encoding: 'utf8' });
+const viaNodeAsync = (input, env) => spawnAsync(process.execPath, [MJS], input, env);
 const POWERSHELL = spawnSync('powershell', ['-NoProfile', '-Command', 'exit 0'], { encoding: 'utf8' }).status === 0;
-const viaPs = (input, env) =>
-  spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', PS1], { input, env, encoding: 'utf8' });
+const viaPs = (input, env) => spawnSync('powershell', PS_ARGS, { input, env, encoding: 'utf8' });
+const viaPsAsync = (input, env) => spawnAsync('powershell', PS_ARGS, input, env);
 
 const RUNNERS = [
-  ['guard.mjs', viaNode, false],
-  ['guard.ps1', viaPs, POWERSHELL ? false : 'powershell is not on this machine'],
+  ['guard.mjs', viaNode, viaNodeAsync, false],
+  ['guard.ps1', viaPs, viaPsAsync, POWERSHELL ? false : 'powershell is not on this machine'],
 ];
 
-for (const [label, runner, skip] of RUNNERS) {
-  test(`${label}: deny, ask and allow over the payload table`, { skip }, () => {
-    // Every row runs, so one failure does not hide the next.
-    const failures = [];
-    for (const c of CASES.filter((x) => !x.platform || x.platform === process.platform)) {
-      try {
-        check(runner, c);
-      } catch (e) {
-        failures.push(e.message.split('\n')[0]);
+// Cases in flight at once: each is its own process, and PowerShell spends most of a case starting up.
+const POOL = 6;
+
+for (const [label, runner, runnerAsync, skip] of RUNNERS) {
+  test(`${label}: deny, ask and allow over the payload table`, { skip }, async () => {
+    // Every row runs, so one failure does not hide the next; failures are listed in table order. Each row starts
+    // as "not run" and is cleared only once judged, so a row the pool never reaches fails the test.
+    const cases = CASES.filter((x) => !x.platform || x.platform === process.platform);
+    const failures = cases.map((c) => `${c.name}: not run`);
+    let next = 0;
+    const worker = async () => {
+      while (next < cases.length) {
+        const i = next++;
+        const c = cases[i];
+        try {
+          const r = await runnerAsync(payload(c), envFor(c));
+          if (r.timedOut) throw new Error(`${c.name}: no answer within ${CASE_TIMEOUT_MS / 1000} s; the process was killed`);
+          judge(c, r);
+          failures[i] = null;
+        } catch (e) {
+          failures[i] = e.message.split('\n')[0];
+        }
       }
-    }
-    assert.deepEqual(failures, []);
+    };
+    await Promise.all(Array.from({ length: Math.min(POOL, cases.length) }, worker));
+    assert.deepEqual(failures.filter((f) => f !== null), []);
   });
 
   test(`${label}: denies every role marked access: read-only in roles/*.md, and only those`, { skip }, () => {
