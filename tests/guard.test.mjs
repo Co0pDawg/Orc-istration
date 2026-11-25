@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadRoles } from '../tools/orc.mjs';
 
@@ -258,7 +258,10 @@ function envFor(c) {
 }
 
 function check(runner, c) {
-  const r = runner(payload(c), envFor(c));
+  judge(c, runner(payload(c), envFor(c)));
+}
+
+function judge(c, r) {
   assert.equal(r.status, 0, `${c.name}: exit ${r.status}; stderr ${r.stderr}`);
   if (c.expect === 'allow') {
     assert.equal(r.stdout.trim(), '', `${c.name}: expected no decision, got ${r.stdout}`);
@@ -272,27 +275,64 @@ function check(runner, c) {
   assert.ok(!out.permissionDecisionReason.includes('\n'), 'one line');
 }
 
+// The same spawn as spawnSync (stdin written as UTF-8, output read as UTF-8), without blocking, so cases run side by side.
+function spawnAsync(command, args, input, env) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { env });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (d) => (stdout += d));
+    child.stderr.on('data', (d) => (stderr += d));
+    child.on('error', (e) => resolve({ status: null, stdout, stderr: `${stderr}${e.message}` }));
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+    child.stdin.on('error', () => {});
+    child.stdin.end(input);
+  });
+}
+
+// Runs fn over items with at most `limit` in flight; results keep the items' order.
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+const PARALLEL = Math.max(2, Math.min(os.availableParallelism?.() ?? os.cpus().length, 16));
+const PS_ARGS = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', PS1];
 const viaNode = (input, env) => spawnSync(process.execPath, [MJS], { input, env, encoding: 'utf8' });
+const viaNodeAsync = (input, env) => spawnAsync(process.execPath, [MJS], input, env);
 const POWERSHELL = spawnSync('powershell', ['-NoProfile', '-Command', 'exit 0'], { encoding: 'utf8' }).status === 0;
-const viaPs = (input, env) =>
-  spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', PS1], { input, env, encoding: 'utf8' });
+const viaPs = (input, env) => spawnSync('powershell', PS_ARGS, { input, env, encoding: 'utf8' });
+const viaPsAsync = (input, env) => spawnAsync('powershell', PS_ARGS, input, env);
 
 const RUNNERS = [
-  ['guard.mjs', viaNode, false],
-  ['guard.ps1', viaPs, POWERSHELL ? false : 'powershell is not on this machine'],
+  ['guard.mjs', viaNode, viaNodeAsync, false],
+  ['guard.ps1', viaPs, viaPsAsync, POWERSHELL ? false : 'powershell is not on this machine'],
 ];
 
-for (const [label, runner, skip] of RUNNERS) {
-  test(`${label}: deny, ask and allow over the payload table`, { skip }, () => {
-    // Every row runs, so one failure does not hide the next.
+for (const [label, runner, runnerAsync, skip] of RUNNERS) {
+  test(`${label}: deny, ask and allow over the payload table`, { skip }, async () => {
+    // Each row is its own cold-started hook process, as the hook runs; rows run side by side, then every row is
+    // judged, so one failure does not hide the next.
+    const cases = CASES.filter((x) => !x.platform || x.platform === process.platform);
+    const results = await mapLimit(cases, PARALLEL, (c) => runnerAsync(payload(c), envFor(c)));
     const failures = [];
-    for (const c of CASES.filter((x) => !x.platform || x.platform === process.platform)) {
+    cases.forEach((c, i) => {
       try {
-        check(runner, c);
+        judge(c, results[i]);
       } catch (e) {
         failures.push(e.message.split('\n')[0]);
       }
-    }
+    });
     assert.deepEqual(failures, []);
   });
 

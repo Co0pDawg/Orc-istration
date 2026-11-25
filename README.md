@@ -10,7 +10,7 @@
 
 It is not an autonomous swarm. A person stays in charge: a spec is written before any code, each built change gets an independent review, and nothing counts as done until the orchestrator has read the final diff.
 
-> **Status: developed and used on Claude Code; early on other tools.** The full loop runs day to day only on Claude Code, on the files generated from this repo since 2026-11-18. Codex CLI has completed a live builder, refuter, rework and accept loop, launched both generated roles by name, and passed a native Windows workspace-write probe with MXC. Antigravity CLI has had one live run of a generated agent, and the other four adapters are verified by tests against each tool's documented format. See [Limits](#limits).
+> **Status: developed and used on Claude Code; early on other tools.** The full loop runs day to day only on Claude Code, on the files generated from this repo since 2026-11-18. Codex CLI has completed a live builder, refuter, rework and accept loop, launched both generated roles by name, and passed a native Windows workspace-write probe with MXC. Antigravity CLI is verified by tests and its `agy --help`, with no live run of a generated agent that counts yet, and the other four adapters are verified by tests against each tool's documented format. See [Limits](#limits).
 
 Full documentation lives in the [wiki](https://github.com/Co0pDawg/Orc-istration/wiki).
 
@@ -124,7 +124,7 @@ Every change that goes through the build loop gets an independent adversarial re
 | Tool | What gets generated | Verified how | Main gap |
 |---|---|---|---|
 | Claude Code | `CLAUDE.md` + `agents/*.md` + the review panel's `commands/*.md` in `~/.claude` | Live: sessions run on the generated files since 2026-11-18 | Builder and debugger keep MCP tools (no allowlist) |
-| Antigravity CLI | `~/.gemini/AGENTS.md` + `config/agents/` | One headless live run of the scout (2026-11-15) | Models only `flash` or `pro`; no per-agent effort |
+| Antigravity CLI | `~/.gemini/AGENTS.md` + `config/agents/` | Golden-file tests and the agy 1.5.16 `--help` (an earlier headless scout run most likely ran agy's default agent, since the roles were not yet main agents, so it does not count) | Models only `flash` or `pro`; no per-agent effort; no dedicated list, search or URL-fetch tool |
 | Gemini CLI | `~/.gemini/GEMINI.md` + `agents/` | Golden-file tests against documented formats | No nested or documented parallel subagents |
 | Codex CLI | `~/.codex/AGENTS.md` + `agents/*.toml` | Golden-file tests, a live practice build, and [named-role and MXC workspace-write trials](docs/example-prompts.md#native-windows-execution-checks) | No per-role tool allowlist. Windows results cover the MXC configuration tested. |
 | Cursor | Project `AGENTS.md` + `~/.cursor/agents/` | Golden-file tests against documented formats | No global rulebook; model ids must be set |
@@ -156,10 +156,11 @@ Optional, when you want them: the skills in `skills/` (copy into `~/.claude/skil
 node tools/orc.mjs check
 node tools/orc.mjs install --tool antigravity                 # dry run
 node tools/orc.mjs install --tool antigravity --apply --board http://localhost:8377/ --board-repo <path to Orc-Dashboard>
-agy models | node tools/orc.mjs models --tool antigravity --from-stdin
+agy models | node tools/orc.mjs models --tool antigravity --from-stdin                  # Flash slugs
+agy models | node tools/orc.mjs models --tool antigravity --from-stdin --family neon    # or another family
 ```
 
-Save the last command's output as `models.local.json`. Then, in each project, run the standards setup in [`orchestration/standards.md`](orchestration/standards.md); `install` prints this pointer too, and writes this clone's path into the rulebook as the setup checkout. The rest: [Install and Quick Start](https://github.com/Co0pDawg/Orc-istration/wiki/Install-And-Quick-Start).
+Save the last command's output as `models.local.json`; `--family <name>` (default `flash`) picks the family whose `-low`, `-medium` and `-high` slugs fill the Low, Mid and High headless tiers, and any other slug goes into `models.local.json` by hand. The generated roles are main agents as well as subagents (`mainAgent: true`), so `agy agents` lists them and `dispatch --tool antigravity --role <name>` can select one. Then, in each project, run the standards setup in [`orchestration/standards.md`](orchestration/standards.md); `install` prints this pointer too, and writes this clone's path into the rulebook as the setup checkout. The rest: [Install and Quick Start](https://github.com/Co0pDawg/Orc-istration/wiki/Install-And-Quick-Start).
 
 ## Repository layout
 
@@ -184,7 +185,7 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 | `CODEOWNERS` | Every change needs the owner's review |
 | `docs/cli.md` | The full command reference |
 | `docs/interview-machine.md`, `docs/example-prompts.md` | Installing and removing the sprint kit on a borrowed machine, and example prompts including its starter prompt and the Codex practice exercise |
-| `orchestration/README.md` | Cost-log format and review questions; the anomaly log and its promotion table |
+| `orchestration/README.md`, `orchestration/log/TEMPLATE.md` | Cost-log format and review questions; the anomaly log and its promotion table; the cost-log template (the logs themselves stay untracked) |
 | `standards/`, `orchestration/standards.md`, `skills/repo-standards/` | The coding-standards archive (format in `standards/README.md`), the tool-neutral setup procedure, and its Claude Code skill |
 | `orchestration/sprint.md`, `skills/sprint/` | Sprint mode: a timeboxed build (default 45 minutes) that waives the board, standards setup, review panel and cost log for one task, and its Claude Code skill, the story-page template with its `make-story.mjs` filler, and the shared theme |
 | `skills/board/`, `skills/brief/`, `skills/wrap-up/` | Claude Code skills for the routine steps of an orchestrated task: board writes, marching orders, and the finish |
@@ -200,8 +201,9 @@ Save the last command's output as `models.local.json`. Then, in each project, ru
 
 ## Limits
 
-- The full loop runs day to day only on Claude Code (on the files generated from this repo since 2026-11-18). The [Codex trials](docs/example-prompts.md#native-windows-execution-checks) cover named-role dispatch and workspace-write with MXC on native Windows. The bundled and legacy sandbox configurations tested on that host failed at shell startup. Antigravity CLI has had one headless run of the generated scout.
-- Slash commands, skills and review metrics are Claude Code only; other tools follow `review/PROCEDURE.md`, `workflows/*.md` and the `orchestration/` procedures by hand. `dispatch` runs headlessly on Antigravity and Claude Code only.
+- The full loop runs day to day only on Claude Code (on the files generated from this repo since 2026-11-18). The [Codex trials](docs/example-prompts.md#native-windows-execution-checks) cover named-role dispatch and workspace-write with MXC on native Windows. The bundled and legacy sandbox configurations tested on that host failed at shell startup. Antigravity CLI has no live run of a generated agent that counts: the 2026-11-15 headless scout run predates `mainAgent: true`, and older agy ran its default agent when `--agent` matched no main agent.
+- Slash commands, skills and review metrics are Claude Code only; other tools follow `review/PROCEDURE.md`, `workflows/*.md` and the `orchestration/` procedures by hand. `dispatch` runs headlessly on Antigravity, Claude Code and Codex only (Codex as `codex exec` with `--sandbox read-only` for `scout` and `researcher` and `workspace-write` for every other role; the refuter and `review-*` roles write test output, worktrees and scratch reports, so their no-edit rule rests on the role body).
+- On Antigravity, a chat message sent to the orchestrator while subagents or background commands run force-cancels all of them: wait for the agents to finish, or orchestrate from another tool.
 - Gemini CLI, Cursor, Copilot and OpenCode are verified by tests against documented formats only.
 - Cursor and Copilot need model ids set in `models.local.json`; until then they use `inherit` or the default model.
 - Hooks, the worklog and sound alerts are Claude Code extras. On other tools the board update after each report is a build-loop step.
@@ -227,12 +229,12 @@ Every command is `node tools/orc.mjs <command>`. Options: `node tools/orc.mjs he
 | `status` | Compare an installed copy with the current build (a sprint kit's `settings.json` entries included) |
 | `models` | Turn `agy models` output into a `models.local.json` fragment |
 | `brief` | Print or lint a marching-orders brief |
-| `review-tier` | Say whether a branch diff is Light-eligible or Full |
+| `review-tier` | Say whether a branch diff is Light-eligible or Full (prompt files, including `review/`, `workflows/` and `commands/`, count as product) |
 | `costlog` | Draft a cost log from the board |
 | `calibration` | Per-lane precision and recall of the review panel from its run logs |
 | `corpus` | List the review regression corpus, or score a panel report against one case |
 | `metrics` | Capture or report per-run review metrics from Claude Code transcripts |
-| `dispatch` | Run one role headlessly at its tier (Antigravity and Claude Code) |
+| `dispatch` | Run one role headlessly at its tier (Antigravity, Claude Code and Codex) |
 | `hooks` | Merge the example hooks into `settings.json` (dry run without `--apply`) |
 | `standards` | List, show or detect archive coding standards, or compose a project's `STANDARDS.md` (dry run without `--apply`) |
 | `help` | List the commands, or one command's options |

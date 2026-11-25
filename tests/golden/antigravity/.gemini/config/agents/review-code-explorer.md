@@ -2,13 +2,10 @@
 name: review-code-explorer
 description: Review panel only (review/PROCEDURE.md). Reviews a branch diff for correctness, security, tenant scoping, design, type design and simplicity in one pass, running every selected code lane checklist (code-reviewer, architecture-reviewer, type-design-analyzer, code-simplifier) plus line-by-line, removed-behavior, caller-tracing, platform-pitfall, sibling-surface, co-change and key-agreement angles. Error handling runs in review-failure-explorer. Read-only; reports findings, leads and questions per review/contract.md.
 tools:
-  - list_dir
-  - find_by_name
-  - grep_search
-  - view_file
+  - read_file
   - run_command
 subagent: true
-mainAgent: false
+mainAgent: true
 model: pro
 commandExecutionPolicy: sandbox
 ---

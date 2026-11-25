@@ -186,9 +186,16 @@ test('V7: serialize quotes YAML-ambiguous scalars and writes empty lists as []',
   }
 });
 
-test('V8: the CLI runs through a directory junction', () => {
+test('V8: the CLI runs through a directory junction', (t) => {
   const link = path.join(tempDir('junction'), 'repo');
-  fs.symlinkSync(REPO, link, 'junction');
+  try {
+    fs.symlinkSync(REPO, link, 'junction');
+  } catch (e) {
+    // A sandbox may forbid links; any other failure is a real one.
+    if (e.code !== 'EPERM' && e.code !== 'EACCES') throw e;
+    t.skip(`cannot create a directory junction here (${e.code})`);
+    return;
+  }
   const r = spawnSync(process.execPath, [path.join(link, 'tools', 'orc.mjs'), 'check'], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /check ok/);

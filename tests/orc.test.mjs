@@ -198,6 +198,87 @@ test('models helper reads agy models output', async () => {
   assert.match(bad.err, /cannot tell the low, mid, high flash slug/);
 });
 
+// The shape of `agy models` on agy 1.5.16: tab-separated, several families, an xhigh tier and an untiered slug.
+const AGY_1_5_16 = `Fetching available models...
+gemini-4-neon-high\tGemini 4 Neon (High)
+gemini-4-neon-xhigh\tGemini 4 Neon (XHigh)
+gemini-4-neon-medium\tGemini 4 Neon (Medium)
+gemini-4-neon-low\tGemini 4 Neon (Low)
+gemini-4-carbon-medium\tGemini 4 Carbon (Medium)
+gemini-4-carbon-high\tGemini 4 Carbon (High)
+gemini-pro-orchestrator-neon\tOrchestrator (Neon)
+gemini-3.8-flash-high\tGemini 3.8 Flash (High)
+gemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)
+gemini-3.8-flash-low\tGemini 3.8 Flash (Low)
+`;
+
+test('models helper: --family picks another family; a missing tier names the tiers and the family', async () => {
+  const neon = { antigravity: { headless: { low: 'gemini-4-neon-low', mid: 'gemini-4-neon-medium', high: 'gemini-4-neon-high' } } };
+  assert.deepEqual(parseAgyModels(AGY_1_5_16, 'neon').fragment, neon, 'xhigh and the untiered orchestrator slug are not taken');
+  assert.deepEqual(parseAgyModels(AGY_1_5_16, 'NEON').fragment, neon, 'case-insensitive');
+  // Without --family the output is the flash fragment, as before.
+  const flash = await run(['models', '--tool', 'antigravity', '--from-stdin'], AGY_1_5_16);
+  assert.equal(flash.code, 0, flash.err);
+  assert.deepEqual(JSON.parse(flash.out), parseAgyModels(SAMPLE).fragment);
+  const ok = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', 'neon'], AGY_1_5_16);
+  assert.equal(ok.code, 0, ok.err);
+  assert.deepEqual(JSON.parse(ok.out), neon);
+  // carbon lists no -low slug.
+  const carbon = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', 'carbon'], AGY_1_5_16);
+  assert.equal(carbon.code, 1);
+  assert.match(carbon.err, /cannot tell the low carbon slug\(s\) from this list/);
+  const none = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', 'hydrogen'], AGY_1_5_16);
+  assert.equal(none.code, 1);
+  assert.match(none.err, /cannot tell the low, mid, high hydrogen slug/);
+  // The family is text, not a pattern: "3.8" matches only a literal dot.
+  assert.deepEqual(parseAgyModels(AGY_1_5_16, '3.8-flash').fragment, parseAgyModels(SAMPLE).fragment);
+  assert.match(parseAgyModels(AGY_1_5_16.replace(/3\.8/g, '3x8'), '3.8').error, /low, mid, high 3\.8 slug/);
+  assert.match(parseAgyModels(AGY_1_5_16, '.*').error, /cannot tell the low, mid, high \.\* slug/);
+  // A family matching two distinct slugs for a tier is an error naming the tier and the candidates, not a first pick.
+  const gemini = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', 'gemini'], AGY_1_5_16);
+  assert.equal(gemini.code, 1);
+  assert.match(gemini.err, /gemini matches more than one slug for low \(gemini-4-neon-low, gemini-3\.8-flash-low\), mid \(gemini-4-neon-medium, gemini-4-carbon-medium, gemini-3\.8-flash-medium\), high \(gemini-4-neon-high, gemini-4-carbon-high, gemini-3\.8-flash-high\); pass a longer --family/);
+  assert.match(parseAgyModels(AGY_1_5_16, 'gemini-4').error, /^gemini-4 matches more than one slug for mid \(gemini-4-neon-medium, gemini-4-carbon-medium\), high \(gemini-4-neon-high, gemini-4-carbon-high\);/);
+  // The same slug listed twice is one candidate.
+  assert.deepEqual(parseAgyModels(`${AGY_1_5_16}gemini-4-neon-low\tGemini 4 Neon (Low)\n`, 'neon').fragment, neon);
+  // An uppercase tier suffix still names its tier, and the slug is kept as listed.
+  assert.deepEqual(parseAgyModels('x-neon-LOW a\nx-neon-Medium b\nx-neon-HIGH c\n', 'neon').fragment, {
+    antigravity: { headless: { low: 'x-neon-LOW', mid: 'x-neon-Medium', high: 'x-neon-HIGH' } },
+  });
+  // An empty or blank family is refused before matching (it would match every slug).
+  for (const f of ['', '  ']) assert.deepEqual(parseAgyModels(AGY_1_5_16, f), { error: 'family must not be empty' });
+  // --family belongs to models only.
+  for (const argv of [['check'], ['build', '--tool', 'antigravity'], ['install', '--tool', 'antigravity', '--home', tempDir('fam')]]) {
+    const r = await run([...argv, '--family', 'neon']);
+    assert.equal(r.code, 1, argv.join(' '));
+    assert.match(r.err, /^--family applies to models only$/m, argv.join(' '));
+  }
+});
+
+test('antigravity agents are main agents and subagents, and name only agy 1.5.16 tools', async () => {
+  const [agy] = (await buildGolden(REPO)).filter((r) => r.adapter.id === 'antigravity');
+  const roles = loadRoles(REPO);
+  const accepted = new Set(['read_file', 'write_file', 'edit_file', 'run_command', 'search_web']);
+  const deprecated = /\b(list_dir|find_by_name|grep_search|view_file|write_to_file|replace_file_content|multi_replace_file_content|read_url_content)\b/;
+  for (const f of agy.files) assert.doesNotMatch(f.content, deprecated, f.path);
+  const agents = agy.files.filter((f) => f.role);
+  assert.equal(agents.length, roles.length);
+  for (const f of agents) {
+    const { data } = parse(f.content);
+    assert.equal(data.subagent, true, f.path);
+    assert.equal(data.mainAgent, true, f.path);
+    const tools = Array.isArray(data.tools) ? data.tools : data.tools.split(', ');
+    assert.equal(new Set(tools).size, tools.length, `${f.path}: no tool twice`);
+    for (const t of tools) assert.ok(accepted.has(t), `${f.path} names ${t}`);
+    const role = roles.find((r) => r.name === f.role);
+    if (role.access === 'read-only') for (const t of ['write_file', 'edit_file']) assert.ok(!tools.includes(t), `${role.name} gets ${t}`);
+    else assert.ok(tools.includes('write_file') && tools.includes('edit_file'), `${role.name} can edit`);
+  }
+  assert.ok(agy.adapter.gaps.some((g) => /listing, searching and URL fetching have no dedicated tool .*run_command.*search_web/i.test(g)));
+  const rulebook = agy.files.find((f) => f.path === '.gemini/AGENTS.md');
+  assert.ok(Buffer.byteLength(rulebook.content) < 24000, 'Antigravity rulebook under its cap');
+});
+
 test('AGENTS.md hygiene', () => {
   const text = read(path.join(REPO, 'AGENTS.md'));
   assert.ok(Buffer.byteLength(text) < 24000, 'AGENTS.md over 24,000 bytes');
@@ -464,11 +545,23 @@ test('install warns about two rulebooks in a shared ~/.gemini', async () => {
   await run(['install', '--tool', 'gemini-cli', '--home', home2, '--apply']);
   const a = await run(['install', '--tool', 'antigravity', '--home', home2]);
   assert.match(a.err, /GEMINI\.md is an orc-generated Gemini CLI rulebook .*Remove .*GEMINI\.md unless you also use Gemini CLI/);
-  // A hand-written file is not ours: no warning.
-  const home3 = tempDir('gemini3');
-  fs.mkdirSync(path.join(home3, '.gemini'));
-  fs.writeFileSync(path.join(home3, '.gemini', 'GEMINI.md'), '# my own rules\n');
-  assert.doesNotMatch((await run(['install', '--tool', 'antigravity', '--home', home3])).err, /two copies/);
+  // A hand-written file is loaded just the same, so it is warned about too, but never called ours or marked for removal.
+  for (const [tool, other, otherTool] of [['antigravity', 'GEMINI.md', 'Gemini CLI'], ['gemini-cli', 'AGENTS.md', 'Antigravity']]) {
+    const home3 = tempDir('gemini3');
+    fs.mkdirSync(path.join(home3, '.gemini'));
+    fs.writeFileSync(path.join(home3, '.gemini', other), '# my own rules\n');
+    const err = (await run(['install', '--tool', tool, '--home', home3])).err;
+    const line = err.split('\n').find((l) => l.includes(other));
+    assert.ok(line, `${tool}: warns about a hand-written ${other}`);
+    assert.match(line, new RegExp(`^WARN .*${other.replace('.', '\\.')} already exists .*${otherTool}.*two copies`));
+    assert.doesNotMatch(line, /orc-generated|Remove|delete/i, `${tool}: does not call it ours or tell the owner to delete it`);
+    // A folder of that name is not a rulebook: no warning, no crash.
+    const home4 = tempDir('gemini4');
+    fs.mkdirSync(path.join(home4, '.gemini', other), { recursive: true });
+    const r4 = await run(['install', '--tool', tool, '--home', home4]);
+    assert.equal(r4.code, 0, r4.err);
+    assert.doesNotMatch(r4.err, /two copies/);
+  }
 });
 
 test('install backups never collide within one second', async () => {

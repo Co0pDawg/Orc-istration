@@ -2,13 +2,10 @@
 name: review-checklist-explorer
 description: Review panel only (review/PROCEDURE.md). Runs the selected checklist lanes over a branch diff in one pass - pr-test-analyzer, ui-test-reviewer, secondary-artifacts and ticket-coverage. Read-only; reports findings, leads and questions per review/contract.md, keeping each lane's required output (ticket coverage table, Searched line).
 tools:
-  - list_dir
-  - find_by_name
-  - grep_search
-  - view_file
+  - read_file
   - run_command
 subagent: true
-mainAgent: false
+mainAgent: true
 model: flash
 commandExecutionPolicy: sandbox
 ---

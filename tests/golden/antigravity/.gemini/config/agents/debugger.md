@@ -2,18 +2,13 @@
 name: debugger
 description: Root-cause debugger for hard failures a builder could not resolve. Reproduces, isolates, and names the cause with evidence before proposing a fix. Use only when a failure is not obvious; ordinary red tests go back to the builder.
 tools:
-  - list_dir
-  - find_by_name
-  - grep_search
-  - view_file
+  - read_file
   - run_command
-  - write_to_file
-  - replace_file_content
-  - multi_replace_file_content
-  - read_url_content
+  - write_file
+  - edit_file
   - search_web
 subagent: true
-mainAgent: false
+mainAgent: true
 model: pro
 commandExecutionPolicy: sandbox
 ---

@@ -225,7 +225,14 @@ test('make-story: a template with two sprint-events blocks exits 1 and writes no
 test('make-story: runs when started through a junction or symlink to its folder', (t) => {
   const dir = setup(t, { 'events.json': JSON.stringify(EVENTS), 'meta.json': JSON.stringify(META) });
   const link = path.join(dir, 'linked-sprint');
-  fs.symlinkSync(path.dirname(SCRIPT), link, 'junction');
+  try {
+    fs.symlinkSync(path.dirname(SCRIPT), link, 'junction');
+  } catch (e) {
+    // A sandbox may forbid links; any other failure is a real one.
+    if (e.code !== 'EPERM' && e.code !== 'EACCES') throw e;
+    t.skip(`cannot create a directory junction here (${e.code})`);
+    return;
+  }
   const out = outPath(dir);
   const r = spawnSync(process.execPath, [path.join(link, 'make-story.mjs'), '--events', path.join(dir, 'events.json'), '--meta', path.join(dir, 'meta.json'), '--out', out], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);

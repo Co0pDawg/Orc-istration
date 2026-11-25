@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
-import { main, loadModels } from '../tools/orc.mjs';
+import { spawn, spawnSync } from 'node:child_process';
+import { main, loadModels, loadRoles } from '../tools/orc.mjs';
+import { killTree } from '../tools/lib/dispatch.mjs';
 import { parseMarchingOrders, briefTemplate, lintBrief } from '../tools/lib/brief.mjs';
 import { classify } from '../tools/lib/reviewtier.mjs';
 import { costlog, dispatchRows } from '../tools/lib/costlog.mjs';
@@ -303,6 +304,29 @@ test('costlog rows, spans and per-card tokens from a real-shaped export', async 
   assert.equal(costlog(EXPORT, SID).includes('TODO'), true);
 });
 
+test('the cost-log template follows the Record format in orchestration/README.md', () => {
+  const readme = fs.readFileSync(path.join(REPO, 'orchestration', 'README.md'), 'utf8').replace(/\r\n/g, '\n');
+  const template = fs.readFileSync(path.join(REPO, 'orchestration', 'log', 'TEMPLATE.md'), 'utf8').replace(/\r\n/g, '\n');
+  const record = readme.split('## Record format')[1].split('\n## ')[0];
+  const columns = [...record.matchAll(/^\| (.+?) \| .+ \|$/gm)].map((m) => m[1].replace(/`/g, '')).filter((c) => c !== 'Column' && !/^-+$/.test(c));
+  const header = template.split('\n').find((l) => l.startsWith('| # |'));
+  assert.deepEqual(header.split('|').slice(1, -1).map((c) => c.trim()), columns, 'one column per Record format column, in order');
+  assert.doesNotMatch(header, /\bCard\b|\bStart\b/, 'Card and Start are draft-only columns from costlog');
+  for (const h of ['- Date:', '- Project:', '- Branch:', '- Task:', '- Outcome:', '## Totals', 'Orchestrator context:', '## Loop signal', 'Escaped defects:', '## Spec misses']) assert.ok(template.includes(h), h);
+});
+
+test('.gitignore tracks the cost-log template and ignores the cost logs', () => {
+  // --no-index judges the rules alone, whatever the index holds; exit 0 = ignored, 1 = not ignored.
+  const ignored = (p) => {
+    const r = spawnSync('git', ['check-ignore', '--no-index', '-q', p], { cwd: REPO, encoding: 'utf8' });
+    assert.ok(r.status === 0 || r.status === 1, `git check-ignore ${p}: exit ${r.status} ${r.stderr}`);
+    return r.status === 0;
+  };
+  assert.equal(ignored('orchestration/log/TEMPLATE.md'), false, 'the template is tracked');
+  assert.equal(ignored('orchestration/log/2026-01-01-x.md'), true, 'a cost log stays local');
+  assert.equal(ignored('orchestration/log/anomalies.md'), true, 'the anomaly log stays local');
+});
+
 test('costlog --board reads through the board CLI export', async () => {
   const boardRepo = tempDir('boardrepo');
   fs.mkdirSync(path.join(boardRepo, 'local'));
@@ -328,17 +352,17 @@ test('dispatch --dry-run prints the argv for antigravity and claude-code', () =>
   const agy = isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', brief, '--dry-run']);
   assert.equal(agy.code, 0, agy.err);
   const slug = models.antigravity.headless.low;
-  assert.ok(agy.out.includes(` -p ${JSON.stringify(fs.readFileSync(brief, 'utf8'))} --agent scout --model ${slug} --output-format json\n`), agy.out);
+  assert.ok(agy.out.includes(` -p ${JSON.stringify(fs.readFileSync(brief, 'utf8'))} --agent scout --model ${slug} --output-format json --disable-slash-commands\n`), agy.out);
   assert.match(agy.out, /stdin: none/);
   const cc = isolated(['dispatch', '--tool', 'claude-code', '--role', 'builder', '--brief', brief, '--dry-run']);
   assert.equal(cc.code, 0, cc.err);
   assert.match(cc.out, new RegExp(` -p --agent builder --model ${models['claude-code'].high.model}\\n`));
-  assert.match(cc.out, /stdin: \d+ bytes \(the brief\)/);
+  assert.match(cc.out, /stdin: \d+ bytes \(the brief\)\n/);
 });
 
 test('dispatch refuses a tool without a recipe and a failing brief', () => {
   const good = briefFile();
-  for (const tool of ['codex', 'cursor', 'copilot', 'gemini-cli', 'opencode']) {
+  for (const tool of ['cursor', 'copilot', 'gemini-cli', 'opencode']) {
     const r = isolated(['dispatch', '--tool', tool, '--role', 'scout', '--brief', good, '--dry-run']);
     assert.equal(r.code, 1);
     assert.match(r.err, new RegExp(`no headless recipe for ${tool}`));
@@ -394,6 +418,52 @@ test('dispatch real run passes the brief byte-identical, with no shell, and retu
       assert.deepEqual(argv.slice(0, 3), ['-p', '--agent', 'builder']);
       assert.equal(stdin, text, 'brief arrives byte-identical on stdin');
     }
+  }
+});
+
+test('dispatch codex: read-only sandbox only for scout and researcher, effort only when the tier has one, role body and brief on stdin', () => {
+  const brief = briefFile(goodBrief({ 7: NASTY.replace(/\n/g, '\n   ') }));
+  const text = fs.readFileSync(brief, 'utf8');
+  const models = loadModels(REPO);
+  const roles = loadRoles(REPO);
+  const effort = (tier) => (models.codex[tier].effort ? ['-c', `model_reasoning_effort=${JSON.stringify(models.codex[tier].effort)}`] : []);
+  assert.equal(models.codex.low.effort, undefined, 'the low tier has no effort, so scout covers the no-effort branch');
+  assert.ok(models.codex.high.effort, 'the high tier has an effort');
+  // refuter and review-* are access: read-only but write test output, worktrees and scratch reports.
+  for (const [role, sandbox] of [['scout', 'read-only'], ['researcher', 'read-only'], ['refuter', 'workspace-write'], ['review-code-explorer', 'workspace-write'], ['builder', 'workspace-write']]) {
+    const r0 = roles.find((r) => r.name === role);
+    const want = ['exec', '--model', models.codex[r0.tier].model, '--sandbox', sandbox, ...effort(r0.tier), '-'];
+    const dir = tempDir('stub');
+    const r = isolated(['dispatch', '--tool', 'codex', '--role', role, '--brief', brief], { ORC_TOOL_BIN_CODEX: stub(dir), STUB_EXIT: '0' });
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'argv.json'), 'utf8')), want, role);
+    assert.equal(fs.readFileSync(path.join(dir, 'stdin.txt'), 'utf8'), `${r0.body}\n\n---\n\n${text}`, `${role}: role body, separator, brief byte-identical`);
+    const dry = isolated(['dispatch', '--tool', 'codex', '--role', role, '--brief', brief, '--dry-run']);
+    assert.equal(dry.code, 0, dry.err);
+    const q = (a) => (/^[\w@%+=:,./\\-]+$/.test(a) ? a : JSON.stringify(a));
+    assert.ok(dry.out.includes(` ${want.map(q).join(' ')}\n`), dry.out);
+    assert.match(dry.out, new RegExp(`stdin: ${Buffer.byteLength(`${r0.body}\n\n---\n\n${text}`)} bytes \\(the role body, then the brief\\)\\n`));
+  }
+});
+
+test('killTree falls back to child.kill when the tree kill fails, and not when it succeeds', () => {
+  // A pid no process can have (not a multiple of 4 on Windows, above pid_max on Linux), so nothing real is killed:
+  // taskkill (Windows) exits non-zero, process.kill(-pid) (POSIX) throws.
+  const gone = 2147483647;
+  const calls = [];
+  killTree({ pid: gone, kill: (sig) => calls.push(sig) });
+  assert.deepEqual(calls, ['SIGKILL']);
+  // A live process: the tree kill works, so the fallback is not called.
+  const live = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore', detached: process.platform !== 'win32' });
+  const liveCalls = [];
+  try {
+    killTree({ pid: live.pid, kill: (sig) => liveCalls.push(sig) });
+    assert.deepEqual(liveCalls, []);
+    const until = Date.now() + 5000;
+    while (alive(live.pid) && Date.now() < until) spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},200)']);
+    assert.equal(alive(live.pid), false, 'the tree kill ended the process');
+  } finally {
+    if (alive(live.pid)) live.kill('SIGKILL');
   }
 });
 
@@ -658,10 +728,18 @@ test('a tool whose tiers share a model in models.json has a gap naming those tie
 
 test('review-tier: prompts count as product; uncommitted changes warn', async () => {
   for (const p of ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'roles/scout.md', 'agents/scout.md', '.claude/x.md', '.agents/x.md', '.codex/AGENTS.md',
-    '.cursor/agents/a.md', '.gemini/GEMINI.md', 'profiles/p.md', 'adapters/codex.notes.md', 'skills/x/SKILL.md', 'a/b.agent.md']) {
+    '.cursor/agents/a.md', '.gemini/GEMINI.md', 'profiles/p.md', 'adapters/codex.notes.md', 'skills/x/SKILL.md', 'a/b.agent.md',
+    'review/PROCEDURE.md', 'review/lanes/code-reviewer.md', 'workflows/start.md', 'commands/pre-pr-review.md', 'commands/start.md']) {
     assert.equal(classify([p]).tier, 'Full', p);
   }
   assert.equal(classify(['README.md', 'docs/rulebook-notes.md', 'tests/a.test.mjs']).tier, 'Light-eligible');
+  // Only the top-level prompt folders: a docs page about them stays Light-eligible.
+  assert.equal(classify(['docs/review/notes.md', 'docs/workflows.md', 'docs/commands/x.md']).tier, 'Light-eligible');
+  for (const p of ['review/PROCEDURE.md', 'workflows/start.md', 'commands/start.md']) {
+    const d = repoWith({ [p]: 'a\n', 'README.md': 'r\n' });
+    commit(d, (dir) => fs.writeFileSync(path.join(dir, p), 'b\n'));
+    assert.match((await run(['review-tier', '--base', 'base', '--repo-dir', d])).out, new RegExp(`^Full: .*${p.replace('.', '\\.')}`, 'm'), p);
+  }
   const start = { 'README.md': 'r\n' };
   const dir = repoWith(start);
   commit(dir, (d) => fs.writeFileSync(path.join(d, 'README.md'), 'r2\n'));

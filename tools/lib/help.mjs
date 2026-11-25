@@ -76,10 +76,11 @@ export const HELP = {
   },
   models: {
     summary: 'Turn the output of "agy models" into a models.local.json fragment',
-    synopsis: 'models --tool antigravity --from-stdin',
+    synopsis: 'models --tool antigravity --from-stdin [--family <name>]',
     options: {
       '--tool antigravity': 'the only supported tool',
       '--from-stdin': 'read the model list from stdin',
+      '--family <name>': 'model family substring to match (default flash)',
     },
   },
   brief: {
@@ -150,7 +151,7 @@ export const HELP = {
   },
   dispatch: {
     repo: true,
-    summary: 'Run one role headlessly at its tier (Antigravity and Claude Code)',
+    summary: 'Run one role headlessly at its tier (Antigravity, Claude Code and Codex)',
     synopsis: 'dispatch --tool <id> --role <name> --brief <file> [--dry-run] [--timeout <seconds>] [--no-lint]',
     options: {
       '--tool <id>': 'the tool to run (required)',

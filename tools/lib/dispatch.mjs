@@ -35,7 +35,12 @@ export function dispatchPlan(adapter, role, models, briefText, env = process.env
   if (!tierModel.model) return { error: `no ${role.tier} model for ${adapter.id} in models.json` };
   const spec = adapter.headless(role, tierModel, briefText);
   const exe = resolveExecutable(spec.command, adapter.id, env);
-  return { ...spec, toolId: adapter.id, exe, argv: [...exe.pre, ...spec.args] };
+  // What stdin carries, for the dry-run line: the brief alone (Claude Code) or the role body before it (Codex).
+  const stdinHolds = spec.stdin == null ? null
+    : spec.stdin === briefText ? 'the brief'
+    : spec.stdin.startsWith(role.body) && spec.stdin.endsWith(briefText) ? 'the role body, then the brief'
+    : 'not the brief alone';
+  return { ...spec, toolId: adapter.id, exe, argv: [...exe.pre, ...spec.args], stdinHolds };
 }
 
 // An argv recipe cannot carry a NUL byte, and Windows caps the whole command line near 32,767 characters.
@@ -51,14 +56,20 @@ export function argvProblem(plan) {
 const quote = (a) => (/^[\w@%+=:,./\\-]+$/.test(a) ? a : JSON.stringify(a));
 export function formatCommand(plan) {
   const lines = [`command: ${quote(plan.exe.command)} ${plan.argv.map(quote).join(' ')}`];
-  lines.push(`stdin: ${plan.stdin === null || plan.stdin === undefined ? 'none' : `${Buffer.byteLength(plan.stdin)} bytes (the brief)`}`);
+  lines.push(`stdin: ${plan.stdin === null || plan.stdin === undefined ? 'none' : `${Buffer.byteLength(plan.stdin)} bytes (${plan.stdinHolds})`}`);
   if (plan.exe.missing) lines.push(`note: ${plan.command} not found on PATH${plan.exe.shim ? ` (only a .cmd/.bat shim at ${plan.exe.shim}; set ${binEnv(plan.toolId)} to the real executable)` : ''}`);
   return lines.join('\n');
 }
 
-function killTree(child) {
-  if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', shell: false });
-  else {
+export function killTree(child) {
+  if (process.platform === 'win32') {
+    const r = spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', shell: false });
+    if (r.error || r.status !== 0) {
+      try {
+        child.kill('SIGKILL');
+      } catch {}
+    }
+  } else {
     try {
       process.kill(-child.pid, 'SIGKILL');
     } catch {

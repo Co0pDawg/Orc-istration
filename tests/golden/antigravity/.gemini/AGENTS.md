@@ -118,15 +118,17 @@ Each tool's specifics (dispatch, model mapping, hooks, what it cannot do) are in
 
 # Antigravity CLI
 
-- **Dispatch:** call `invoke_subagent` with the roster name and the marching orders; `@name` in the CLI messages one. Subagents run concurrently with a clean context; the High-tier cap of three still applies.
-- **Tiers:** subagent `model` is `flash` (Low, Mid) or `pro` (High). A headless run (`agy -p`) takes `--model <slug>` from `models.json` `headless`; refresh the slugs with `agy models | node tools/orc.mjs models --tool antigravity --from-stdin`.
+- **Dispatch:** call `invoke_subagent` with the roster name and the marching orders; `@name` in the CLI messages one. Generated agents set `mainAgent: true` alongside `subagent: true` so `agy --agent <name>` accepts them (older agy fell back to the default agent on an unknown `--agent`). Subagents run concurrently with a clean context; the High-tier cap of three still applies.
+- **Tiers:** subagent `model` is `flash` (Low, Mid) or `pro` (High). A headless run (`agy -p`) takes `--model <slug>` from `models.json` `headless`; refresh the slugs with `agy models | node tools/orc.mjs models --tool antigravity --from-stdin [--family <name>]` (default `flash`).
 - **Hooks:** `hooks.json` (SessionStart, PreToolUse, PostToolUse, PreInvocation, PostInvocation, Stop).
-- **Shared `~/.gemini`:** Antigravity may load both `AGENTS.md` and a Gemini CLI `GEMINI.md` there, so two rulebook copies; `install` warns. Remove `~/.gemini/GEMINI.md` unless you also use Gemini CLI.
+- **Shared `~/.gemini`:** Antigravity may load both `AGENTS.md` and a Gemini CLI `GEMINI.md` there, so two rulebook copies; `install` warns, whether that file is orc-generated or hand-written. Remove an orc-generated `~/.gemini/GEMINI.md` unless you also use Gemini CLI.
+- **Mid-flight messages:** a chat message sent to an Antigravity orchestrator while subagents or background commands run force-cancels all of them. To relay a message mid-flight, wait for the agents to finish, or run the orchestrator on another tool.
 - **Review panel:** no slash command here: follow `review/PROCEDURE.md` in the setup checkout, dispatching the `review-*` agents by name. `metrics capture` reads Claude Code transcripts only, so it is unsupported here.
 
 What Antigravity CLI cannot do (generated from the adapter's gaps):
 - Per-agent model is only inherit, flash or pro: Mid and Low both map to flash, and what flash and pro resolve to is not documented.
 - No per-agent effort key; effort exists only on a headless run (--effort).
 - Low and Mid are the same per-agent model (flash) in the shipped `models.json`, so a per-dispatch tier override between them changes nothing outside a headless run.
+- Listing, searching and URL fetching have no dedicated tool on Antigravity and go through run_command (or search_web).
 - No subagent-stop hook: the board update after an agent report is a build-loop step.
 - Read-only is enforced only by the tools allowlist; run_command can still change files, so the role body forbids edits.
