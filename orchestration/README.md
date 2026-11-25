@@ -4,7 +4,7 @@ Scope: one record per orchestrated task (a session where the orchestrator dispat
 
 ## Where
 
-`~/.claude/orchestration/log/<date>-<project>-<slug>.md`, from `orchestration/log/TEMPLATE.md`. User-level, not in any repo — the roster applies to every project. `node tools/orc.mjs costlog --session <id>` drafts a record from the board (`docs/cli.md`).
+`~/.orc/log/<date>-<project>-<slug>.md` (`ORC_DATA_DIR` when set), from `orchestration/log/TEMPLATE.md` in the setup checkout. User-level, not in any repo — the roster applies to every project. `node tools/orc.mjs costlog --session <id>` drafts a record from the board (`docs/cli.md`).
 
 ## Record format
 
@@ -60,7 +60,7 @@ After roughly five records, read the `Value` column per agent type and the Spec 
 
 Scope: something that went wrong or behaved oddly and that no existing rule covers, in any session (orchestrated, inline or sprint). The cost log takes only orchestrated tasks, the review calibration log takes only review-panel findings, and `docs/rulebook-notes.md` takes an incident only once it has a rule. Without a holding place, an oddity is either lost or turned into a rule on one sighting.
 
-`anomalies.md` in the folder that holds the cost logs (`~/.claude/orchestration/log/` in Claude Code): one append-only file, local and untracked. One line per entry:
+`anomalies.md` in the folder that holds the cost logs (`~/.orc/log/`, or `$ORC_DATA_DIR/log/`): one append-only file, local and untracked. One line per entry:
 
 `<date> | <project> | <what happened> | <what was expected> | <how it was caught> | <status>`
 

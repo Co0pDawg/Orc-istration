@@ -139,39 +139,52 @@ foreach ($d in $dates) {
 }
 
 # Local board (ORC_BOARD_URL, else board.url in $ORC_DATA_DIR/config.json or ~/.orc/config.json, is http://localhost or http://127.0.0.1):
-# upload each pending file with the board CLI (ORC_BOARD_REPO, else board.repo in the same config file) and delete it only on exit 0.
-# An artifact board keeps the files for a Claude session.
-$orcHome = if ($env:ORC_DATA_DIR -and $env:ORC_DATA_DIR.Trim()) { $env:ORC_DATA_DIR } else { Join-Path -Path $HOME -ChildPath ".orc" }
-$cfgFile = Join-Path -Path $orcHome -ChildPath "config.json"
-$cfgBoard = $null
-if (Test-Path -LiteralPath $cfgFile -PathType Leaf) {
-    try {
-        $cfg = Get-Content -LiteralPath $cfgFile -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-        if ($null -ne $cfg -and ($cfg.PSObject.Properties.Name -contains 'board') -and $null -ne $cfg.board) { $cfgBoard = $cfg.board }
-    } catch {
-        $cfgBoard = $null
+# upload each pending file with the board CLI (ORC_BOARD_REPO, else board.repo in the same config file, else <state home>/board if that folder exists)
+# and delete it only on exit 0. An artifact board keeps the files for a Claude session.
+if (-not $DryRun) {
+    $orcHome = if ($env:ORC_DATA_DIR -and $env:ORC_DATA_DIR.Trim()) { $env:ORC_DATA_DIR } else { Join-Path -Path $HOME -ChildPath ".orc" }
+    $cfgFile = Join-Path -Path $orcHome -ChildPath "config.json"
+    $cfgBoard = $null
+    $cfgReadFailed = $false
+    if (Test-Path -LiteralPath $cfgFile -PathType Leaf) {
+        try {
+            $cfg = Get-Content -LiteralPath $cfgFile -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            if ($null -ne $cfg -and ($cfg.PSObject.Properties.Name -contains 'board') -and $null -ne $cfg.board) { $cfgBoard = $cfg.board }
+        } catch {
+            $cfgReadFailed = $true
+            $cfgBoard = $null
+            Log "WARN cannot read ${cfgFile}: $($_.Exception.Message); no board upload"
+        }
     }
-}
-$boardUrl = $env:ORC_BOARD_URL
-if (-not $boardUrl -and $null -ne $cfgBoard -and ($cfgBoard.PSObject.Properties.Name -contains 'url') -and $cfgBoard.url -is [string]) {
-    $boardUrl = $cfgBoard.url.Trim()
-}
-if (-not $DryRun -and $boardUrl -match '^http://(localhost|127\.0\.0\.1)(:(\d+))?(/|$)') {
-    if ($Matches[3]) { $env:ORC_BOARD_PORT = $Matches[3] }
-    $boardRepo = $env:ORC_BOARD_REPO
-    if (-not $boardRepo -and $null -ne $cfgBoard -and ($cfgBoard.PSObject.Properties.Name -contains 'repo') -and $cfgBoard.repo -is [string]) {
-        $boardRepo = $cfgBoard.repo.Trim()
+    $boardUrl = $env:ORC_BOARD_URL
+    if (-not $boardUrl -and $null -ne $cfgBoard -and ($cfgBoard.PSObject.Properties.Name -contains 'url')) {
+        if ($cfgBoard.url -is [string] -and $cfgBoard.url.Trim()) {
+            $boardUrl = $cfgBoard.url.Trim()
+        } else {
+            Log "WARN invalid board.url in ${cfgFile}: must be a non-empty string; no board upload"
+        }
     }
-    $cli = if ($boardRepo) { Join-Path -Path $boardRepo -ChildPath "local\board.js" } else { $null }
-    $missing = if (-not (Get-Command node -ErrorAction SilentlyContinue)) { "node is not on PATH" }
-        elseif (-not $boardRepo) { "board.repo is not set in $cfgFile (or ORC_BOARD_REPO)" }
-        elseif (-not (Test-Path -LiteralPath $cli)) { "the board CLI $cli does not exist" }
-    if ($missing) { Log "WARN cannot upload to $boardUrl`: $missing; pending files left" }
-    else { foreach ($f in Get-ChildItem $pending -Filter "timeline-????-??-??.json") {
-        $d = $f.BaseName.Substring(9)
-        node $cli set "timeline/$d" --file $f.FullName | Out-Null
-        if ($LASTEXITCODE -eq 0) { Remove-Item $f.FullName; Log "uploaded timeline/$d to $boardUrl" }
-        else { Log "WARN upload of timeline/$d exited $LASTEXITCODE; left pending" }
-    } }
+    if ($boardUrl -match '^http://(localhost|127\.0\.0\.1)(:(\d+))?(/|$)') {
+        if ($Matches[3]) { $env:ORC_BOARD_PORT = $Matches[3] }
+        $boardRepo = $env:ORC_BOARD_REPO
+        if (-not $boardRepo -and $null -ne $cfgBoard -and ($cfgBoard.PSObject.Properties.Name -contains 'repo') -and $cfgBoard.repo -is [string]) {
+            $boardRepo = $cfgBoard.repo.Trim()
+        }
+        if (-not $boardRepo) {
+            $defaultRepo = Join-Path -Path $orcHome -ChildPath "board"
+            if (Test-Path -LiteralPath $defaultRepo -PathType Container) { $boardRepo = $defaultRepo }
+        }
+        $cli = if ($boardRepo) { Join-Path -Path $boardRepo -ChildPath "local\board.js" } else { $null }
+        $missing = if (-not (Get-Command node -ErrorAction SilentlyContinue)) { "node is not on PATH" }
+            elseif (-not $boardRepo) { if (-not $cfgReadFailed) { "board.repo is not set in $cfgFile (or ORC_BOARD_REPO)" } else { $null } }
+            elseif (-not (Test-Path -LiteralPath $cli)) { "the board CLI $cli does not exist" }
+        if ($missing) { Log "WARN cannot upload to $boardUrl`: $missing; pending files left" }
+        elseif ($boardRepo) { foreach ($f in Get-ChildItem $pending -Filter "timeline-????-??-??.json") {
+            $d = $f.BaseName.Substring(9)
+            node $cli set "timeline/$d" --file $f.FullName | Out-Null
+            if ($LASTEXITCODE -eq 0) { Remove-Item $f.FullName; Log "uploaded timeline/$d to $boardUrl" }
+            else { Log "WARN upload of timeline/$d exited $LASTEXITCODE; left pending" }
+        } }
+    }
 }
 if ($failed) { exit 1 }

@@ -10,13 +10,13 @@ export const LIGHT_PATTERNS = [
   { kind: 'doc', re: /(^|\/)docs\// },
 ];
 
-// Prompts are product in this repo: rulebooks, roles, agent files, tool folders, profiles, adapter notes and
-// per-tool assets (commands, skills), review panel files, workflows, the standards archive, its setup procedure and
-// the sprint procedure decide behaviour, so they force Full even though most are Markdown.
+// Prompts are product in this repo and others: rulebooks, roles, agent and command files, tool folders, profiles,
+// adapter notes and per-tool assets (commands, skills), review panel files, workflows, the standards archive, its
+// setup procedure and the sprint procedure decide behaviour, so they force Full even though most are Markdown.
 export const PRODUCT_PATTERNS = [
   /(^|\/)(AGENTS|CLAUDE|GEMINI|SKILL)\.md$/i,
   /(^|\/)[^/]+\.agent\.md$/i,
-  /^(core|profiles|\.claude|\.agents|\.codex|\.cursor|\.gemini)\//,
+  /^(core|roles|agents|commands|profiles|\.claude|\.agents|\.codex|\.cursor|\.gemini)\//,
   /^adapters\/[^/]+\.notes\.md$/,
   /^adapters\/[^/]+\//,
   /^standards\//,

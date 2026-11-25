@@ -351,12 +351,12 @@ test('.gitignore: a standard deny-list; the cost-log template and every source s
   assert.equal(ignored('orchestration/log/TEMPLATE.md'), false, 'the template is tracked');
   assert.equal(ignored('orchestration/log/2026-01-01-x.md'), true, 'a cost log stays local');
   assert.equal(ignored('orchestration/log/anomalies.md'), true, 'the anomaly log stays local');
-  for (const p of ['node_modules/x/index.js', 'tools/node_modules/x.js', 'dist/codex/.codex/AGENTS.md', 'models.local.json', '.orc/reviews/run.md', 'orchestration/board/index.html',
+  for (const p of ['node_modules/x/index.js', 'tools/node_modules/x.js', 'dist/codex/.codex/AGENTS.md', 'models.local.json', 'board.local.md', 'CLAUDE.local.md', 'docs/CLAUDE.local.md', '.env', '.env.local', 'sub/.env.production', '.orc/reviews/run.md', 'orchestration/board/index.html',
     '.claude/settings.local.json', '.claude/worktrees/a/x.md', '.claude/skills/mine/SKILL.md', '.agents/settings.json', '.agents/skills/mine/SKILL.md', '.vscode/settings.json', '.idea/x.xml', 'a.swp', 'notes.md~', '.DS_Store', 'docs/Thumbs.db', 'desktop.ini']) {
     assert.equal(ignored(p), true, `${p} is ignored`);
   }
   for (const p of ['AGENTS.md', 'CLAUDE.md', 'core/AGENTS.md', 'core/roles/scout.md', '.claude/skills/ship-prompts/SKILL.md', '.agents/skills/ship-prompts/SKILL.md', 'tests/golden/claude-code/.claude/CLAUDE.md',
-    'tests/golden/claude-code/.claude/agents/scout.md', 'adapters/claude-code/commands/start.md', 'adapters/claude-code/skills/orc-permissions/SKILL.md', 'extras/worklog/worklog.ps1', 'skills/brief/SKILL.md', 'tools/orc.mjs', 'orchestration/README.md', 'new-top-level-file.md']) {
+    'tests/golden/claude-code/.claude/agents/scout.md', 'adapters/claude-code/commands/start.md', 'adapters/claude-code/skills/orc-permissions/SKILL.md', 'extras/worklog/worklog.ps1', 'skills/brief/SKILL.md', 'tools/orc.mjs', 'orchestration/README.md', 'docs/board.local.md', 'new-top-level-file.md']) {
     assert.equal(ignored(p), false, `${p} can be tracked`);
   }
   // No tracked file is matched by an ignore rule.
@@ -667,6 +667,49 @@ test('hooks: stale pattern also matches unquoted .claude/tools/worklog and .clau
   assert.equal(ptuCmds.filter((c) => /board-title\.ps1/.test(c)).length, 1, 'unquoted board-title hook not duplicated');
 });
 
+test('D7: hooks treats a stale .claude/tools/{worklog,peon} entry under another matcher in the same event as stale and never duplicates it', () => {
+  const home = tempDir('hookstale-matcher');
+  const file = path.join(home, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const oldSettings = {
+    hooks: {
+      PostToolUse: [
+        { matcher: 'Bash', hooks: [{ type: 'command', command: `powershell -NoProfile -NonInteractive -File "${home}\\.claude\\tools\\worklog\\log-event.ps1" -Kind tool`, timeout: 10, async: true }] },
+        { matcher: 'mcp__claude-artifacts__db_write', hooks: [{ type: 'command', command: `powershell -NoProfile -NonInteractive -File "${home}\\.claude\\tools\\worklog\\board-title.ps1"`, timeout: 10 }] },
+      ],
+    },
+  };
+  fs.writeFileSync(file, `${JSON.stringify(oldSettings, null, 2)}\n`);
+  const dry = isolated(['hooks', '--home', home]);
+  assert.equal(dry.code, 0, dry.err);
+  assert.equal(dry.out.match(/^stale /gm)?.length, 2, dry.out);
+  assert.match(dry.out, /stale PostToolUse \[Bash\] \(replace by hand; not duplicated\): .*tools\\worklog\\log-event\.ps1" -Kind tool/);
+  assert.match(dry.out, /-> .*\/extras\/worklog\/log-event\.ps1" -Kind tool/);
+  assert.match(dry.out, /stale PostToolUse \[mcp__claude-artifacts__db_write\] \(replace by hand; not duplicated\): .*tools\\worklog\\board-title\.ps1/);
+  assert.equal(dry.out.match(/^would add /gm)?.length, exampleCommands.length - 2, 'stale entries under different matchers are not added beside the old ones');
+  const applied = isolated(['hooks', '--home', home, '--apply']);
+  assert.equal(applied.code, 0, applied.err);
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const ptuCmds = after.hooks.PostToolUse.flatMap((g) => g.hooks.map((h) => h.command));
+  assert.equal(ptuCmds.filter((c) => /log-event\.ps1/.test(c)).length, 1, 'worklog PostToolUse hook not duplicated');
+  assert.equal(ptuCmds.filter((c) => /board-title\.ps1/.test(c)).length, 1, 'board-title PostToolUse hook not duplicated');
+  // Same script under a different event does not suppress PostToolUse.
+  const otherEvent = tempDir('hookstale-event');
+  const otherFile = path.join(otherEvent, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(otherFile), { recursive: true });
+  fs.writeFileSync(otherFile, JSON.stringify({
+    hooks: {
+      PreToolUse: [
+        { matcher: 'Bash', hooks: [{ type: 'command', command: `powershell -NoProfile -NonInteractive -File "${otherEvent}\\.claude\\tools\\worklog\\log-event.ps1" -Kind tool`, timeout: 10 }] },
+      ],
+    },
+  }, null, 2));
+  const diffEv = isolated(['hooks', '--home', otherEvent]);
+  assert.equal(diffEv.code, 0, diffEv.err);
+  assert.doesNotMatch(diffEv.out, /^stale /m);
+  assert.equal(diffEv.out.match(/^would add /gm)?.length, exampleCommands.length);
+});
+
 test('hooks fills <setup> with the running checkout, not --repo', () => {
   const otherRepo = tempDir('hooks-other-repo');
   const destDir = path.join(otherRepo, 'adapters', 'claude-code');
@@ -760,40 +803,60 @@ test('mergeHooks rejects a non-array event and leaves the input untouched', () =
 
 // ---------- board-reminder.mjs ----------
 
-test('board-reminder.mjs: mark, relay, silence and subagent calls', () => {
+const BOARD_RULEBOOK = "# Orchestration\n\n- **Board:** this machine's board address is `http://localhost:8377`; write it with `node \"C:/b/local/board.js\"`.\n";
+const KIT_RULEBOOK = '# Orchestration\n\n- **Board:** none on this machine (sprint kit). Skip every board write.\n';
+
+test('board-reminder.mjs: mark, relay, silence and subagent calls (keyed on CLAUDE.md Board line)', (t) => {
   const root = tempDir('reminder');
-  const state = tempDir('reminder-orc');
-  const env = { ORC_DATA_DIR: state };
   const hook = (o) => JSON.stringify({ session_id: 's-1', hook_event_name: 'PostToolUse', ...o });
-  // No config.json (even with a retired board.local.md present): silent, writes nothing.
+  // No CLAUDE.md (even with retired board.local.md present): silent, writes nothing.
   fs.writeFileSync(path.join(root, 'board.local.md'), 'http://localhost:8377\n');
-  assert.equal(reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root, Date.now(), env), '');
+  assert.equal(reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root, Date.now()), '');
   assert.ok(!fs.existsSync(path.join(root, 'board-reminders')));
-  // Invalid JSON or config without board.url: silent, writes nothing.
-  for (const raw of ['{ broken', '{}', '{"version":1,"board":{}}', '{"version":1,"board":{"url":"   "}}']) {
-    fs.writeFileSync(path.join(state, 'config.json'), raw);
-    assert.equal(reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root, Date.now(), env), '', raw);
-    assert.ok(!fs.existsSync(path.join(root, 'board-reminders')), raw);
+  // CLAUDE.md without the Board line, and sprint kit's `- **Board:** none` line: silent, writes nothing.
+  for (const content of ['# Orchestration\n\nNo board here.\n', KIT_RULEBOOK, '']) {
+    fs.writeFileSync(path.join(root, 'CLAUDE.md'), content);
+    assert.equal(reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root, Date.now()), '', content);
+    assert.ok(!fs.existsSync(path.join(root, 'board-reminders')), content);
   }
-  fs.writeFileSync(path.join(state, 'config.json'), JSON.stringify({ version: 1, board: { url: 'http://localhost:8377' } }));
-  // Relay with no markers: silent without reading stdin.
-  assert.equal(reminder('relay', 'not json', root, Date.now(), env), '');
-  // Mark: only builder, refuter, debugger.
-  assert.equal(reminder('mark', hook({ agent_type: 'scout', agent_id: 'a0' }), root, Date.now(), env), '');
+  // Unreadable CLAUDE.md (a directory): off silently.
+  fs.rmSync(path.join(root, 'CLAUDE.md'));
+  fs.mkdirSync(path.join(root, 'CLAUDE.md'));
+  assert.equal(reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root, Date.now()), '');
   assert.ok(!fs.existsSync(path.join(root, 'board-reminders')));
-  reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root, Date.now(), env);
-  reminder('mark', hook({ agent_type: 'refuter', agent_id: 'a/2' }), root, Date.now(), env);
-  reminder('mark', JSON.stringify({ session_id: 'other', agent_type: 'debugger', agent_id: 'x' }), root, Date.now(), env);
+  fs.rmSync(path.join(root, 'CLAUDE.md'), { recursive: true });
+
+  // UTF-8 BOM right before the Board line on line 1 is stripped and recognised.
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), `\uFEFF- **Board:** this machine's board address is \`https://claude.ai/artifact/x\`.\n`);
+  // Relay with no markers stops before reading CLAUDE.md or stdin.
+  const reads = [];
+  const origRead = fs.readFileSync;
+  const spy = t.mock.method(fs, 'readFileSync', (...a) => {
+    reads.push(String(a[0]));
+    return origRead(...a);
+  });
+  assert.equal(reminder('relay', 'not json', root, Date.now()), '');
+  assert.deepEqual(reads, [], 'relay with no markers must not read CLAUDE.md');
+  spy.mock.restore();
+
+  // Mark: only builder, refuter, debugger.
+  assert.equal(reminder('mark', hook({ agent_type: 'scout', agent_id: 'a0' }), root, Date.now()), '');
+  assert.ok(!fs.existsSync(path.join(root, 'board-reminders')));
+  reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root, Date.now());
+  // Also works with a multi-line CLAUDE.md without BOM.
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), BOARD_RULEBOOK);
+  reminder('mark', hook({ agent_type: 'refuter', agent_id: 'a/2' }), root, Date.now());
+  reminder('mark', JSON.stringify({ session_id: 'other', agent_type: 'debugger', agent_id: 'x' }), root, Date.now());
   const dir = path.join(root, 'board-reminders');
   assert.deepEqual(fs.readdirSync(dir).sort(), ['other.x', 's-1.a1', 's-1.a2']);
   // A relay inside a subagent is ignored.
-  assert.equal(reminder('relay', hook({ agent_id: 'a1' }), root, Date.now(), env), '');
+  assert.equal(reminder('relay', hook({ agent_id: 'a1' }), root, Date.now()), '');
   // An empty marker (killed mid-write) is cleared without naming an agent.
   fs.writeFileSync(path.join(dir, 's-2.e'), '');
-  const empty = JSON.parse(reminder('relay', JSON.stringify({ session_id: 's-2', hook_event_name: 'UserPromptSubmit' }), root, Date.now(), env));
+  const empty = JSON.parse(reminder('relay', JSON.stringify({ session_id: 's-2', hook_event_name: 'UserPromptSubmit' }), root, Date.now()));
   assert.match(empty.hookSpecificOutput.additionalContext, /^Board: An agent finished\./);
   // Relay names the session's agents, clears its markers and keeps others.
-  const out = JSON.parse(reminder('relay', hook({}), root, Date.now(), env));
+  const out = JSON.parse(reminder('relay', hook({}), root, Date.now()));
   assert.equal(out.hookSpecificOutput.hookEventName, 'PostToolUse');
   assert.match(out.hookSpecificOutput.additionalContext, /^Board: builder, refuter finished\. Update this session's now and events/);
   assert.deepEqual(fs.readdirSync(dir), ['other.x']);
@@ -801,16 +864,15 @@ test('board-reminder.mjs: mark, relay, silence and subagent calls', () => {
   const old = path.join(dir, 'other.x');
   const past = new Date(Date.now() - 8 * 24 * 3600 * 1000);
   fs.utimesSync(old, past, past);
-  reminder('mark', hook({ agent_type: 'debugger', agent_id: 'd' }), root, Date.now(), env);
+  reminder('mark', hook({ agent_type: 'debugger', agent_id: 'd' }), root, Date.now());
   assert.deepEqual(fs.readdirSync(dir), ['s-1.d']);
 });
 
 test('board-reminder.mjs as a hook process: stdin JSON in, context out, exit 0 on bad input', () => {
   const root = tempDir('reminder');
-  const state = tempDir('reminder-orc');
-  fs.writeFileSync(path.join(state, 'config.json'), JSON.stringify({ version: 1, board: { url: 'http://localhost:8377' } }));
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), BOARD_RULEBOOK);
   const script = path.join(REPO, 'tools', 'board-reminder.mjs');
-  const env = { ...process.env, BOARD_REMINDER_ROOT: root, ORC_DATA_DIR: state };
+  const env = { ...process.env, BOARD_REMINDER_ROOT: root };
   const mark = spawnSync(process.execPath, [script, 'mark'], { env, input: JSON.stringify({ session_id: 's', agent_type: 'builder', agent_id: 'b' }), encoding: 'utf8' });
   assert.equal(mark.status, 0);
   assert.equal(mark.stdout, '');
@@ -824,33 +886,37 @@ test('board-reminder.mjs as a hook process: stdin JSON in, context out, exit 0 o
   assert.match(bad.stderr, /^board-reminder: /);
 });
 
-test('board-reminder.ps1 keys on config.json board.url and stays silent when missing or invalid', { skip: process.platform !== 'win32' && 'PowerShell board-reminder is Windows only' }, () => {
+test('board-reminder.ps1 keys on CLAUDE.md Board line and stays silent without it, for sprint kit, or when missing', { skip: process.platform !== 'win32' && 'PowerShell board-reminder is Windows only' }, () => {
   const root = tempDir('reminder-ps1');
-  const state = tempDir('reminder-ps1-orc');
   const script = path.join(REPO, 'tools', 'board-reminder.ps1');
   const runPs = (mode, input) => spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Mode', mode], {
-    env: { ...process.env, BOARD_REMINDER_ROOT: root, ORC_DATA_DIR: state },
+    env: { ...process.env, BOARD_REMINDER_ROOT: root },
     input,
     encoding: 'utf8',
   });
   const markIn = JSON.stringify({ session_id: 's', agent_type: 'builder', agent_id: 'b' });
-  // Absent config.json, even with retired board.local.md: silent, writes no marker.
+  // Absent CLAUDE.md, even with retired board.local.md: silent, writes no marker.
   fs.writeFileSync(path.join(root, 'board.local.md'), 'http://localhost:8377\n');
   const off = runPs('mark', markIn);
   assert.equal(off.status, 0, off.stderr);
   assert.equal(off.stdout, '');
   assert.equal(off.stderr, '');
   assert.ok(!fs.existsSync(path.join(root, 'board-reminders')));
-  // Invalid JSON or missing board.url: silent.
-  for (const raw of ['{ broken', '{"version":1}', '{"version":1,"board":{"url":""}}']) {
-    fs.writeFileSync(path.join(state, 'config.json'), raw);
+  // Relay with no markers and no CLAUDE.md: silent, exit 0.
+  const noMarkers = runPs('relay', '{not json');
+  assert.equal(noMarkers.status, 0, noMarkers.stderr);
+  assert.equal(noMarkers.stdout, '');
+  assert.equal(noMarkers.stderr, '');
+  // Plain CLAUDE.md without Board line, or sprint kit's `- **Board:** none` line: silent.
+  for (const raw of ['# Orchestration\n', KIT_RULEBOOK, '']) {
+    fs.writeFileSync(path.join(root, 'CLAUDE.md'), raw);
     const r = runPs('mark', markIn);
     assert.equal(r.status, 0, raw);
     assert.equal(r.stderr, '', raw);
     assert.ok(!fs.existsSync(path.join(root, 'board-reminders')), raw);
   }
-  // Valid board.url: mark + relay fire.
-  fs.writeFileSync(path.join(state, 'config.json'), JSON.stringify({ version: 1, board: { url: 'http://localhost:8377' } }));
+  // Valid Board line (including with a UTF-8 BOM): mark + relay fire.
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), `\uFEFF${BOARD_RULEBOOK}`);
   assert.equal(runPs('mark', markIn).status, 0);
   const relay = runPs('relay', JSON.stringify({ session_id: 's', hook_event_name: 'UserPromptSubmit' }));
   assert.equal(relay.status, 0, relay.stderr);
@@ -951,10 +1017,10 @@ test('review-tier: prompts count as product; uncommitted changes warn', async ()
     assert.equal(classify([p]).tier, 'Full', p);
   }
   assert.equal(classify(['README.md', 'docs/rulebook-notes.md', 'tests/a.test.mjs']).tier, 'Light-eligible');
-  // The roles moved to core/roles and commands moved to adapters/claude-code/commands: stray top-level pages are docs again.
-  assert.equal(classify(['roles/scout.md', 'agents/scout.md', 'commands/start.md']).tier, 'Light-eligible');
+  // Root roles/, agents/ and commands/ Markdown count as product (other repos keep prompts there), alongside core/.
+  for (const p of ['roles/scout.md', 'agents/scout.md', 'commands/start.md']) assert.equal(classify([p]).tier, 'Full', p);
   // Only the top-level prompt folders: a docs page about them stays Light-eligible.
-  assert.equal(classify(['docs/review/notes.md', 'docs/workflows.md', 'docs/adapters/x.md']).tier, 'Light-eligible');
+  assert.equal(classify(['docs/review/notes.md', 'docs/workflows.md', 'docs/adapters/x.md', 'docs/roles/scout.md', 'docs/agents/scout.md', 'docs/commands/start.md']).tier, 'Light-eligible');
   for (const p of ['review/PROCEDURE.md', 'workflows/start.md', 'adapters/claude-code/commands/start.md']) {
     const d = repoWith({ [p]: 'a\n', 'README.md': 'r\n' });
     commit(d, (dir) => fs.writeFileSync(path.join(dir, p), 'b\n'));
@@ -1123,12 +1189,11 @@ test('R2: board-reminder.mjs runs when started through a junction or symlink', (
     return;
   }
   const root = tempDir('reminder');
-  const state = tempDir('reminder-orc');
-  fs.writeFileSync(path.join(state, 'config.json'), JSON.stringify({ version: 1, board: { url: 'http://localhost:8377' } }));
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), BOARD_RULEBOOK);
   fs.mkdirSync(path.join(root, 'board-reminders'));
   fs.writeFileSync(path.join(root, 'board-reminders', 's.a'), 'builder\n');
   const r = spawnSync(process.execPath, [path.join(link, 'board-reminder.mjs'), 'relay'], {
-    env: { ...process.env, BOARD_REMINDER_ROOT: root, ORC_DATA_DIR: state },
+    env: { ...process.env, BOARD_REMINDER_ROOT: root },
     input: JSON.stringify({ session_id: 's', hook_event_name: 'UserPromptSubmit' }),
     encoding: 'utf8',
   });

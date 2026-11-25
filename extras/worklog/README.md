@@ -88,7 +88,7 @@ pwsh -NoProfile -File sync-timeline.ps1 -Date 2026-10-19 -DryRun C:\temp\tl   # 
 
 ### Uploading
 
-On a local board (`ORC_BOARD_URL`, else `board.url` in `~/.orc/config.json` or `$ORC_DATA_DIR/config.json`, starts with `http://localhost` or `http://127.0.0.1`), `sync-timeline.ps1` uploads each pending file itself: `node <board repo>/local/board.js set timeline/<date> --file <file>`, with the board repo from `ORC_BOARD_REPO` (else `board.repo` in the same `config.json`) and `ORC_BOARD_PORT` from the address. It deletes the file only when the CLI exits 0 and leaves it pending otherwise.
+On a local board (`ORC_BOARD_URL`, else `board.url` in `~/.orc/config.json` or `$ORC_DATA_DIR/config.json`, starts with `http://localhost` or `http://127.0.0.1`), `sync-timeline.ps1` uploads each pending file itself: `node <board repo>/local/board.js set timeline/<date> --file <file>`, with the board repo from `ORC_BOARD_REPO` (else `board.repo` in the same `config.json`, else `~/.orc/board` — or `$ORC_DATA_DIR/board` — if that folder exists) and `ORC_BOARD_PORT` from the address. It deletes the file only when the CLI exits 0 and leaves it pending otherwise.
 
 With an artifact board, a Claude session uploads each pending file in `~/.claude/timeline-sync/pending/`:
 

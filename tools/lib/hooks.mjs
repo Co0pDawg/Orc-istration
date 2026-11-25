@@ -57,8 +57,9 @@ const extraKey = (re, cmd) => {
 };
 
 // Returns {merged, added: [{event, matcher, command, otherMatchers}], stale: [{event, matcher, oldCommand, command}]}.
-// `settings` is the parsed target (or {}). A hook whose event and matcher already hold a stale .claude/tools/worklog
-// or .claude/tools/peon entry is reported in `stale` and not duplicated.
+// `settings` is the parsed target (or {}). A hook whose event already holds a stale .claude/tools/worklog or
+// .claude/tools/peon entry for the same script and arguments (under any matcher) is reported in `stale` with the
+// matcher it was found under and not duplicated.
 export function mergeHooks(settings, example, home, setup = '') {
   const merged = structuredClone(settings);
   const added = [];
@@ -76,7 +77,10 @@ export function mergeHooks(settings, example, home, setup = '') {
         if (!matchersOf.has(h.command)) matchersOf.set(h.command, []);
         matchersOf.get(h.command).push(g.matcher ?? '');
         const ek = extraKey(OLD_EXTRA, h.command);
-        if (ek) staleByKey.set(key(g.matcher, ek), h.command);
+        if (ek) {
+          if (!staleByKey.has(ek)) staleByKey.set(ek, []);
+          staleByKey.get(ek).push({ matcher: g.matcher, command: h.command });
+        }
       }
     }
     for (const group of groups) {
@@ -85,8 +89,10 @@ export function mergeHooks(settings, example, home, setup = '') {
         const entry = { ...h, command: fillHome(h.command, home, setup) };
         if (have.has(key(group.matcher, entry.command))) continue;
         const nk = extraKey(NEW_EXTRA, entry.command);
-        if (nk && staleByKey.has(key(group.matcher, nk))) {
-          stale.push({ event, matcher: group.matcher, oldCommand: staleByKey.get(key(group.matcher, nk)), command: entry.command });
+        if (nk && staleByKey.has(nk)) {
+          for (const found of staleByKey.get(nk)) {
+            stale.push({ event, matcher: found.matcher, oldCommand: found.command, command: entry.command });
+          }
           continue;
         }
         have.add(key(group.matcher, entry.command));

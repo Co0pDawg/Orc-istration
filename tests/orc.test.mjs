@@ -707,3 +707,44 @@ test('ship-prompts skill is identical for Claude Code and Antigravity', () => {
   assert.equal(agy.data.name, 'ship-prompts');
   assert.equal(agy.body, claude.body, '.agents and .claude ship-prompts bodies must match');
 });
+
+test('D3d: an identical hand-copied static file stays unrecorded, is kept after a source change, and hands over once deleted', async () => {
+  const copy = tempDir('static-owner-repo');
+  for (const p of ['core', 'models.json', 'adapters', 'tools/lib', 'tools/guard.mjs', 'tools/guard.ps1', 'tools/board-reminder.mjs', 'tools/board-reminder.ps1']) {
+    fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
+  }
+  const home = tempDir('static-owner-home');
+  const claude = path.join(home, '.claude');
+  const grillSrc = path.join(copy, 'adapters', 'claude-code', 'commands', 'grill.md');
+  const grillDst = path.join(claude, 'commands', 'grill.md');
+  const original = read(grillSrc);
+  fs.mkdirSync(path.dirname(grillDst), { recursive: true });
+  fs.writeFileSync(grillDst, original);
+
+  // First install: byte-identical static file with no manifest stays the owner's (not recorded).
+  const first = await run(['install', '--tool', 'claude-code', '--repo', copy, '--home', home, '--apply', '--no-board']);
+  assert.equal(first.code, 0, first.err);
+  assert.match(first.out, /applied unchanged: .*grill\.md \(already there and in no orc manifest: not recorded, uninstall leaves it\)/);
+  const mf1 = JSON.parse(fs.readFileSync(path.join(claude, '.orc-manifest.claude-code.json'), 'utf8'));
+  assert.equal(mf1.files['.claude/commands/grill.md'], undefined, 'identical pre-existing file is not recorded');
+
+  // Later source change: install keeps the unrecorded file without --force, and status flags it as a hand copy.
+  fs.appendFileSync(grillSrc, '\nUpdated line.\n');
+  const second = await run(['install', '--tool', 'claude-code', '--repo', copy, '--home', home, '--apply', '--no-board']);
+  assert.equal(second.code, 0, second.err);
+  assert.match(second.out, /kept \(hand-copied command, differs; --force replaces it, with a backup\): .*grill\.md/);
+  assert.equal(read(grillDst), original, 'unrecorded hand copy is not overwritten');
+  const st1 = await run(['status', '--tool', 'claude-code', '--repo', copy, '--home', home, '--no-board']);
+  assert.equal(st1.code, 1);
+  assert.match(st1.out, /differs \(first difference at line \d+; a hand-copied command, which install --apply keeps: install --apply --force replaces it, with a backup\): .*grill\.md/);
+
+  // Handover without --force: delete the file, then install; it is now installed and recorded.
+  fs.rmSync(grillDst);
+  const third = await run(['install', '--tool', 'claude-code', '--repo', copy, '--home', home, '--apply', '--no-board']);
+  assert.equal(third.code, 0, third.err);
+  assert.match(third.out, /applied create: .*grill\.md/);
+  assert.equal(read(grillDst), read(grillSrc));
+  const mf3 = JSON.parse(fs.readFileSync(path.join(claude, '.orc-manifest.claude-code.json'), 'utf8'));
+  assert.ok(mf3.files['.claude/commands/grill.md'], 'now recorded in manifest');
+  assert.equal((await run(['status', '--tool', 'claude-code', '--repo', copy, '--home', home, '--no-board'])).code, 0);
+});

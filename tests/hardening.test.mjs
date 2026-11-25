@@ -247,3 +247,37 @@ test('V10: check names the line when a golden file is a prefix of the build', as
   const r = await run(['check', '--repo', copy]);
   assert.match(r.err, /tests\/golden\/claude-code\/\.claude\/agents\/scout\.md: differs from the build at line 6 \(generated from core\/roles\/scout\.md; edit that, then run node tools\/orc\.mjs golden\)/);
 });
+
+test('D10: check reports a tests/golden/<id>/ folder that no adapter owns as stale', async () => {
+  const copy = copyRepo('stale-golden-dir');
+  fs.mkdirSync(path.join(copy, 'tests', 'golden', 'retired-tool'), { recursive: true });
+  fs.writeFileSync(path.join(copy, 'tests', 'golden', 'retired-tool', 'AGENTS.md'), 'old\n');
+  fs.mkdirSync(path.join(copy, 'tests', 'golden', 'empty-orphan'), { recursive: true });
+  const r = await run(['check', '--repo', copy]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /^FAIL tests\/golden\/empty-orphan\/: stale \(no adapter owns it; remove it by hand\)$/m);
+  assert.match(r.err, /^FAIL tests\/golden\/retired-tool\/: stale \(no adapter owns it; remove it by hand\)$/m);
+});
+
+test('D10: every test file importing main from tools/orc.mjs or spawning tools/orc.mjs calls isolateHome()', () => {
+  // Files that run only home-independent commands (every path passed explicitly; never install/uninstall/sync/status/doctor/hooks).
+  const HOME_INDEPENDENT = {
+    'review-tools.test.mjs': 'runs only calibration, corpus and metrics with explicit --logs/--transcript/--out/--dir paths',
+    'guard.test.mjs': 'imports only loadRoles from tools/orc.mjs and spawns the guard scripts, never an orc command; its git commits need the real home for the git identity',
+  };
+  const testsDir = path.join(REPO, 'tests');
+  const files = fs.readdirSync(testsDir).filter((f) => f.endsWith('.test.mjs')).sort();
+  assert.ok(files.length >= 10, 'found test files');
+  const missing = [];
+  for (const f of files) {
+    if (Object.hasOwn(HOME_INDEPENDENT, f)) continue;
+    const src = read(path.join(testsDir, f));
+    const importsMain = /import\s*\{[^}]*\bmain\b[^}]*\}\s*from\s*['"][^'"]*tools\/orc\.mjs['"]/.test(src);
+    const spawnsOrc = /\b(?:spawn|execFile)(?:Sync)?\b/.test(src) && /['"`]orc\.mjs['"`]|tools[\\/]orc\.mjs/.test(src);
+    if ((importsMain || spawnsOrc) && !/^\s*(?:const\s+\w+\s*=\s*)?isolateHome\(\s*\)\s*;?/m.test(src)) {
+      missing.push(f);
+    }
+  }
+  assert.deepEqual(missing, [], `missing isolateHome() call: ${missing.join(', ')}`);
+  for (const f of Object.keys(HOME_INDEPENDENT)) assert.ok(files.includes(f), `stale allow-list entry: ${f}`);
+});

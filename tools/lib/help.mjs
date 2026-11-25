@@ -14,7 +14,7 @@ export const HELP = {
   },
   check: {
     repo: true,
-    summary: 'Build every tool, check the caps, models.json and the standards archive, and compare every tool\'s build with tests/golden/<tool>/ (a missing, differing or stale golden file fails, naming the source to edit)',
+    summary: 'Build every tool, check the caps, models.json and the standards archive, and compare every tool\'s build with tests/golden/<tool>/ (a missing, differing or stale golden file or unowned folder fails, naming the source to edit)',
     synopsis: 'check',
     options: {},
   },
@@ -186,7 +186,7 @@ export const HELP = {
   },
   hooks: {
     repo: true,
-    summary: 'Merge the example hooks from adapters/claude-code/ into <home>/.claude/settings.json (dry run without --apply); reports stale .claude/tools/{worklog,peon} entries without duplicating them. Run it from the checkout you keep: the worklog and peon hook commands point into it',
+    summary: 'Merge the example hooks from adapters/claude-code/ into <home>/.claude/settings.json (dry run without --apply); reports stale .claude/tools/{worklog,peon} entries under the same event without duplicating them. Run it from the checkout you keep: the worklog and peon hook commands point into it',
     synopsis: 'hooks --home <dir> [--apply] [--node]',
     options: {
       '--home <dir>': 'home folder (required; no default)',

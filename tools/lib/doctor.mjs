@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { orcHome, configFile, loadConfig, routeChain, boardDefault } from './config.mjs';
 import { dispatchPlan, resolveExecutable, unavailable, binEnv, killTree } from './dispatch.mjs';
 import { TIERS } from './models.mjs';
+import { loadManifest } from './manifest.mjs';
 import { readText } from './text.mjs';
 
 // The --version and auth probes are killed after 5 seconds, the board health GET after 3 (tests pass shorter ones).
@@ -197,18 +198,24 @@ export async function runDoctor({ repo, home, json, io, env = process.env, timeo
   // Retired board.local.md: warn whenever the file still exists in <home>/.claude/, even without config.json.
   const retiredBoard = path.join(home, '.claude', 'board.local.md');
   if (fs.existsSync(retiredBoard)) {
-    add('WARN', 'board', `${retiredBoard} is no longer read by orc; the board address comes from ${cfg.file}. Reinstall the hook scripts first (install --tool claude-code --apply --force), then delete it`);
+    const tail = config?.board?.url
+      ? `; the board address comes from board.url in ${cfg.file}`
+      : `; put its address in ${cfg.file} under board.url (and board.repo for a local board) first`;
+    add('WARN', 'board', `${retiredBoard} is no longer read by orc${tail}`);
   }
 
-  // Outdated board-reminder hook scripts in <home>/.claude/tools/: an older hand-copied script keys on board.local.md
-  // and is kept by install/sync without --force.
+  // Unrecorded hand-copied board-reminder hook scripts in <home>/.claude/tools/ that differ from this checkout:
+  // install keeps them without --force. A manifest-recorded copy that differs is ordinary install drift.
+  const claudeAdapter = adapters.find((a) => a.id === 'claude-code');
+  const recordedClaudeFiles = (claudeAdapter ? loadManifest(home, claudeAdapter).manifest?.files : null) ?? {};
   for (const name of ['board-reminder.ps1', 'board-reminder.mjs']) {
+    if (Object.hasOwn(recordedClaudeFiles, `.claude/tools/${name}`)) continue;
     const installed = path.join(home, '.claude', 'tools', name);
     const source = path.join(repo, 'tools', name);
     if (!fs.existsSync(installed) || !fs.existsSync(source)) continue;
     await guarded('hooks', 'claude-code', async () => {
       if (readText(installed) !== readText(source)) {
-        add('WARN', 'hooks', `${installed} differs from this checkout (an older board reminder still keys on board.local.md); install --tool claude-code --apply --force replaces it, with a backup`, 'claude-code');
+        add('WARN', 'hooks', `${installed} is a hand copy that differs from this checkout, so install keeps it; delete it and run install --tool claude-code --apply to get the current one`, 'claude-code');
       }
     });
   }

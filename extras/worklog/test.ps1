@@ -269,6 +269,27 @@ Check "config.json: reads board.url and board.repo and uploads" ($oc1 -match "up
 '{"date":"2026-11-01"}' | Set-Content $pend
 $oc2 = pwsh -NoProfile -File "$PSScriptRoot\sync-timeline.ps1" -Date 2026-12-31 2>&1 | Out-String
 Check "config.json: local board without repo warns and leaves pending" ($oc2 -match "WARN cannot upload to http://localhost:8512: board\.repo is not set" -and (Test-Path $pend) -and $oc2 -notmatch "FAILED|Exception")
+# Default board repo fallback (<state home>/board when it exists) when board.repo and ORC_BOARD_REPO are unset.
+$defaultBoard = Join-Path $orcData "board"
+Copy-Item -Recurse "$PSScriptRoot\test\fake-board" $defaultBoard
+$ocDef = pwsh -NoProfile -File "$PSScriptRoot\sync-timeline.ps1" -Date 2026-12-31 2>&1 | Out-String
+Check "config.json: falls back to <state home>/board when board.repo is unset" ($ocDef -match "uploaded timeline/2026-11-01 to http://localhost:8512" -and -not (Test-Path $pend) -and (Get-Content $env:FAKE_BOARD_LOG)[-1] -eq "set timeline/2026-11-01 --file $pend port=8512")
+Remove-Item -Recurse -Force $defaultBoard
+# Malformed config.json: logs WARN cannot read ...; no board upload (and never logs "board.repo is not set" even with ORC_BOARD_URL set).
+'{ not json' | Set-Content (Join-Path $orcData "config.json") -Encoding UTF8
+'{"date":"2026-11-01"}' | Set-Content $pend
+$ocBad1 = pwsh -NoProfile -File "$PSScriptRoot\sync-timeline.ps1" -Date 2026-12-31 2>&1 | Out-String
+Check "config.json: malformed JSON logs WARN cannot read and leaves pending" ($ocBad1 -match "WARN cannot read .*config\.json: .+; no board upload" -and (Test-Path $pend) -and $ocBad1 -notmatch "board\.repo is not set")
+$env:ORC_BOARD_URL = "http://localhost:8512"
+$ocBad2 = pwsh -NoProfile -File "$PSScriptRoot\sync-timeline.ps1" -Date 2026-12-31 2>&1 | Out-String
+Check "config.json: malformed JSON with ORC_BOARD_URL does not log board.repo is not set" ($ocBad2 -match "WARN cannot read .*config\.json: .+; no board upload" -and $ocBad2 -notmatch "board\.repo is not set" -and (Test-Path $pend))
+$env:ORC_BOARD_URL = $null
+# Blank or non-string board.url in config.json: logged and leaves pending.
+foreach ($badUrl in @('{"version":1,"board":{"url":"   "}}', '{"version":1,"board":{"url":42}}')) {
+    $badUrl | Set-Content (Join-Path $orcData "config.json") -Encoding UTF8
+    $ocUrl = pwsh -NoProfile -File "$PSScriptRoot\sync-timeline.ps1" -Date 2026-12-31 2>&1 | Out-String
+    Check "config.json: invalid board.url ($badUrl) logs WARN and leaves pending" ($ocUrl -match "WARN invalid board\.url in .*config\.json: .+; no board upload" -and (Test-Path $pend))
+}
 Remove-Item (Join-Path $orcData "config.json")
 $env:ORC_BOARD_URL = "https://claude.ai/artifact/test-board"; $env:ORC_BOARD_REPO = "$PSScriptRoot\test\fake-board"
 $nBeforeArt = @(Get-Content $env:FAKE_BOARD_LOG).Count

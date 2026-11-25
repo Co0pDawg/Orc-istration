@@ -2,8 +2,12 @@
 node_modules/
 /dist/
 
-# Machine-local model overrides and review run logs, calibration and metrics (<repo top>/.orc/)
+# Machine-local overrides, secrets and review run logs, calibration and metrics (<repo top>/.orc/)
 /models.local.json
+/board.local.md
+CLAUDE.local.md
+.env
+.env.*
 /.orc/
 
 # The board page code is its own repo (Co0pDawg/Orc-Dashboard), cloned here on some machines
