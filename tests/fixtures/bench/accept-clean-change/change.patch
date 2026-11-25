@@ -1,0 +1,59 @@
+diff --git a/src/slug.js b/src/slug.js
+index 75457b0..23ff7d0 100644
+--- a/src/slug.js
++++ b/src/slug.js
+@@ -1,8 +1,18 @@
+-// Turns a title into a URL slug: lower case, every run of characters other than a-z and 0-9 becomes one hyphen, and
+-// there is no hyphen at either end.
+-export function slugify(title) {
++const SEPARATORS = ['-', '_', '.'];
++
++// Turns a title into a URL slug: lower case, every run of characters other than a-z and 0-9 becomes one separator
++// (options.separator: default '-'; '_' and '.' are also allowed), and there is no separator at either end. Missing or
++// null options mean the default.
++export function slugify(title, options) {
++  const separator = options?.separator === undefined ? '-' : options.separator;
++  if (!SEPARATORS.includes(separator)) {
++    const got = typeof separator === 'string' ? JSON.stringify(separator) : typeof separator;
++    throw new RangeError(`separator must be one of ${SEPARATORS.join(' ')}, got ${got}`);
++  }
+   return title
+     .toLowerCase()
+-    .replace(/[^a-z0-9]+/g, '-')
+-    .replace(/^-+|-+$/g, '');
++    .replace(/[^a-z0-9]+/g, separator)
++    .split(separator)
++    .filter(Boolean)
++    .join(separator);
+ }
+diff --git a/test/slug.test.mjs b/test/slug.test.mjs
+index 00db5bd..0471b8a 100644
+--- a/test/slug.test.mjs
++++ b/test/slug.test.mjs
+@@ -10,3 +10,26 @@ test('collapses runs and trims the ends', () => {
+   assert.strictEqual(slugify('  Rock & Roll!! '), 'rock-roll');
+   assert.strictEqual(slugify('***'), '');
+ });
++
++test('the separator option replaces the hyphen, trimmed at both ends', () => {
++  assert.strictEqual(slugify('Hello World', { separator: '_' }), 'hello_world');
++  assert.strictEqual(slugify(' A.B  c! ', { separator: '.' }), 'a.b.c');
++  assert.strictEqual(slugify('--x--y--', { separator: '_' }), 'x_y');
++  assert.strictEqual(slugify('..x..y..', { separator: '.' }), 'x.y');
++  assert.strictEqual(slugify('***', { separator: '.' }), '');
++});
++
++test('missing, empty or null options keep the hyphen, as before', () => {
++  assert.strictEqual(slugify('a b', {}), 'a-b');
++  assert.strictEqual(slugify('a b', { separator: undefined }), 'a-b');
++  assert.strictEqual(slugify('a b', null), 'a-b');
++  assert.strictEqual(slugify('a b', undefined), 'a-b');
++});
++
++test('any other separator is a RangeError, whatever its type', () => {
++  for (const separator of ['/', '', '--', null, 0, Symbol('x'), Object.create(null), {}, ['-']]) {
++    assert.throws(() => slugify('a b', { separator }), RangeError, String(typeof separator));
++  }
++  assert.throws(() => slugify('a b', { separator: '/' }), /got "\/"/);
++  assert.throws(() => slugify('a b', { separator: Symbol('x') }), /got symbol/);
++});

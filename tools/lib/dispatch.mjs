@@ -62,13 +62,20 @@ export function unavailable(plan) {
   return exe.unusable ?? null;
 }
 
+// The model and effort for one tool and tier: the tier's headless slug first, then its model; the role's effort
+// first, then the tier's. Shared by dispatch and the queue.
+export function tierSettings(models, toolId, tier, roleEffort) {
+  const tiers = models[toolId] ?? {};
+  const base = tiers[tier] ?? {};
+  return { model: tiers.headless?.[tier] ?? base.model, effort: roleEffort ?? base.effort };
+}
+
 // `briefText` is the decoded brief (tools/lib/text.mjs), read once by the caller. `model` (--model) replaces the
 // tier's model; `binaries` and `configFile` come from config.json.
 export function dispatchPlan(adapter, role, models, briefText, env = process.env, { binaries = null, configFile = null, model = undefined } = {}) {
   if (typeof adapter.headless !== 'function') return { error: `no headless recipe for ${adapter.id}` };
-  const tiers = models[adapter.id] ?? {};
-  const base = tiers[role.tier] ?? {};
-  const tierModel = { model: model ?? tiers.headless?.[role.tier] ?? base.model, effort: role.effort ?? base.effort };
+  const tierModel = tierSettings(models, adapter.id, role.tier, role.effort);
+  if (model) tierModel.model = model;
   if (!tierModel.model) return { error: `no ${role.tier} model for ${adapter.id} in the models files (models.json, ~/.orc/models.json, models.local.json)` };
   const spec = adapter.headless(role, tierModel, briefText);
   const exe = resolveExecutable(spec.command, adapter.id, env, { binaries, configFile });
@@ -100,19 +107,25 @@ export function formatCommand(plan) {
   return lines.join('\n');
 }
 
-// On Windows a failed taskkill falls back to killing the direct child only, and says so through `err`.
-export function killTree(child, err = () => {}) {
-  if (process.platform === 'win32') {
-    const r = spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', shell: false });
-    if (r.error || r.status !== 0) {
-      err(`dispatch: taskkill failed for pid ${child.pid}; killing only the direct child, so its child processes may still run`);
-      try {
-        child.kill('SIGKILL');
-      } catch {}
+// taskkill exit status 128 means the process was already gone.
+export function killTree(child, { platform = process.platform, runSync = spawnSync, killProcess = process.kill, err = () => {} } = {}) {
+  if (platform === 'win32') {
+    let ok = false;
+    let why;
+    try {
+      const r = runSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', shell: false });
+      if (r?.error) why = r.error.code ?? r.error.message;
+      else if (r?.status === 0 || r?.status === 128) ok = true;
+      else why = `exit status ${r?.status}`;
+    } catch (e) {
+      why = e.code ?? e.message;
     }
+    if (ok) return;
+    child.kill();
+    err(`dispatch: taskkill failed (${why}); killed only pid ${child.pid}, its child processes may still be running`);
   } else {
     try {
-      process.kill(-child.pid, 'SIGKILL');
+      killProcess(-child.pid, 'SIGKILL');
     } catch {
       child.kill('SIGKILL');
     }
@@ -120,57 +133,83 @@ export function killTree(child, err = () => {}) {
 }
 
 // Streams the tool's output through; resolves to its exit code, or 124 after a timeout kill.
-export function runDispatch(plan, { timeoutSec, err = console.error } = {}) {
+export async function runDispatch(plan, { timeoutSec, err = console.error } = {}) {
+  return (await runTool(plan, { timeoutSec, err })).code;
+}
+
+// The spawn, timeout, kill-tree and signal handling behind runDispatch. With `capture`, stdout is collected and
+// returned instead of streamed, and `captureStderr` does the same for stderr; `cwd` sets the working folder; `env`
+// replaces the environment; `label` prefixes the messages. Resolves to {code, stdout, stderr, timedOut, signalled}:
+// code is the exit code, 124 after a timeout kill, 128+signal after Ctrl-C or a kill of orc, 127 when the tool cannot
+// start.
+export function runTool(plan, { timeoutSec, err = console.error, capture = false, captureStderr = false, cwd, env, label = 'dispatch' } = {}) {
   return new Promise((resolve) => {
+    const chunks = [];
+    const errChunks = [];
     const cannot = (e) => {
       const hint = plan.exe.shim && plan.exe.source === 'env' ? `: ${plan.exe.shim} is a .cmd/.bat shim, which cannot be started without a shell; set ${binEnv(plan.toolId)} to the real executable`
         : plan.exe.unusable ? `: ${plan.exe.unusable}; point it at the real executable`
         : e.code === 'ENOENT' ? `: ${plan.exe.command} is not installed or not on PATH; set ${binEnv(plan.toolId)} to its full path` : `: ${e.message}`;
-      err(`dispatch: cannot start ${plan.exe.command}${hint}`);
+      err(`${label}: cannot start ${plan.exe.command}${hint}`);
     };
+    const done = (code, extra = {}) => resolve({ code, stdout: Buffer.concat(chunks).toString('utf8'), stderr: Buffer.concat(errChunks).toString('utf8'), timedOut: false, signalled: null, ...extra });
     let child;
     try {
       child = spawn(plan.exe.command, plan.argv, {
         shell: false,
         windowsHide: true,
         detached: process.platform !== 'win32',
-        stdio: [plan.stdin == null ? 'ignore' : 'pipe', 'inherit', 'inherit'],
+        ...(cwd ? { cwd } : {}),
+        ...(env ? { env } : {}),
+        stdio: [plan.stdin == null ? 'ignore' : 'pipe', capture ? 'pipe' : 'inherit', captureStderr ? 'pipe' : 'inherit'],
       });
     } catch (e) {
       cannot(e);
-      resolve(127);
+      done(127);
       return;
     }
+    if (capture) child.stdout.on('data', (c) => chunks.push(c));
+    if (captureStderr) child.stderr.on('data', (c) => errChunks.push(c));
     let timedOut = false;
     let signalled = null;
-    // Ctrl-C or a kill of orc must not leave a detached agent running: kill the tree, then exit 128+signal.
+    // Ctrl-C or a kill of orc must not leave a detached agent running: kill the tree, then resolve with 128+signal
+    // (dispatch exits with that code; bench and queue record the stop and exit 1).
     const CODES = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129, SIGBREAK: 149 };
     const signals = process.platform === 'win32' ? ['SIGINT', 'SIGBREAK'] : ['SIGINT', 'SIGTERM', 'SIGHUP'];
     const onSignal = (sig) => {
       if (signalled) return;
       signalled = sig;
-      err(`dispatch: ${sig} received; killing the process tree`);
-      killTree(child, err);
+      err(`${label}: ${sig} received; killing the process tree`);
+      killTree(child, { err });
     };
     for (const s of signals) process.on(s, onSignal);
     const unhook = () => signals.forEach((s) => process.off(s, onSignal));
     const timer = timeoutSec
       ? setTimeout(() => {
           timedOut = true;
-          err(`dispatch: timed out after ${timeoutSec}s; killing the process tree`);
-          killTree(child, err);
+          err(`${label}: timed out after ${timeoutSec}s; killing the process tree`);
+          killTree(child, { err });
         }, timeoutSec * 1000)
       : null;
     child.on('error', (e) => {
+      // After a timeout or signal kill began, an error is a failed kill, not a failed start. The process may have
+      // survived, in which case `close` never comes, so resolve now with the timeout or signal code.
+      if (timedOut || signalled) {
+        err(`${label}: kill failed: ${e.message}`);
+        if (timer) clearTimeout(timer);
+        unhook();
+        done(signalled ? CODES[signalled] : 124, { timedOut, signalled });
+        return;
+      }
       if (timer) clearTimeout(timer);
       unhook();
       cannot(e);
-      resolve(127);
+      done(127);
     });
     child.on('close', (code) => {
       if (timer) clearTimeout(timer);
       unhook();
-      resolve(signalled ? CODES[signalled] : timedOut ? 124 : (code ?? 1));
+      done(signalled ? CODES[signalled] : timedOut ? 124 : (code ?? 1), { timedOut, signalled });
     });
     if (plan.stdin != null) {
       child.stdin.on('error', () => {});

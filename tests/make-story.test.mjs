@@ -228,9 +228,8 @@ test('make-story: runs when started through a junction or symlink to its folder'
   try {
     fs.symlinkSync(path.dirname(SCRIPT), link, 'junction');
   } catch (e) {
-    // A sandbox may forbid links; any other failure is a real one.
     if (e.code !== 'EPERM' && e.code !== 'EACCES') throw e;
-    t.skip(`cannot create a directory junction here (${e.code})`);
+    t.skip(`cannot create a directory link here (${e.code})`);
     return;
   }
   const out = outPath(dir);

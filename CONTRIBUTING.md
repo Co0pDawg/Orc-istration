@@ -78,7 +78,7 @@ This repo is a standalone checkout that installs into each tool's home folder; n
 ## Where things are
 
 - `tools/orc.mjs`: the CLI. Loads roles, models and adapters, builds each tool (`buildTool`), and dispatches the commands.
-- `tools/lib/`: `frontmatter.mjs` (frontmatter, generated marker), `roles.mjs` (role parsing), `models.mjs` (models validation), `toml.mjs` (Codex TOML), `manifest.mjs` (install manifest, path safety), `text.mjs` (the one text reader), `help.mjs` (the help table), `brief.mjs`, `reviewtier.mjs`, `costlog.mjs`, `dispatch.mjs`, `hooks.mjs` (the method-tooling commands; also reads and writes `settings.json`), `sprintkit.mjs` (the sprint kit: presets, stack detection, the `settings.json` plan and removal), `standards.mjs` (the standards archive, detect and apply), `config.mjs` (the shared state home `~/.orc`: `config.json` validation, routing chains, the board default), `doctor.mjs` (`orc doctor`), `calibration.mjs`, `corpus.mjs` and `metrics.mjs` (the review panel's calibration, regression corpus and metrics).
+- `tools/lib/`: `frontmatter.mjs` (frontmatter, generated marker), `roles.mjs` (role parsing), `models.mjs` (models validation), `toml.mjs` (Codex TOML), `manifest.mjs` (install manifest, path safety), `text.mjs` (the one text reader), `help.mjs` (the help table), `brief.mjs`, `reviewtier.mjs`, `costlog.mjs`, `dispatch.mjs`, `hooks.mjs` (the method-tooling commands; also reads and writes `settings.json`), `sprintkit.mjs` (the sprint kit: presets, stack detection, the `settings.json` plan and removal), `standards.mjs` (the standards archive, detect and apply), `config.mjs` (the shared state home `~/.orc`: `config.json` validation, routing chains, the board default), `doctor.mjs` (`orc doctor`), `calibration.mjs`, `corpus.mjs` and `metrics.mjs` (the review panel's calibration, regression corpus and metrics), `bench.mjs` (`bench`: the replay benchmark) and `queue.mjs` (`queue`: the unattended issue queue).
 - `tests/orc.test.mjs`: goldens, roles, frontmatter, caps, `check`, `install`, rulebook hygiene.
 - `tests/hardening.test.mjs`: option parsing, refusals, stale goldens, YAML quoting, running through a junction, BOM and UTF-16 input, first differing line.
 - `tests/manifest.test.mjs`: install manifest, re-install, `uninstall`, `status`, symlink and junction refusals.
@@ -93,6 +93,8 @@ This repo is a standalone checkout that installs into each tool's home folder; n
 - `tests/sprint-theme.test.mjs`: `skills/sprint/theme/theme.css`: tokens per look, WCAG contrast per look, reduced motion, no network loads, and the README head script's look list.
 - `tests/theme-picker.test.mjs`: the picker's exported logic: the typed sequence, editable targets (including a shadow root), the brand press window and the initial look.
 - `tests/helpers.mjs`: shared test helpers; every test file that imports `main` from `tools/orc.mjs` or spawns `tools/orc.mjs` must call `isolateHome()` after its imports (enforced by a meta-test in `tests/hardening.test.mjs`, with an explicit allow-list for home-independent files).
+- `tests/bench.test.mjs`: `bench list`, `run` and `report` through a stub `claude`, over the replay cases in `tests/fixtures/bench/` (format: `orchestration/bench.md`).
+- `tests/queue.test.mjs`: `queue list` and `run` through stub `gh` and `claude` executables and real git against a temp repo with a local bare origin: eligibility, outcomes, markers and retries, the lock, the push routes and the allow rules.
 
 ## Keep the README and wiki current
 

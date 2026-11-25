@@ -15,6 +15,8 @@ import { reviewTier } from './lib/reviewtier.mjs';
 import { costlog, readBoardExport } from './lib/costlog.mjs';
 import { calibrationReport, DEFAULT_MIN_PRECISION } from './lib/calibration.mjs';
 import { listCases, scoreReport } from './lib/corpus.mjs';
+import { listBenchCases, runBench, loadBenchResults, benchReport, BENCH_USAGE } from './lib/bench.mjs';
+import { runQueue, QUEUE_USAGE } from './lib/queue.mjs';
 import { capture, loadRuns, metricsReport, repoTop, DEFAULT_PRICES } from './lib/metrics.mjs';
 import { dispatchPlan, runDispatch, formatCommand, argvProblem, binEnv, unavailable } from './lib/dispatch.mjs';
 import { mergeHooks, formatLike, readSettings, writeSettings } from './lib/hooks.mjs';
@@ -83,8 +85,9 @@ export function loadRoles(repo) {
 // `local`. Only install (and sync, which is install --all), status, dispatch and doctor pass `shared`: build, check
 // and golden never read ~/.orc.
 // <orc home> is shared by every checkout, so a tool id there that this checkout does not know is skipped, with one
-// line through `warn`; models.json and models.local.json stay strict.
-export function loadModels(repo, { local = true, shared = false, env = process.env, warn = () => {} } = {}) {
+// line through `warn`; models.json and models.local.json stay strict. `extra` is one more override file in the
+// models.local.json shape (bench --models), layered last whatever `local` says.
+export function loadModels(repo, { local = true, shared = false, env = process.env, warn = () => {}, extra = null } = {}) {
   const tools = knownTools(repo);
   const models = JSON.parse(read(path.join(repo, 'models.json')));
   validateModels(models, tools, 'models.json');
@@ -120,6 +123,11 @@ export function loadModels(repo, { local = true, shared = false, env = process.e
   if (local && fs.existsSync(localFile)) {
     const over = JSON.parse(read(localFile));
     validateModels(over, tools, 'models.local.json');
+    layer(over);
+  }
+  if (extra) {
+    const over = JSON.parse(read(extra));
+    validateModels(over, tools, extra);
     layer(over);
   }
   return models;
@@ -433,6 +441,7 @@ export function buildTool(adapter, roles, models, agentsMd, { extraNotes = [], p
       continue;
     }
     for (const t of tools) if (!allowed.has(t)) errors.push(`${adapter.id}: ${f.path} emits unknown tool ${t}`);
+    if (adapter.limits?.nonEmptyTools && tools.length === 0) errors.push(`${adapter.id}: ${f.path} has an empty tools list; give the role a capability that maps to a tool`);
     const role = roles.find((r) => r.name === f.role);
     if (role.access === 'read-only') {
       for (const t of tools) if (editTools.has(t)) errors.push(`${adapter.id}: read-only ${role.name} gets ${t}`);
@@ -554,15 +563,15 @@ function stamp(d = new Date()) {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices', 'stack', 'from', 'case', 'report', 'family', 'model', 'prefer'];
+const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices', 'stack', 'from', 'case', 'report', 'variant', 'models', 'budget-usd', 'runs', 'label', 'author', 'max', 'until', 'model', 'allow', 'state', 'issue', 'family', 'prefer'];
 
 // Value options that may repeat; each value may also be comma-separated.
 const LIST_OPTIONS = ['profile', 'stack'];
 
-// Value options that may repeat but are never comma-split (paths).
-const REPEAT_OPTIONS = ['from'];
+// Value options that may repeat but are never comma-split (paths, case ids, logins, tool rules).
+const REPEAT_OPTIONS = ['from', 'case', 'author', 'allow'];
 
-const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print', 'json', 'sprint-kit', 'all'];
+const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print', 'json', 'sprint-kit', 'keep', 'keep-output', 'all'];
 
 // The argv index of the command word (the first argument that is neither an option nor an option's value).
 function commandIndex(argv) {
@@ -601,24 +610,35 @@ export function args(argv) {
   return out;
 }
 
-export function parseAgyModels(text, family = 'flash') {
-  if (!String(family).trim()) return { error: 'family must not be empty' };
-  const escaped = String(family).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`^\\s*(\\S*${escaped}\\S*-(low|medium|high))\\s`, 'i');
-  const found = { low: new Set(), mid: new Set(), high: new Set() };
+export function parseAgyModels(text, family) {
+  let re;
+  let label;
+  if (family === undefined) {
+    re = /^\s*(\S*flash\S*-(low|medium|high))\s/;
+    label = 'flash';
+  } else {
+    const name = typeof family === 'string' ? family.trim() : '';
+    if (!name) return { error: 'family name must not be empty' };
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    re = new RegExp(`^\\s*((?:\\S*-)?${esc}-(low|medium|high))\\s`);
+    label = name;
+  }
+  const found = {};
   for (const line of normalizeEol(text).split('\n')) {
     const m = re.exec(`${line} `);
-    if (m) found[{ low: 'low', medium: 'mid', high: 'high' }[m[2].toLowerCase()]].add(m[1]);
+    if (m) found[{ low: 'low', medium: 'mid', high: 'high' }[m[2]]] ??= m[1];
   }
-  const missing = ['low', 'mid', 'high'].filter((t) => !found[t].size);
-  if (missing.length) return { error: `cannot tell the ${missing.join(', ')} ${family} slug(s) from this list` };
-  // A family that matches two slugs for one tier (e.g. "gemini") is ambiguous: name the candidates, never pick one.
-  const ambiguous = ['low', 'mid', 'high'].filter((t) => found[t].size > 1);
-  if (ambiguous.length) {
-    return { error: `${family} matches more than one slug for ${ambiguous.map((t) => `${t} (${[...found[t]].join(', ')})`).join(', ')}; pass a longer --family` };
+  const missing = ['low', 'mid', 'high'].filter((t) => !found[t]);
+  if (missing.length) return { error: `cannot tell the ${missing.join(', ')} ${label} slug(s) from this list` };
+  if (family !== undefined) {
+    const stems = new Set([found.low.slice(0, -'-low'.length), found.mid.slice(0, -'-medium'.length), found.high.slice(0, -'-high'.length)]);
+    if (stems.size > 1) {
+      // The list was readable, so the caller must not add its "paste the output" hint to this one.
+      const example = found.high.slice(0, -'-high'.length).replace(/^gemini-/, '');
+      return { error: `--family ${label} picks slugs from more than one model (${found.low}, ${found.mid}, ${found.high}); name one model, for example --family ${example}`, readable: true };
+    }
   }
-  const [low, mid, high] = ['low', 'mid', 'high'].map((t) => [...found[t]][0]);
-  return { fragment: { antigravity: { headless: { low, mid, high } } } };
+  return { fragment: { antigravity: { headless: { low: found.low, mid: found.mid, high: found.high } } } };
 }
 
 // The comparison status prints and doctor summarises: every file install would write, against what is in `home`.
@@ -765,7 +785,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   const kitStack = opt.stack && cmd === 'install' && opt['sprint-kit'];
   if (((opt.stack && !kitStack) || opt.from || (opt.json && cmd !== 'doctor')) && cmd !== 'standards') return fail('--stack, --from and --json apply to standards only (and --stack to install --sprint-kit, --json to doctor)');
   if (opt.family !== undefined && cmd !== 'models') return fail('--family applies to models only');
-  if (opt.model !== undefined && cmd !== 'dispatch') return fail('--model applies to dispatch only');
+  if (opt.model !== undefined && !['dispatch', 'queue'].includes(cmd)) return fail('--model applies to dispatch and queue only');
   if (opt.prefer !== undefined && cmd !== 'dispatch') return fail('--prefer applies to dispatch only');
   if (opt.all && !['install', 'status'].includes(cmd)) return fail('--all applies to install and status only');
   if (opt.all && opt.tool) return fail('pass --all or --tool, not both');
@@ -776,6 +796,12 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const unknown = opt.stack.filter((s) => !KNOWN_STACKS.includes(s));
     if (unknown.length) return fail(`unknown stack(s) ${unknown.join(', ')} for the sprint kit; known: ${KNOWN_STACKS.join(', ')}`);
   }
+  const queueOnly = ['label', 'author', 'max', 'until', 'allow', 'state', 'issue'].filter((k) => opt[k] !== undefined);
+  if (queueOnly.length && cmd !== 'queue') return fail(`${queueOnly.map((k) => `--${k}`).join(', ')} apply to queue only`);
+  const benchOnly = ['variant', 'models', 'runs', 'keep', 'keep-output'].filter((k) => opt[k] !== undefined);
+  if (benchOnly.length && cmd !== 'bench') return fail(`${benchOnly.map((k) => `--${k}`).join(', ')} apply to bench only`);
+  if (opt['budget-usd'] !== undefined && !['bench', 'queue'].includes(cmd)) return fail('--budget-usd applies to bench and queue only');
+  if (opt['dry-run'] && cmd === 'queue') return fail('queue takes no --dry-run: queue run without --apply is the dry run');
   if (opt['no-profile'] && opt.profile) return fail('pass --profile or --no-profile, not both');
   if (opt['no-board'] && (opt.board || opt['board-repo'])) return fail('pass --board or --no-board, not both');
   try {
@@ -1058,7 +1084,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       if (isGenerated(read(other))) {
         io.err(`WARN ${other} is an orc-generated ${c.tool} rulebook in the same folder: ${c.warning}. Remove ${other} unless you also use ${c.tool}.`);
       } else {
-        io.err(`WARN ${other} already exists in the same folder (${c.tool} rulebook): ${c.warning}.`);
+        io.err(`WARN ${other} exists in the same folder (${c.tool} rulebook): ${c.handWrittenWarning ?? c.warning}. Review both files so their rules do not conflict.`);
       }
     }
     const when = stamp(io.now ? io.now() : new Date());
@@ -1455,8 +1481,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
 
   if (cmd === 'models') {
     if (opt.tool !== 'antigravity' || !opt['from-stdin']) return fail('usage: models --tool antigravity --from-stdin [--family <name>]');
-    const { fragment, error } = parseAgyModels(decodeText(io.stdin()), opt.family ?? 'flash');
-    if (error) return fail(`${error}; paste the output of "agy models"`);
+    const { fragment, error, readable } = parseAgyModels(decodeText(io.stdin()), opt.family);
+    if (error) return fail(readable ? error : `${error}; paste the output of "agy models"`);
     io.out(JSON.stringify(fragment, null, 2));
     return 0;
   }
@@ -1555,7 +1581,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       }
       if (sub === 'score' && opt._.length === 2) {
         if (!opt.case || !opt.report) return fail('corpus: score needs --case <id> and --report <file>');
-        const { text, missed } = scoreReport(root, opt.case, path.resolve(opt.report));
+        // --case may repeat (bench takes several); corpus score keeps the last one, as before.
+        const { text, missed } = scoreReport(root, opt.case.at(-1), path.resolve(opt.report));
         io.out(text.replace(/\n$/, ''));
         return missed ? 1 : 0;
       }
@@ -1563,6 +1590,46 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       return fail(e.message);
     }
     return fail('usage: corpus list | corpus score --case <id> --report <file>');
+  }
+
+  if (cmd === 'bench') {
+    const sub = opt._[1];
+    const root = path.join(repo, 'tests', 'fixtures', 'bench');
+    try {
+      if (sub === 'list' && opt._.length === 2) {
+        const warnings = [];
+        const cases = listBenchCases(root, warnings);
+        for (const w of warnings) io.err(`WARN ${w}`);
+        io.out(cases.map((c) => `${c.id}  ${c.kind || '?'}  ${c.title}`).join('\n'));
+        return 0;
+      }
+      if (sub === 'run' && opt._.length === 2) {
+        const toolId = opt.tool ?? 'claude-code';
+        const adapter = (await loadAdapters(repo)).find((a) => a.id === toolId);
+        if (toolId !== 'claude-code' || !adapter) return fail(`bench: no bench recipe for ${toolId} (bench runs Claude Code only)`);
+        const models = loadModels(repo, { local: false, extra: opt.models ? path.resolve(opt.models) : null });
+        return await runBench({ repo, root, adapter, roles: loadRoles(repo), models, opt, cwd: io.cwd ? io.cwd() : process.cwd() }, io);
+      }
+      if (sub === 'report' && opt._.length === 2) {
+        const dir = path.resolve(opt.dir ?? path.join(repoTop(process.cwd()) ?? process.cwd(), '.orc', 'bench'));
+        const { results, skipped } = loadBenchResults(dir);
+        emit(benchReport(results, skipped));
+        return 0;
+      }
+    } catch (e) {
+      return fail(e.message.startsWith('bench:') ? e.message : `bench: ${e.message}`);
+    }
+    return fail(BENCH_USAGE);
+  }
+
+  if (cmd === 'queue') {
+    const sub = opt._[1];
+    if (!['list', 'run'].includes(sub) || opt._.length !== 2) return fail(QUEUE_USAGE);
+    try {
+      return await runQueue({ sub, models: loadModels(repo), opt, cwd: io.cwd ? io.cwd() : process.cwd() }, io);
+    } catch (e) {
+      return fail(e.message.startsWith('queue:') ? e.message : `queue: ${e.message}`);
+    }
   }
 
   if (cmd === 'metrics') {

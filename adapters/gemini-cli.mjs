@@ -18,7 +18,14 @@ export default {
   home: { root: '.gemini', rulebook: '.gemini/GEMINI.md', agentsDir: '.gemini/agents' },
   capabilityTools,
   limits: {},
-  conflicts: [{ path: '.gemini/AGENTS.md', tool: 'Antigravity', warning: 'Antigravity could load two copies of the rulebook' }],
+  conflicts: [
+    {
+      path: '.gemini/AGENTS.md',
+      tool: 'Antigravity',
+      warning: 'Antigravity could load two copies of the rulebook',
+      handWrittenWarning: 'Antigravity may load both this file and GEMINI.md',
+    },
+  ],
   gaps: [
     'No reasoning-effort key; tiers differ by model id only, and Low and Mid share the Flash id (no Flash-Lite id documented).',
     'Low and Mid are the same model (`gemini-3-flash-preview`) in the shipped `models.json`, so a per-dispatch tier override between them changes nothing.',

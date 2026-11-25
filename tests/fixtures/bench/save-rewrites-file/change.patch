@@ -1,0 +1,40 @@
+diff --git a/src/store.js b/src/store.js
+index 4aaecb3..02e4db2 100644
+--- a/src/store.js
++++ b/src/store.js
+@@ -12,3 +12,10 @@ export function saveProfile(file, profile) {
+ export function loadProfile(file) {
+   return JSON.parse(fs.readFileSync(file, 'utf8'));
+ }
++
++// Changes the display name in a profile file.
++export function setDisplayName(file, name) {
++  const profile = loadProfile(file);
++  profile.displayName = name;
++  saveProfile(file, profile);
++}
+diff --git a/test/store.test.mjs b/test/store.test.mjs
+index 356540e..e77d2f6 100644
+--- a/test/store.test.mjs
++++ b/test/store.test.mjs
+@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
+ import fs from 'node:fs';
+ import os from 'node:os';
+ import path from 'node:path';
+-import { saveProfile, loadProfile } from '../src/store.js';
++import { saveProfile, loadProfile, setDisplayName } from '../src/store.js';
+ 
+ const tempFile = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'store-')), 'profile.json');
+ 
+@@ -20,3 +20,11 @@ test('loadProfile reads what saveProfile wrote', () => {
+   saveProfile(file, { name: 'n' });
+   assert.deepStrictEqual(loadProfile(file), { name: 'n' });
+ });
++
++test('setDisplayName changes the display name', () => {
++  const file = tempFile();
++  saveProfile(file, { displayName: 'old', email: 'e@example.test' });
++  setDisplayName(file, 'new');
++  assert.strictEqual(loadProfile(file).displayName, 'new');
++  assert.strictEqual(loadProfile(file).email, 'e@example.test');
++});

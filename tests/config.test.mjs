@@ -445,7 +445,7 @@ test('dispatch --model replaces the first tool\'s model, keeps the effort, and i
   assert.equal(f.code, 0, f.err);
   assert.match(f.err, /^dispatch: --model gpt-6\.2-astra dropped \(it was for codex\); claude-code runs its high model$/m);
   assert.match(f.out, /--agent builder --model opus$/m);
-  assert.match(cli(['status', '--tool', 'codex', '--model', 'x'], fallback).err, /--model applies to dispatch only/);
+  assert.match(cli(['status', '--tool', 'codex', '--model', 'x'], fallback).err, /--model applies to dispatch and queue only/);
 });
 
 // ---------- doctor ----------
