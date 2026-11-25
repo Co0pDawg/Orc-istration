@@ -34,8 +34,9 @@ export default {
     return { path: `.codex/agents/${role.name}.toml`, content: `# ${generatedMarker('codex').slice(5, -4)}\n${toml}` };
   },
   // Headless run: `codex exec` with --sandbox read-only for scout and researcher (workspace-write for every other
-  // role), optional effort, and role body + brief on stdin.
-  headless(role, tierModel, briefText) {
+  // role), optional effort, `-c windows.sandbox=mxc` on Windows (every role, because Codex blocks process launches
+  // there without a sandbox selection), and role body + brief on stdin.
+  headless(role, tierModel, briefText, { platform = process.platform } = {}) {
     const sandbox = READ_ONLY_SANDBOX.has(role.name) ? 'read-only' : 'workspace-write';
     const args = [
       'exec',
@@ -44,6 +45,7 @@ export default {
       '--sandbox',
       sandbox,
       ...(tierModel.effort ? ['-c', `model_reasoning_effort=${JSON.stringify(tierModel.effort)}`] : []),
+      ...(platform === 'win32' ? ['-c', 'windows.sandbox=mxc'] : []),
       '-',
     ];
     return { command: 'codex', args, stdin: `${role.body}\n\n---\n\n${briefText}` };

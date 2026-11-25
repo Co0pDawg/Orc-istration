@@ -435,7 +435,8 @@ test('dispatch --model replaces the first tool\'s model, keeps the effort, and i
   const data = dataDir({ version: 1, binaries: { codex: stub(dir), 'claude-code': stub(dir) }, routing: { builder: ['codex', 'claude-code'] } });
   const r = cli(['dispatch', '--role', 'builder', '--brief', briefFile(), '--dry-run', '--model', 'gpt-6.2-astra'], data);
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /exec --model gpt-6\.2-astra --sandbox workspace-write -c "model_reasoning_effort=\\"high\\"" -/);
+  const mxc = process.platform === 'win32' ? ' -c windows\\.sandbox=mxc' : '';
+  assert.match(r.out, new RegExp(`exec --model gpt-6\\.2-astra --sandbox workspace-write -c "model_reasoning_effort=\\\\"high\\\\""${mxc} -`));
   const explicit = cli(['dispatch', '--tool', 'claude-code', '--role', 'scout', '--brief', briefFile(), '--dry-run', '--model', 'sonnet'], data);
   assert.match(explicit.out, /--agent scout --model sonnet$/m);
 
@@ -975,4 +976,156 @@ test('dispatch --tool --dry-run notes an ORC_TOOL_BIN_* shim it cannot start', (
   const r = cli(['dispatch', '--tool', 'codex', '--role', 'scout', '--brief', briefFile(), '--dry-run'], dataDir(), { ORC_TOOL_BIN_CODEX: shim });
   assert.equal(r.code, 0, r.err);
   assert.ok(r.out.includes(`note: ORC_TOOL_BIN_CODEX names ${shim}, a .cmd/.bat shim, which cannot be started without a shell`), r.out);
+});
+
+// ---------- second-review fixes F1-F7 ----------
+
+test('F1: install --all --apply writes nothing for any tool when an ancestor is not a directory or a target is a directory', async () => {
+  // Reviewer reproduction: activeTools [antigravity, codex], regular file at <home>/.codex/agents.
+  const home = tempDir('f1-file');
+  fs.mkdirSync(path.join(home, '.codex'));
+  fs.writeFileSync(path.join(home, '.codex', 'agents'), 'blocker\n');
+  const data = dataDir({ version: 1, activeTools: ['antigravity', 'codex'] });
+  const all = await run(['install', '--all', '--apply', '--home', home], data);
+  assert.equal(all.code, 1);
+  assert.match(all.err, /refused: codex: .*\.codex[\\/]agents is not a directory/);
+  assert.match(all.err, /nothing written: install --all refused for codex$/m);
+  assert.equal(fs.existsSync(path.join(home, '.gemini')), false, 'antigravity must not be written');
+  assert.equal(fs.existsSync(path.join(home, '.codex', 'AGENTS.md')), false, 'codex AGENTS.md must not be written');
+  assert.equal(fs.readFileSync(path.join(home, '.codex', 'agents'), 'utf8'), 'blocker\n');
+
+  // A single-tool install keeps its own rule: it stops at the failure and records what it wrote, so uninstall
+  // undoes it (tests/manifest.test.mjs). Only --all, which would otherwise leave some tools installed, checks first.
+
+  // Target itself is a directory: --all --apply refuses and writes nothing.
+  const homeDir = tempDir('f1-dir');
+  fs.mkdirSync(path.join(homeDir, '.codex', 'AGENTS.md'), { recursive: true });
+  const allDir = await run(['install', '--all', '--apply', '--home', homeDir], data);
+  assert.equal(allDir.code, 1);
+  assert.match(allDir.err, /refused: codex: .*AGENTS\.md is a directory/);
+  assert.equal(fs.existsSync(path.join(homeDir, '.gemini')), false);
+});
+
+test('F2: status --all and install --all catch per-tool exceptions, report them and continue to the next tool', async (t) => {
+  // Reviewer reproduction: activeTools [codex, antigravity], regular file at <home>/.codex/agents.
+  const home = tempDir('f2');
+  const data = dataDir({ version: 1, activeTools: ['codex', 'antigravity'] });
+  assert.equal((await run(['install', '--tool', 'antigravity', '--home', home, '--apply'], data)).code, 0);
+  fs.mkdirSync(path.join(home, '.codex'));
+  fs.writeFileSync(path.join(home, '.codex', 'agents'), 'blocker\n');
+  const st = await run(['status', '--all', '--home', home], data);
+  assert.equal(st.code, 1);
+  assert.match(st.out, /^== codex ==[\s\S]*^== antigravity ==[\s\S]*^status antigravity: all same$/m);
+  assert.match(st.err, /^codex: ENOTDIR/m);
+  assert.equal(st.err.trim().split('\n').pop(), 'status --all: failed for codex (exit 1)');
+
+  // install --all (dry run) catching an exception thrown while running the first tool still runs the second.
+  const home2 = tempDir('f2-inst');
+  const needle = path.join(home2, '.codex', 'AGENTS.md');
+  const realExists = fs.existsSync;
+  t.mock.method(fs, 'existsSync', (p) => {
+    if (p === needle) throw new Error('EIO: simulated read error');
+    return realExists(p);
+  });
+  const inst = await run(['install', '--all', '--home', home2], data);
+  assert.equal(inst.code, 1);
+  assert.match(inst.out, /^== codex ==[\s\S]*^== antigravity ==[\s\S]*dry run for antigravity; add --apply to write/m);
+  assert.match(inst.err, /^codex: EIO: simulated read error$/m);
+  assert.equal(inst.err.trim().split('\n').pop(), 'install --all: failed for codex (exit 1)');
+});
+
+test('F3: resolveExecutable treats a directory in ORC_TOOL_BIN_* or binaries as unusable and routing falls back', () => {
+  const folder = tempDir('bindir');
+  const envRes = resolveExecutable('agy', 'antigravity', { ORC_TOOL_BIN_ANTIGRAVITY: folder, PATH: '' });
+  assert.equal(envRes.unusable, `ORC_TOOL_BIN_ANTIGRAVITY names ${folder}, which is not a regular file`);
+  const dir = tempDir('stub');
+  const sf = stub(dir);
+  const envData = dataDir({ version: 1, binaries: { 'claude-code': sf }, routing: { builder: ['antigravity', 'claude-code'] } });
+  const rEnv = cli(['dispatch', '--role', 'builder', '--brief', briefFile(), '--dry-run'], envData, { ORC_TOOL_BIN_ANTIGRAVITY: folder });
+  assert.equal(rEnv.code, 0, rEnv.err);
+  assert.ok(rEnv.err.includes(`dispatch: antigravity unavailable (ORC_TOOL_BIN_ANTIGRAVITY names ${folder}, which is not a regular file); falling back to claude-code`), rEnv.err);
+  assert.ok(rEnv.out.includes(`${stubCommand(sf)} -p --agent builder --model opus`), rEnv.out);
+
+  const binData = dataDir({ version: 1, binaries: { antigravity: folder, 'claude-code': sf }, routing: { builder: ['antigravity', 'claude-code'] } });
+  const rBin = cli(['dispatch', '--role', 'builder', '--brief', briefFile(), '--dry-run'], binData);
+  assert.equal(rBin.code, 0, rBin.err);
+  assert.ok(rBin.err.includes(`dispatch: antigravity unavailable (${folder} (binaries.antigravity in ${path.join(binData, 'config.json')}) does not exist); falling back to claude-code`), rBin.err);
+  assert.ok(rBin.out.includes(`${stubCommand(sf)} -p --agent builder --model opus`), rBin.out);
+  assert.deepEqual(starts(dir), []);
+});
+
+test('F4: validateConfig rejects a routing list that names the same tool twice', () => {
+  for (const [role, list] of [['builder', ['codex', 'codex']], ['refuter', ['claude-code', 'codex', 'claude-code']], ['scout', ['SECRET-DUP', 'SECRET-DUP']]]) {
+    const dir = dataDir({ version: 1, routing: { [role]: list } });
+    assert.throws(() => loadConfig({ tools: TOOLS, roles: ROLES, env: { ORC_DATA_DIR: dir } }), (e) => {
+      assert.match(e.message, new RegExp(`routing\\.${role}: names a tool more than once`));
+      assert.doesNotMatch(e.message, /SECRET-DUP/);
+      return true;
+    });
+  }
+});
+
+test('F5: install --all and status --all validate config board.repo only when a tool actually uses the config board default', async () => {
+  const data = dataDir({ version: 1, activeTools: ['codex'], board: { url: 'http://localhost:8377' } });
+  // Without flags on an empty home, the config board would be used, so board.repo is still required.
+  const empty = tempDir('f5-empty');
+  assert.match((await run(['install', '--all', '--home', empty], data)).err, /board\.repo is needed with the local board address/);
+  assert.match((await run(['status', '--all', '--home', empty], data)).err, /board\.repo is needed with the local board address/);
+
+  // With --no-board: neither install --all nor status --all fails on board.repo.
+  const homeNoBoard = tempDir('f5-nb');
+  const iNb = await run(['install', '--all', '--home', homeNoBoard, '--no-board', '--apply'], data);
+  assert.equal(iNb.code, 0, iNb.err);
+  const sNb = await run(['status', '--all', '--home', homeNoBoard, '--no-board'], data);
+  assert.equal(sNb.code, 0, sNb.err);
+  // Recorded noBoard: true means plain --all (without flags) no longer uses the config board default either.
+  assert.equal((await run(['install', '--all', '--home', homeNoBoard], data)).code, 0);
+  assert.equal((await run(['status', '--all', '--home', homeNoBoard], data)).code, 0);
+
+  // With --board / --board-repo flags: neither fails on config.json's missing board.repo.
+  const homeFlag = tempDir('f5-flag');
+  const iFlag = await run(['install', '--all', '--home', homeFlag, '--board', 'http://localhost:8399', '--board-repo', REPO, '--apply'], data);
+  assert.equal(iFlag.code, 0, iFlag.err);
+  const sFlag = await run(['status', '--all', '--home', homeFlag, '--board', 'http://localhost:8399', '--board-repo', REPO], data);
+  assert.equal(sFlag.code, 0, sFlag.err);
+  // Recorded board in manifest means plain status --all also does not need config.json's board.repo.
+  assert.equal((await run(['status', '--all', '--home', homeFlag], data)).code, 0);
+});
+
+test('F6: ~/.orc/models.json errors name tool, tier, field and permitted choices without echoing the rejected value', async () => {
+  const bad = dataDir({ version: 1 }, { codex: { mid: { effort: 'SECRET-EFFORT-VALUE' } } });
+  const file = path.join(bad, 'models.json');
+  assert.throws(() => loadModels(REPO, { shared: true, env: { ORC_DATA_DIR: bad } }), (e) => {
+    assert.ok(e.message.startsWith(`${file}: `), e.message);
+    assert.match(e.message, /codex\.mid\.effort: must be one of low, medium, high, xhigh, max, ultra/);
+    assert.doesNotMatch(e.message, /SECRET-EFFORT-VALUE/);
+    return true;
+  });
+  const d = await run(['doctor', '--home', tempDir('f6-home')], bad);
+  assert.equal(d.code, 1);
+  assert.match(d.out, /^FAIL models: .*codex\.mid\.effort: must be one of low, medium, high, xhigh, max, ultra$/m);
+  assert.doesNotMatch(d.out, /SECRET-EFFORT-VALUE/);
+});
+
+test('F7: doctor board health check does not follow redirects and reports 3xx as WARN', async (t) => {
+  const calls = [];
+  let status = 302;
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    calls.push({ url: String(url), redirect: init?.redirect });
+    // Simulate default fetch redirect following so reverting redirect: 'manual' turns WARN into OK and fails the test.
+    if (init?.redirect !== 'manual') {
+      calls.push({ url: 'http://127.0.0.1:8377/elsewhere', redirect: init?.redirect });
+      return { ok: true, status: 200 };
+    }
+    return { ok: false, status };
+  });
+  const data = dataDir({ version: 1, board: { url: 'http://127.0.0.1:8377', repo: REPO } });
+  for (const code of [301, 302, 307]) {
+    calls.length = 0;
+    status = code;
+    const r = await runDoctorIn(data);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, new RegExp(`^WARN board: http://127\\.0\\.0\\.1:8377 /api/health answered ${code} \\(a redirect; not followed\\)$`, 'm'));
+    assert.deepEqual(calls, [{ url: 'http://127.0.0.1:8377/api/health', redirect: 'manual' }]);
+  }
 });

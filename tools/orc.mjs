@@ -193,6 +193,74 @@ function installOptions(opt, manifest, io, configBoard = null) {
   return { profiles, board, boardRepo, noBoard, sprintKit, stacks };
 }
 
+// True when installOptions will fall through to config.json's board default (no flag, no sprint kit, no recorded
+// board or noBoard mark).
+function usesConfigBoard(opt, manifest) {
+  const rec = manifest?.options ?? {};
+  const sprintKit = Boolean(opt['sprint-kit']) || rec.sprintKit === true;
+  if (opt['no-board'] || sprintKit || opt.board || opt['board-repo']) return false;
+  if (typeof rec.board === 'string' && (typeof rec.boardRepo === 'string' || isArtifactBoard(rec.board))) return false;
+  if (rec.noBoard === true) return false;
+  return true;
+}
+
+// Checks that every planned target can be written on the file system: each existing ancestor is a directory, and the
+// target itself is not a directory. Symlinks are left to `escapes`, which reports them separately.
+function targetPathProblems(home, files) {
+  const out = [];
+  const seen = new Set();
+  const add = (msg) => {
+    if (!seen.has(msg)) {
+      seen.add(msg);
+      out.push(msg);
+    }
+  };
+  try {
+    if (!fs.statSync(home).isDirectory()) add(`${home} is not a directory`);
+  } catch (e) {
+    if (e?.code !== 'ENOENT') add(`${home}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (out.length) return out;
+  for (const f of files) {
+    const parts = f.path.split('/');
+    let cur = home;
+    let blocked = false;
+    for (let i = 0; i < parts.length - 1; i++) {
+      cur = path.join(cur, parts[i]);
+      let st;
+      try {
+        st = fs.lstatSync(cur);
+      } catch (e) {
+        if (e?.code === 'ENOENT') break;
+        add(`${cur}: ${e instanceof Error ? e.message : String(e)}`);
+        blocked = true;
+        break;
+      }
+      if (st.isSymbolicLink()) {
+        blocked = true;
+        break;
+      }
+      if (!st.isDirectory()) {
+        add(`${cur} is not a directory`);
+        blocked = true;
+        break;
+      }
+    }
+    if (blocked) continue;
+    const target = path.join(home, ...parts);
+    let st;
+    try {
+      st = fs.lstatSync(target);
+    } catch (e) {
+      if (e?.code === 'ENOENT') continue;
+      add(`${target}: ${e instanceof Error ? e.message : String(e)}`);
+      continue;
+    }
+    if (!st.isSymbolicLink() && st.isDirectory()) add(`${target} is a directory`);
+  }
+  return out;
+}
+
 // The rulebook lines install and status add after the tool notes: the Board line (or the kit's no-board line), then
 // the Setup checkout line.
 const installNotes = (chosen, toolId) => [...(chosen.sprintKit ? KIT_NOTES : boardNotes(chosen, toolId)), ...setupNotes()];
@@ -630,12 +698,27 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     (cfg.warnings ?? []).forEach((w) => io.err(`WARN ${w}`));
     const tools = cfg.config?.activeTools ?? [];
     if (!tools.length) return fail(`--all needs activeTools in ${cfg.file}`);
-    const configBoard = boardDefault(cfg.config, cfg.file, isArtifactBoard);
-    if (configBoard?.error) return fail(configBoard.error);
+    const boardRule = boardDefault(cfg.config, cfg.file, isArtifactBoard);
+    const configBoard = boardRule?.error ? null : boardRule;
     const refused = [];
     for (const t of tools) {
       if (artifactRefused(opt.board, t)) refused.push(`${t}: ${ARTIFACT_ONLY_CLAUDE}`);
       if (boardPairError(opt, t)) refused.push(`${t}: pass --board and --board-repo together, or neither (an artifact --board needs no --board-repo)`);
+    }
+    if (!refused.length && boardRule?.error) {
+      const home = path.resolve(opt.home ?? os.homedir());
+      const adapters = await loadAdapters(repo);
+      const needed = tools.some((t) => {
+        const adapter = adapters.find((a) => a.id === t);
+        let manifest = null;
+        try {
+          manifest = loadManifest(home, adapter).manifest ?? null;
+        } catch {
+          manifest = null;
+        }
+        return usesConfigBoard(opt, manifest);
+      });
+      if (needed) return fail(boardRule.error);
     }
     const rest = argv.filter((a) => a !== '--all');
     // install --apply: a dry run of every tool first, so a refusal anywhere (an unsafe path, a file in the way, a bad
@@ -644,16 +727,28 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       for (const t of tools) {
         const errs = [];
         const quiet = { ...io, out: () => {}, err: (s) => errs.push(s) };
-        const code = await main([...rest.filter((a) => a !== '--apply'), '--tool', t], quiet, { configBoard, preflight: true });
+        let code;
+        try {
+          code = await main([...rest.filter((a) => a !== '--apply'), '--tool', t], quiet, { configBoard, preflight: true });
+        } catch (e) {
+          refused.push(`${t}: ${e instanceof Error ? e.message : String(e)}`);
+          continue;
+        }
         // A non-zero dry run is a refusal even when it printed only WARN lines.
         const said = errs.filter((s) => !s.startsWith('WARN '));
         if (code) refused.push(...(said.length ? said : [`dry run exited ${code}`]).map((s) => `${t}: ${s}`));
       }
     } else if (!refused.length) {
       const home = path.resolve(opt.home ?? os.homedir());
+      const adapters = await loadAdapters(repo);
       for (const t of tools) {
-        const adapter = (await loadAdapters(repo)).find((a) => a.id === t);
-        const { manifest } = loadManifest(home, adapter);
+        const adapter = adapters.find((a) => a.id === t);
+        let manifest = null;
+        try {
+          manifest = loadManifest(home, adapter).manifest ?? null;
+        } catch {
+          manifest = null;
+        }
         const chosen = installOptions(opt, manifest, { ...io, out: () => {} }, configBoard);
         if (artifactRefused(chosen.board, t)) refused.push(`${t}: ${ARTIFACT_ONLY_CLAUDE}`);
       }
@@ -667,7 +762,13 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const failed = [];
     for (const t of tools) {
       io.out(`== ${t} ==`);
-      const code = await main([...rest, '--tool', t], io, { configBoard });
+      let code;
+      try {
+        code = await main([...rest, '--tool', t], io, { configBoard });
+      } catch (e) {
+        io.err(`${t}: ${e instanceof Error ? e.message : String(e)}`);
+        code = 1;
+      }
       if (code) failed.push(`${t} (exit ${code})`);
       worst = Math.max(worst, code);
     }
@@ -848,11 +949,15 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const root = adapter.home.root;
     // Every install target and every manifest path is checked on the real file system before anything is read or
     // written: a symlink or junction below the tool root refuses the whole install.
+    const installTargets = files.filter((x) => x.install !== false);
     const unsafe = [];
-    for (const f of files.filter((x) => x.install !== false)) {
+    for (const f of installTargets) {
       const why = escapes(home, root, path.join(home, ...f.path.split('/')));
       if (why) unsafe.push(why);
     }
+    // Only the --all preflight checks the paths first: one tool's failure there would leave the others installed. A
+    // single-tool install stops at the failure and records what it wrote, so uninstall undoes it.
+    if (ctx.preflight) unsafe.push(...targetPathProblems(home, installTargets));
     for (const rel of Object.keys(recorded)) {
       const t = safeRel(home, rel, root);
       const why = escapes(home, root, t);

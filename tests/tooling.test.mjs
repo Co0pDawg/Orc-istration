@@ -469,9 +469,10 @@ test('dispatch codex: read-only sandbox only for scout and researcher, effort on
   assert.ok(models.codex.high.effort, 'the high tier has an effort');
   // Only scout and researcher run read-only (they report inline: that sandbox cannot write a scratch file); the refuter
   // runs tests and builds a throwaway worktree, and the review-* roles write at most an overflow scratch report.
+  const winMxc = process.platform === 'win32' ? ['-c', 'windows.sandbox=mxc'] : [];
   for (const [role, sandbox] of [['scout', 'read-only'], ['researcher', 'read-only'], ['refuter', 'workspace-write'], ['review-code-explorer', 'workspace-write'], ['builder', 'workspace-write']]) {
     const r0 = roles.find((r) => r.name === role);
-    const want = ['exec', '--model', models.codex[r0.tier].model, '--sandbox', sandbox, ...effort(r0.tier), '-'];
+    const want = ['exec', '--model', models.codex[r0.tier].model, '--sandbox', sandbox, ...effort(r0.tier), ...winMxc, '-'];
     const dir = tempDir('stub');
     const r = isolated(['dispatch', '--tool', 'codex', '--role', role, '--brief', brief], { ORC_TOOL_BIN_CODEX: stub(dir), STUB_EXIT: '0' });
     assert.equal(r.code, 0, r.err);
@@ -481,6 +482,24 @@ test('dispatch codex: read-only sandbox only for scout and researcher, effort on
     assert.equal(dry.code, 0, dry.err);
     assert.ok(dry.out.includes(` ${want.map(q).join(' ')}\n`), dry.out);
     assert.match(dry.out, new RegExp(`stdin: ${Buffer.byteLength(`${r0.body}\n\n---\n\n${text}`)} bytes \\(the role body, then the brief\\)\\n`));
+  }
+});
+
+test('F8: codex headless adds -c windows.sandbox=mxc before - on Windows for every role, and leaves other platforms unchanged', async () => {
+  const codex = (await import('../adapters/codex.mjs')).default;
+  const roles = loadRoles(REPO);
+  const models = loadModels(REPO, { local: false });
+  for (const name of ['scout', 'researcher', 'builder', 'refuter']) {
+    const role = roles.find((r) => r.name === name);
+    const tierModel = models.codex[role.tier];
+    const win = codex.headless(role, tierModel, 'brief', { platform: 'win32' });
+    assert.deepEqual(win.args.slice(-3), ['-c', 'windows.sandbox=mxc', '-'], `win32 ${name}`);
+    for (const platform of ['linux', 'darwin']) {
+      const other = codex.headless(role, tierModel, 'brief', { platform });
+      assert.equal(other.args.at(-1), '-', `${platform} ${name}`);
+      assert.ok(!other.args.includes('windows.sandbox=mxc'), `${platform} ${name} has no windows.sandbox=mxc`);
+      assert.deepEqual(win.args, [...other.args.slice(0, -1), '-c', 'windows.sandbox=mxc', '-'], `${platform} vs win32 ${name}`);
+    }
   }
 });
 
@@ -708,22 +727,23 @@ test('models validation rejects bad ids, tiers, efforts and values in both files
   const cases = [
     [{ nosuchtool: { low: { model: 'x' } } }, /unknown tool id "nosuchtool"/],
     [{ codex: { huge: { model: 'x' } } }, /codex: unknown tier key "huge"/],
-    [{ codex: { mid: { effort: 'extreme' } } }, /codex\.mid\.effort: "extreme" is not one of/],
+    [{ codex: { mid: { effort: 'extreme' } } }, /codex\.mid\.effort: must be one of low, medium, high, xhigh, max, ultra/],
     [{ codex: { low: { model: 5 } } }, /codex\.low\.model: must be a string/],
     [{ antigravity: { headless: { low: 7 } } }, /antigravity\.headless\.low: model must be a string/],
     [{ antigravity: { headless: { turbo: 'x' } } }, /antigravity\.headless: unknown tier key "turbo"/],
   ];
   for (const [bad, re] of cases) {
     fs.writeFileSync(path.join(copy, 'models.local.json'), JSON.stringify(bad));
-    assert.throws(() => loadModels(copy), (e) => /^models\.local\.json: /.test(e.message) && re.test(e.message), JSON.stringify(bad));
+    assert.throws(() => loadModels(copy), (e) => /^models\.local\.json: /.test(e.message) && re.test(e.message) && !e.message.includes('extreme'), JSON.stringify(bad));
     const c = await run(['check', '--repo', copy]);
     assert.equal(c.code, 1);
     assert.match(c.err, re);
+    assert.doesNotMatch(c.err, /extreme/);
     fs.rmSync(path.join(copy, 'models.local.json'));
     const [tool] = Object.keys(bad);
     const merged = { ...base, [tool]: { ...(base[tool] ?? {}), ...bad[tool] } };
     fs.writeFileSync(path.join(copy, 'models.json'), JSON.stringify(merged));
-    assert.throws(() => loadModels(copy, { local: false }), (e) => /^models\.json: /.test(e.message) && re.test(e.message));
+    assert.throws(() => loadModels(copy, { local: false }), (e) => /^models\.json: /.test(e.message) && re.test(e.message) && !e.message.includes('extreme'));
     fs.writeFileSync(path.join(copy, 'models.json'), JSON.stringify(base));
   }
   assert.doesNotThrow(() => loadModels(copy));

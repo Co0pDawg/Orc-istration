@@ -115,6 +115,7 @@ export function validateConfig(config, { tools, roles, file }) {
             problems.push(`routing.${role}: must not be an empty list`);
             continue;
           }
+          if (new Set(v).size !== v.length) problems.push(`routing.${role}: names a tool more than once`);
           const list = known(v, `routing.${role}`, `the routing.${role} entry`);
           if (list.length) kept[role] = list.length === v.length ? v : list;
         } else {

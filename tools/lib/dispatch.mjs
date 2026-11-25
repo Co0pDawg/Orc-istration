@@ -8,17 +8,28 @@ import { spawn, spawnSync } from 'node:child_process';
 
 export const binEnv = (toolId) => `ORC_TOOL_BIN_${toolId.toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
 
+const isRegularFile = (p) => {
+  try {
+    return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+};
+
 // Finds a real executable: ORC_TOOL_BIN_<TOOL>, then `binaries[toolId]` from config.json, then PATH. `source` says
 // which. A Windows .cmd/.bat shim cannot be started without a shell, so it is not accepted (in `binaries` either). An
-// ORC_TOOL_BIN_* that names a path which does not exist, or a .cmd/.bat shim, carries `unusable` (routing skips it; an
-// explicit --tool still tries, and the failure names the override). A `binaries` entry that does not exist, is not a
-// file or is a shim is `missing` with a `reason` instead, so neither routing nor --tool starts it.
+// ORC_TOOL_BIN_* that names a path which does not exist or is not a regular file, or a .cmd/.bat shim, carries
+// `unusable` (routing skips it; an explicit --tool still tries, and the failure names the override). A `binaries` entry
+// that does not exist, is not a file or is a shim is `missing` with a `reason` instead, so neither routing nor --tool
+// starts it.
 export function resolveExecutable(name, toolId, env = process.env, { binaries = null, configFile = null } = {}) {
   const override = env[binEnv(toolId)];
   if (override) {
     const isShim = /\.(cmd|bat)$/i.test(override);
+    const hasSep = /[\\/]/.test(override);
     const unusable = isShim ? `${binEnv(toolId)} names ${override}, a .cmd/.bat shim, which cannot be started without a shell`
-      : /[\\/]/.test(override) && !fs.existsSync(override) ? `${binEnv(toolId)} names ${override}, which does not exist` : undefined;
+      : hasSep && !fs.existsSync(override) ? `${binEnv(toolId)} names ${override}, which does not exist`
+      : hasSep && !isRegularFile(override) ? `${binEnv(toolId)} names ${override}, which is not a regular file` : undefined;
     const extra = { source: 'env', ...(unusable ? { unusable } : {}), ...(isShim ? { shim: override } : {}) };
     if (/\.(c|m)?js$/i.test(override)) return { command: process.execPath, pre: [override], ...extra };
     return { command: override, pre: [], ...extra };
