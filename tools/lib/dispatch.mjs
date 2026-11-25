@@ -133,8 +133,9 @@ export function killTree(child, { platform = process.platform, runSync = spawnSy
 }
 
 // Streams the tool's output through; resolves to its exit code, or 124 after a timeout kill.
-export async function runDispatch(plan, { timeoutSec, err = console.error } = {}) {
-  return (await runTool(plan, { timeoutSec, err })).code;
+// ORC_HEADLESS=1 tells a hook the tool runs (the git guard) that nobody can answer a prompt in this run.
+export async function runDispatch(plan, { timeoutSec, err = console.error, env = process.env } = {}) {
+  return (await runTool(plan, { timeoutSec, err, env: { ...env, ORC_HEADLESS: '1' } })).code;
 }
 
 // The spawn, timeout, kill-tree and signal handling behind runDispatch. With `capture`, stdout is collected and

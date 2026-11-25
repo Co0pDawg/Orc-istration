@@ -886,6 +886,233 @@ test('mergeHooks rejects a non-array event and leaves the input untouched', () =
   assert.deepEqual(input, { hooks: { Stop: { not: 'an array' } } });
 });
 
+// ---------- hooks --tool antigravity ----------
+
+function orcaStatusHooks() {
+  const h = (cmd) => ({ type: 'command', command: `C:/Users/<you>/.orca/agent-hooks/${cmd}`, timeout: 10 });
+  return {
+    'orca-status': {
+      PreInvocation: [h('antigravity-pre-invocation.cmd')],
+      PostInvocation: [h('antigravity-post-invocation.cmd')],
+      Stop: [h('antigravity-stop.cmd')],
+      PreToolUse: [{ matcher: '*', hooks: [h('antigravity-pre-tool-use.cmd')] }],
+      PostToolUse: [{ matcher: '*', hooks: [h('antigravity-post-tool-use.cmd')] }],
+    },
+  };
+}
+
+test('hooks --tool antigravity: new file, warning when guard missing, exact top-level orc-guard shape, idempotent', () => {
+  const home = tempDir('agy-hooks-new');
+  const target = path.join(home, '.gemini', 'config', 'hooks.json');
+  const scriptFwd = path.join(home, '.gemini', 'tools', 'guard.mjs').replace(/\\/g, '/');
+
+  // Dry run writes nothing, prints would add and warns about missing guard.mjs.
+  const dry = isolated(['hooks', '--tool', 'antigravity', '--home', home]);
+  assert.strictEqual(dry.code, 0, dry.err);
+  assert.match(dry.out, /^would add orc-guard /m);
+  assert.match(dry.out, /dry run: would create /);
+  assert.match(dry.err, /WARN .*run install --tool antigravity --apply first/);
+  assert.deepStrictEqual(fs.readdirSync(home), [], 'dry run writes nothing');
+
+  // --apply creates folder and file with 2-space LF and no Claude-style hooks wrapper.
+  const ap = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.strictEqual(ap.code, 0, ap.err);
+  assert.match(ap.out, /^added orc-guard /m);
+  assert.match(ap.out, /^created /m);
+  assert.match(ap.err, /WARN .*run install --tool antigravity --apply first/);
+  const raw = fs.readFileSync(target, 'utf8');
+  assert.ok(!raw.includes('\r\n'), 'new file uses LF');
+  assert.ok(raw.endsWith('\n'), 'new file ends with LF');
+  assert.ok(raw.includes('\n  "orc-guard": {'), 'new file uses 2-space indent');
+  const parsed = JSON.parse(raw);
+  assert.deepStrictEqual(Object.keys(parsed), ['orc-guard'], 'no Claude-style hooks wrapper');
+  assert.deepStrictEqual(parsed['orc-guard'], {
+    PreToolUse: [
+      {
+        matcher: 'run_command',
+        hooks: [{ type: 'command', command: `node "${scriptFwd}"`, timeout: 10 }],
+      },
+    ],
+  });
+
+  // Once guard.mjs exists, no missing-script warning, and second run is already wired (no backup, no write).
+  fs.mkdirSync(path.join(home, '.gemini', 'tools'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.gemini', 'tools', 'guard.mjs'), '// guard\n');
+  const again = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.strictEqual(again.code, 0, again.err);
+  assert.match(again.out, /^already wired: orc-guard /m);
+  assert.strictEqual(again.err, '');
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), raw);
+  assert.deepStrictEqual(fs.readdirSync(path.dirname(target)), ['hooks.json'], 'no backup on no-op');
+});
+
+test('hooks --tool antigravity: preserves real-shaped orca-status across dry run, apply, re-apply and --remove', () => {
+  const home = tempDir('agy-hooks-orca');
+  const target = path.join(home, '.gemini', 'config', 'hooks.json');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.mkdirSync(path.join(home, '.gemini', 'tools'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.gemini', 'tools', 'guard.mjs'), '// guard\n');
+  const orca = orcaStatusHooks();
+  const original = `${JSON.stringify(orca, null, 2)}\n`;
+  fs.writeFileSync(target, original);
+
+  // 1. Dry run leaves file untouched.
+  const dry = isolated(['hooks', '--tool', 'antigravity', '--home', home]);
+  assert.strictEqual(dry.code, 0, dry.err);
+  assert.match(dry.out, /^would add orc-guard /m);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), original);
+
+  // 2. --apply backs up original, preserves orca-status first and byte-for-byte in value, adds orc-guard.
+  const ap1 = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.strictEqual(ap1.code, 0, ap1.err);
+  assert.match(ap1.out, /^backed up: .*hooks\.json\.orc-backup-/m);
+  const afterAdd = fs.readFileSync(target, 'utf8');
+  const parsedAdd = JSON.parse(afterAdd);
+  assert.deepStrictEqual(Object.keys(parsedAdd), ['orca-status', 'orc-guard']);
+  assert.deepStrictEqual(parsedAdd['orca-status'], orca['orca-status']);
+  const backups1 = fs.readdirSync(path.dirname(target)).filter((f) => f.includes('.orc-backup-'));
+  assert.strictEqual(backups1.length, 1);
+  assert.strictEqual(fs.readFileSync(path.join(path.dirname(target), backups1[0]), 'utf8'), original);
+
+  // 3. Second --apply is a no-op (already wired, no new backup, orca-status unchanged).
+  const ap2 = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.strictEqual(ap2.code, 0, ap2.err);
+  assert.match(ap2.out, /^already wired: orc-guard /m);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), afterAdd);
+  assert.strictEqual(fs.readdirSync(path.dirname(target)).filter((f) => f.includes('.orc-backup-')).length, 1);
+
+  // 4. --remove dry run writes nothing.
+  const remDry = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--remove']);
+  assert.strictEqual(remDry.code, 0, remDry.err);
+  assert.match(remDry.out, /^would remove orc-guard /m);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), afterAdd);
+
+  // 5. --remove --apply backs up and restores exact original content (orca-status byte-for-byte identical).
+  const rem = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--remove', '--apply']);
+  assert.strictEqual(rem.code, 0, rem.err);
+  assert.match(rem.out, /^removed orc-guard /m);
+  assert.match(rem.out, /^backed up: /m);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), original);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(target, 'utf8')), orca);
+
+  // 6. --remove when absent exits 0 and writes nothing.
+  const remAgain = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--remove', '--apply']);
+  assert.strictEqual(remAgain.code, 0, remAgain.err);
+  assert.match(remAgain.out, /nothing to remove: orc-guard is not in /);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), original);
+
+  // --remove on a home with no hooks.json exits 0 and creates nothing.
+  const emptyHome = tempDir('agy-hooks-empty-rm');
+  const remEmpty = isolated(['hooks', '--tool', 'antigravity', '--home', emptyHome, '--remove', '--apply']);
+  assert.strictEqual(remEmpty.code, 0, remEmpty.err);
+  assert.match(remEmpty.out, /nothing to remove: orc-guard is not in /);
+  assert.deepStrictEqual(fs.readdirSync(emptyHome), []);
+});
+
+test('hooks --tool antigravity: existing differing orc-guard reports what differs and replaces only orc-guard in place', () => {
+  const home = tempDir('agy-hooks-replace');
+  const target = path.join(home, '.gemini', 'config', 'hooks.json');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.mkdirSync(path.join(home, '.gemini', 'tools'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.gemini', 'tools', 'guard.mjs'), '// guard\n');
+  const initial = {
+    'first-hook': { Stop: [{ type: 'command', command: 'echo first', timeout: 5 }] },
+    'orc-guard': {
+      enabled: false,
+      PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: 'node "/old/guard.mjs"', timeout: 30 }] }],
+    },
+    'last-hook': { PreInvocation: [{ type: 'command', command: 'echo last', timeout: 5 }] },
+  };
+  const original = `${JSON.stringify(initial, null, 2)}\n`;
+  fs.writeFileSync(target, original);
+
+  const dry = isolated(['hooks', '--tool', 'antigravity', '--home', home]);
+  assert.strictEqual(dry.code, 0, dry.err);
+  assert.match(dry.out, /^would replace orc-guard /m);
+  assert.match(dry.out, /enabled was false/);
+  assert.match(dry.out, /matcher "\*" -> "run_command"/);
+  assert.match(dry.out, /timeout 30 -> 10/);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), original, 'dry run writes nothing');
+
+  const ap = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.strictEqual(ap.code, 0, ap.err);
+  assert.match(ap.out, /^replaced orc-guard /m);
+  const parsed = JSON.parse(fs.readFileSync(target, 'utf8'));
+  assert.deepStrictEqual(Object.keys(parsed), ['first-hook', 'orc-guard', 'last-hook'], 'key order preserved');
+  assert.deepStrictEqual(parsed['first-hook'], initial['first-hook']);
+  assert.deepStrictEqual(parsed['last-hook'], initial['last-hook']);
+  assert.strictEqual(parsed['orc-guard'].enabled, undefined);
+  assert.strictEqual(parsed['orc-guard'].PreToolUse[0].matcher, 'run_command');
+  assert.strictEqual(parsed['orc-guard'].PreToolUse[0].hooks[0].timeout, 10);
+
+  // --remove takes out orc-guard only: both other named hooks stay, in order, with their values.
+  const rm = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--remove', '--apply']);
+  assert.strictEqual(rm.code, 0, rm.err);
+  const left = JSON.parse(fs.readFileSync(target, 'utf8'));
+  assert.deepStrictEqual(Object.keys(left), ['first-hook', 'last-hook'], 'only orc-guard is removed');
+  assert.deepStrictEqual(left['first-hook'], initial['first-hook']);
+  assert.deepStrictEqual(left['last-hook'], initial['last-hook']);
+  assert.ok(fs.readdirSync(path.dirname(target)).filter((f) => f.startsWith('hooks.json.orc-backup-')).length >= 2, 'each write is backed up');
+});
+
+test('hooks --tool antigravity: keeps CRLF, tab indentation and BOM; refuses invalid JSON and non-object files', () => {
+  const home = tempDir('agy-hooks-style');
+  const target = path.join(home, '.gemini', 'config', 'hooks.json');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.mkdirSync(path.join(home, '.gemini', 'tools'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.gemini', 'tools', 'guard.mjs'), '// guard\n');
+  const orca = orcaStatusHooks();
+  const crlfTab = `\uFEFF${JSON.stringify(orca, null, '\t').replace(/\n/g, '\r\n')}\r\n`;
+  fs.writeFileSync(target, crlfTab);
+
+  assert.strictEqual(isolated(['hooks', '--tool', 'antigravity', '--home', home, '--apply']).code, 0);
+  const after = fs.readFileSync(target, 'utf8');
+  assert.strictEqual(after.charCodeAt(0), 0xfeff, 'BOM preserved');
+  assert.ok(after.includes('\r\n\t"orca-status": {\r\n\t\t'), 'tab indent and CRLF preserved');
+  assert.ok(!after.replace(/\r\n/g, '').includes('\n'), 'no bare LF introduced');
+  assert.ok(after.endsWith('\r\n'), 'trailing CRLF preserved');
+  assert.strictEqual(isolated(['hooks', '--tool', 'antigravity', '--home', home, '--remove', '--apply']).code, 0);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), crlfTab, 'round-trip remove restores exact CRLF/tab/BOM bytes');
+
+  // Invalid JSON and non-object top levels are refused naming the path and writing nothing.
+  for (const bad of ['{ broken', '[]', 'null', '"str"', '42']) {
+    fs.writeFileSync(target, bad);
+    for (const extra of [['--apply'], ['--remove', '--apply']]) {
+      const r = isolated(['hooks', '--tool', 'antigravity', '--home', home, ...extra]);
+      assert.strictEqual(r.code, 1, `${bad} ${extra.join(' ')}`);
+      assert.ok(r.err.includes(target), `error names ${target}: ${r.err}`);
+      assert.strictEqual(fs.readFileSync(target, 'utf8'), bad, 'file untouched');
+    }
+  }
+});
+
+test('hooks --tool validation: unsupported tool errors naming both supported tools; claude-code default unchanged', () => {
+  const home = tempDir('agy-hooks-opts');
+  const badTool = isolated(['hooks', '--tool', 'cursor', '--home', home]);
+  assert.strictEqual(badTool.code, 1);
+  assert.match(badTool.err, /unsupported tool cursor/);
+  assert.match(badTool.err, /claude-code/);
+  assert.match(badTool.err, /antigravity/);
+
+  // --remove is antigravity-only; --node is claude-code-only; --remove on other commands is refused.
+  assert.strictEqual(isolated(['hooks', '--home', home, '--remove']).code, 1);
+  assert.match(isolated(['hooks', '--tool', 'claude-code', '--home', home, '--remove']).err, /--remove is for --tool antigravity only/);
+  assert.match(isolated(['hooks', '--tool', 'antigravity', '--home', home, '--node']).err, /--node is for --tool claude-code only/);
+  assert.match(isolated(['install', '--tool', 'antigravity', '--home', home, '--remove']).err, /--remove applies to hooks only/);
+
+  // Explicit --tool claude-code behaves identically to no --tool.
+  const h1 = tempDir('hooks-cc-default');
+  const h2 = tempDir('hooks-cc-explicit');
+  const r1 = isolated(['hooks', '--home', h1, '--node', '--apply']);
+  const r2 = isolated(['hooks', '--tool', 'claude-code', '--home', h2, '--node', '--apply']);
+  assert.strictEqual(r1.code, 0, r1.err);
+  assert.strictEqual(r2.code, 0, r2.err);
+  assert.deepStrictEqual(
+    JSON.parse(fs.readFileSync(path.join(h1, '.claude', 'settings.json'), 'utf8')).hooks.PreToolUse[0].matcher,
+    JSON.parse(fs.readFileSync(path.join(h2, '.claude', 'settings.json'), 'utf8')).hooks.PreToolUse[0].matcher,
+  );
+});
+
 // ---------- board-reminder.mjs ----------
 
 const BOARD_RULEBOOK = "# Orchestration\n\n- **Board:** this machine's board address is `http://localhost:8377`; write it with `node \"C:/b/local/board.js\"`.\n";
@@ -1476,6 +1703,9 @@ test('help: every dispatched command has a help entry, and every entry is a comm
   const modelsHelp = (await run(['help', 'models'])).out;
   assert.match(modelsHelp, /--family <name>/);
   assert.doesNotMatch(modelsHelp, /Flash slugs only/i);
+  const hooksHelp = (await run(['help', 'hooks'])).out;
+  assert.match(hooksHelp, /--tool <id>/);
+  assert.match(hooksHelp, /--remove/);
   assert.equal((await run(['help', 'nope'])).code, 1);
   const nope = await run(['nope']);
   assert.equal(nope.code, 1);

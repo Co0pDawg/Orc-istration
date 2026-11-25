@@ -28,7 +28,7 @@ async function run(argv) {
 
 function copyRepo() {
   const copy = tempDir('repo');
-  for (const p of ['core', 'models.json', 'adapters', 'profiles', 'tools/lib']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
+  for (const p of ['core', 'models.json', 'adapters', 'profiles', 'tools/lib', 'tools/guard.mjs']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
   return copy;
 }
 

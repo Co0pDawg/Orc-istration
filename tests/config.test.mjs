@@ -1517,3 +1517,66 @@ test('data precondition: owner machine shape (other setupCheckout, hand-copied r
   const doc2 = cli(['doctor', '--home', fakeHome], data);
   assert.doesNotMatch(doc2.out, /WARN claude-code hooks:/);
 });
+
+test('doctor checks antigravity hooks.json: missing file, invalid JSON, missing key, missing script, disabled, and wired OK', async () => {
+  const dir = tempDir('stub');
+  const home = tempDir('doc-agy-hooks');
+  const data = dataDir({ version: 1, activeTools: ['antigravity'], binaries: { antigravity: stub(dir) } });
+  const hooksFile = path.join(home, '.gemini', 'config', 'hooks.json');
+  const guardFile = path.join(home, '.gemini', 'tools', 'guard.mjs');
+
+  // 1. Missing hooks.json -> WARN naming the command to run.
+  const d1 = await run(['doctor', '--home', home], data);
+  assert.strictEqual(d1.code, 0, d1.out);
+  assert.match(d1.out, new RegExp(`^WARN antigravity hooks: .*hooks\\.json not found; run node tools/orc\\.mjs hooks --tool antigravity --home ${esc(home)} --apply$`, 'm'));
+
+  // 2. Invalid JSON -> WARN cannot be parsed.
+  fs.mkdirSync(path.dirname(hooksFile), { recursive: true });
+  fs.writeFileSync(hooksFile, '{ invalid json');
+  const d2 = await run(['doctor', '--home', home], data);
+  assert.strictEqual(d2.code, 0, d2.out);
+  assert.match(d2.out, /^WARN antigravity hooks: .*hooks\.json cannot be parsed/m);
+
+  // 3. Valid hooks.json with another named hook but no orc-guard -> WARN naming the command to run.
+  fs.writeFileSync(hooksFile, JSON.stringify({ 'orca-status': { Stop: [] } }, null, 2));
+  const d3 = await run(['doctor', '--home', home], data);
+  assert.strictEqual(d3.code, 0, d3.out);
+  assert.match(d3.out, new RegExp(`^WARN antigravity hooks: .*has no orc-guard entry; run node tools/orc\\.mjs hooks --tool antigravity --home ${esc(home)} --apply$`, 'm'));
+
+  // 4. orc-guard wired before install (guard.mjs does not exist yet) -> WARN naming missing script.
+  assert.strictEqual((await run(['hooks', '--tool', 'antigravity', '--home', home, '--apply'], data)).code, 0);
+  const d4 = await run(['doctor', '--home', home], data);
+  assert.strictEqual(d4.code, 0, d4.out);
+  assert.match(d4.out, /^WARN antigravity hooks: orc-guard in .*guard\.mjs, which does not exist/m);
+
+  // 5. After install --tool antigravity --apply, both install and hooks are OK (text and --json).
+  assert.strictEqual((await run(['install', '--tool', 'antigravity', '--home', home, '--apply'], data)).code, 0);
+  assert.ok(fs.existsSync(guardFile));
+  const d5 = await run(['doctor', '--home', home], data);
+  assert.strictEqual(d5.code, 0, d5.out);
+  assert.match(d5.out, /^OK antigravity install: clean in /m);
+  assert.match(d5.out, /^OK antigravity hooks: orc-guard wired$/m);
+  const j5 = JSON.parse((await run(['doctor', '--home', home, '--json'], data)).out);
+  assert.deepStrictEqual(j5.checks.find((c) => c.tool === 'antigravity' && c.check === 'hooks'), {
+    level: 'OK',
+    check: 'hooks',
+    detail: 'orc-guard wired',
+    tool: 'antigravity',
+  });
+
+  // 6. Deleting guard.mjs turns install into drift AND hooks into WARN missing script.
+  fs.rmSync(guardFile);
+  const d6 = await run(['doctor', '--home', home], data);
+  assert.strictEqual(d6.code, 0, d6.out);
+  assert.match(d6.out, /^WARN antigravity install: drift in /m);
+  assert.match(d6.out, /^WARN antigravity hooks: orc-guard in .*does not exist/m);
+
+  // 7. Disabled orc-guard -> WARN disabled.
+  fs.writeFileSync(guardFile, '// restored\n');
+  const parsed = JSON.parse(fs.readFileSync(hooksFile, 'utf8'));
+  parsed['orc-guard'].enabled = false;
+  fs.writeFileSync(hooksFile, JSON.stringify(parsed, null, 2));
+  const d7 = await run(['doctor', '--home', home], data);
+  assert.strictEqual(d7.code, 0, d7.out);
+  assert.match(d7.out, /^WARN antigravity hooks: orc-guard in .*disabled/m);
+});

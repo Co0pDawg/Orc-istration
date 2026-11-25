@@ -1,8 +1,12 @@
-// Merges only the `hooks` block of an example file into a Claude Code settings.json. It adds a hook entry only when
-// no hook under the same event and matcher already runs an identical command; it never removes, reorders or rewrites
-// anything. The same command under a different matcher is added, and `otherMatchers` names the existing ones.
+// Merges hooks into Claude Code's settings.json (under `hooks`) and Antigravity's named-hook hooks.json (top-level keys).
+// Claude Code (`mergeHooks`): adds a hook entry only when no hook under the same event and matcher already runs an
+// identical command; never removes, reorders or rewrites anything. The same command under a different matcher is added,
+// and `otherMatchers` names the existing ones.
+// Antigravity (`setAntigravityGuard` / `removeAntigravityGuard`): adds, replaces or removes only the `orc-guard`
+// top-level key and leaves every other named hook untouched in value and order.
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 // Reads a settings.json: {original (text without a BOM, or null when absent), bom, settings}. Throws on invalid JSON
 // and on a top level that is not an object.
@@ -116,4 +120,97 @@ export function formatLike(original, value) {
   const eol = (original ?? '').includes('\r\n') ? '\r\n' : '\n';
   const trailing = original === null || original === undefined || /\n$/.test(original) ? eol : '';
   return JSON.stringify(value, null, indent).replace(/\n/g, eol) + trailing;
+}
+
+// ---------- Antigravity hooks.json (top-level named hooks, no `hooks` wrapper) ----------
+
+export const ANTIGRAVITY_GUARD_KEY = 'orc-guard';
+
+export function antigravityGuardPath(home) {
+  return path.join(home, '.gemini', 'tools', 'guard.mjs').replace(/\\/g, '/');
+}
+
+export function antigravityGuardEntry(home) {
+  return {
+    PreToolUse: [
+      {
+        matcher: 'run_command',
+        hooks: [{ type: 'command', command: `node "${antigravityGuardPath(home)}"`, timeout: 10 }],
+      },
+    ],
+  };
+}
+
+function describeGuardDiff(prev, next) {
+  if (!prev || typeof prev !== 'object' || Array.isArray(prev)) return `was ${JSON.stringify(prev)}`;
+  const parts = [];
+  if (prev.enabled === false) parts.push('enabled was false');
+  else if (Object.hasOwn(prev, 'enabled')) parts.push(`enabled was ${JSON.stringify(prev.enabled)}`);
+  const extraKeys = Object.keys(prev).filter((k) => k !== 'PreToolUse' && k !== 'enabled');
+  if (extraKeys.length) parts.push(`extra key(s): ${extraKeys.join(', ')}`);
+  const prevGroup = Array.isArray(prev.PreToolUse) && prev.PreToolUse.length === 1 ? prev.PreToolUse[0] : null;
+  const nextGroup = next.PreToolUse[0];
+  if (!prevGroup || typeof prevGroup !== 'object' || Array.isArray(prevGroup)) {
+    parts.push(`PreToolUse was ${JSON.stringify(prev.PreToolUse)}`);
+  } else {
+    if (prevGroup.matcher !== nextGroup.matcher) parts.push(`matcher ${JSON.stringify(prevGroup.matcher)} -> ${JSON.stringify(nextGroup.matcher)}`);
+    const prevHook = Array.isArray(prevGroup.hooks) && prevGroup.hooks.length === 1 ? prevGroup.hooks[0] : null;
+    const nextHook = nextGroup.hooks[0];
+    if (!prevHook || typeof prevHook !== 'object' || Array.isArray(prevHook)) {
+      parts.push(`PreToolUse hooks was ${JSON.stringify(prevGroup.hooks)}`);
+    } else {
+      if (prevHook.type !== nextHook.type) parts.push(`type ${JSON.stringify(prevHook.type)} -> ${JSON.stringify(nextHook.type)}`);
+      if (prevHook.command !== nextHook.command) parts.push(`command ${JSON.stringify(prevHook.command)} -> ${JSON.stringify(nextHook.command)}`);
+      if (prevHook.timeout !== nextHook.timeout) parts.push(`timeout ${JSON.stringify(prevHook.timeout)} -> ${JSON.stringify(nextHook.timeout)}`);
+    }
+  }
+  return parts.length ? parts.join('; ') : `was ${JSON.stringify(prev)}`;
+}
+
+// Adds or replaces only `orc-guard` in a parsed Antigravity hooks.json object; every other top-level key is untouched
+// in value and order.
+export function setAntigravityGuard(hooksObj, home) {
+  const entry = antigravityGuardEntry(home);
+  const had = Object.hasOwn(hooksObj, ANTIGRAVITY_GUARD_KEY);
+  if (had && isDeepStrictEqual(hooksObj[ANTIGRAVITY_GUARD_KEY], entry)) {
+    return { status: 'unchanged', merged: hooksObj, entry };
+  }
+  // Rebuilt key by key so `orc-guard` is replaced where it stands (or appended) and nothing else moves.
+  const merged = {};
+  for (const [k, v] of Object.entries(hooksObj)) merged[k] = k === ANTIGRAVITY_GUARD_KEY ? entry : v;
+  if (!had) merged[ANTIGRAVITY_GUARD_KEY] = entry;
+  return had
+    ? { status: 'replaced', merged, entry, diff: describeGuardDiff(hooksObj[ANTIGRAVITY_GUARD_KEY], entry) }
+    : { status: 'added', merged, entry };
+}
+
+// Removes only `orc-guard` from a parsed Antigravity hooks.json object; every other top-level key is untouched.
+export function removeAntigravityGuard(hooksObj) {
+  if (!Object.hasOwn(hooksObj, ANTIGRAVITY_GUARD_KEY)) return { status: 'absent', merged: hooksObj };
+  const merged = structuredClone(hooksObj);
+  delete merged[ANTIGRAVITY_GUARD_KEY];
+  return { status: 'removed', merged };
+}
+
+// Extracts the PreToolUse command and script path from an `orc-guard` entry (used by `orc doctor`).
+export function antigravityGuardScript(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return { command: null, script: null, disabled: false };
+  const disabled = entry.enabled === false;
+  const groups = Array.isArray(entry.PreToolUse) ? entry.PreToolUse : [];
+  let command = null;
+  for (const g of groups) {
+    for (const h of Array.isArray(g?.hooks) ? g.hooks : []) {
+      if (typeof h?.command === 'string' && h.command.trim()) {
+        command = h.command;
+        break;
+      }
+    }
+    if (command) break;
+  }
+  if (!command) return { command: null, script: null, disabled };
+  const quoted = /"([^"]+\.(?:mjs|cjs|js|ps1|cmd|sh))"/i.exec(command) ?? /'([^']+\.(?:mjs|cjs|js|ps1|cmd|sh))'/i.exec(command);
+  if (quoted) return { command, script: quoted[1], disabled };
+  const tokens = command.trim().split(/\s+/);
+  const script = tokens.length >= 2 && /^node(?:\.exe)?$/i.test(tokens[0]) ? tokens[1].replace(/^["']|["']$/g, '') : null;
+  return { command, script, disabled };
 }
