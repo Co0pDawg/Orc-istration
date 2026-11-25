@@ -53,6 +53,7 @@
 !/orchestration/standards.md
 !/orchestration/sprint.md
 !/orchestration/bench.md
+!/orchestration/queue.md
 # Cost logs stay local: the repo is public and they carry ticket and PR detail. Only their template is tracked.
 !/orchestration/log/
 /orchestration/log/*

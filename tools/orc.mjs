@@ -16,6 +16,7 @@ import { costlog, readBoardExport } from './lib/costlog.mjs';
 import { calibrationReport, DEFAULT_MIN_PRECISION } from './lib/calibration.mjs';
 import { listCases, scoreReport } from './lib/corpus.mjs';
 import { listBenchCases, runBench, loadBenchResults, benchReport, BENCH_USAGE } from './lib/bench.mjs';
+import { runQueue, QUEUE_USAGE } from './lib/queue.mjs';
 import { capture, loadRuns, metricsReport, repoTop, DEFAULT_PRICES } from './lib/metrics.mjs';
 import { dispatchPlan, runDispatch, formatCommand, argvProblem, binEnv, unavailable } from './lib/dispatch.mjs';
 import { mergeHooks, formatLike, readSettings, writeSettings } from './lib/hooks.mjs';
@@ -474,13 +475,13 @@ function stamp(d = new Date()) {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices', 'stack', 'from', 'case', 'report', 'variant', 'models', 'budget-usd', 'runs', 'family', 'model', 'prefer'];
+const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices', 'stack', 'from', 'case', 'report', 'variant', 'models', 'budget-usd', 'runs', 'label', 'author', 'max', 'until', 'model', 'allow', 'state', 'issue', 'family', 'prefer'];
 
 // Value options that may repeat; each value may also be comma-separated.
 const LIST_OPTIONS = ['profile', 'stack'];
 
-// Value options that may repeat but are never comma-split (paths, case ids).
-const REPEAT_OPTIONS = ['from', 'case'];
+// Value options that may repeat but are never comma-split (paths, case ids, logins, tool rules).
+const REPEAT_OPTIONS = ['from', 'case', 'author', 'allow'];
 
 const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print', 'json', 'sprint-kit', 'keep', 'keep-output', 'all'];
 
@@ -659,7 +660,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   const kitStack = opt.stack && cmd === 'install' && opt['sprint-kit'];
   if (((opt.stack && !kitStack) || opt.from || (opt.json && cmd !== 'doctor')) && cmd !== 'standards') return fail('--stack, --from and --json apply to standards only (and --stack to install --sprint-kit, --json to doctor)');
   if (opt.family !== undefined && cmd !== 'models') return fail('--family applies to models only');
-  if (opt.model !== undefined && cmd !== 'dispatch') return fail('--model applies to dispatch only');
+  if (opt.model !== undefined && !['dispatch', 'queue'].includes(cmd)) return fail('--model applies to dispatch and queue only');
   if (opt.prefer !== undefined && cmd !== 'dispatch') return fail('--prefer applies to dispatch only');
   if (opt.all && !['install', 'status'].includes(cmd)) return fail('--all applies to install and status only');
   if (opt.all && opt.tool) return fail('pass --all or --tool, not both');
@@ -670,6 +671,12 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const unknown = opt.stack.filter((s) => !KNOWN_STACKS.includes(s));
     if (unknown.length) return fail(`unknown stack(s) ${unknown.join(', ')} for the sprint kit; known: ${KNOWN_STACKS.join(', ')}`);
   }
+  const queueOnly = ['label', 'author', 'max', 'until', 'allow', 'state', 'issue'].filter((k) => opt[k] !== undefined);
+  if (queueOnly.length && cmd !== 'queue') return fail(`${queueOnly.map((k) => `--${k}`).join(', ')} apply to queue only`);
+  const benchOnly = ['variant', 'models', 'runs', 'keep', 'keep-output'].filter((k) => opt[k] !== undefined);
+  if (benchOnly.length && cmd !== 'bench') return fail(`${benchOnly.map((k) => `--${k}`).join(', ')} apply to bench only`);
+  if (opt['budget-usd'] !== undefined && !['bench', 'queue'].includes(cmd)) return fail('--budget-usd applies to bench and queue only');
+  if (opt['dry-run'] && cmd === 'queue') return fail('queue takes no --dry-run: queue run without --apply is the dry run');
   if (opt['no-profile'] && opt.profile) return fail('pass --profile or --no-profile, not both');
   if (opt['no-board'] && (opt.board || opt['board-repo'])) return fail('pass --board or --no-board, not both');
   try {
@@ -1498,6 +1505,16 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       return fail(e.message.startsWith('bench:') ? e.message : `bench: ${e.message}`);
     }
     return fail(BENCH_USAGE);
+  }
+
+  if (cmd === 'queue') {
+    const sub = opt._[1];
+    if (!['list', 'run'].includes(sub) || opt._.length !== 2) return fail(QUEUE_USAGE);
+    try {
+      return await runQueue({ sub, models: loadModels(repo), opt, cwd: io.cwd ? io.cwd() : process.cwd() }, io);
+    } catch (e) {
+      return fail(e.message.startsWith('queue:') ? e.message : `queue: ${e.message}`);
+    }
   }
 
   if (cmd === 'metrics') {
