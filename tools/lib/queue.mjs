@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { resolveExecutable, runTool, formatCommand, tierSettings } from './dispatch.mjs';
 import { parseResultJson, redact } from './bench.mjs';
+import { orcHome } from './config.mjs';
 
 export const QUEUE_USAGE =
   'usage: queue list [--repo-dir <dir>] [--label <l>] [--author <login>]... [--state <dir>] | queue run [--repo-dir <dir>] [--label <l>] [--author <login>]... [--base <branch>] [--max <n>] [--until <HH:mm>] [--budget-usd <n>] [--timeout <seconds>] [--model <m>] [--allow <tool rule>]... [--state <dir>] [--issue <n>] [--apply]';
@@ -264,8 +265,8 @@ const wholeNumber = (v, name, max) => {
 // The levels `claude --effort` takes (models.json also allows `ultra`, which it does not).
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-// The options, validated, with their defaults (models.json, with models.local.json over it, gives the model and
-// effort of the Claude Code high tier; --model replaces the model).
+// The options, validated, with their defaults (models.json, with ~/.orc/models.json and models.local.json over it,
+// gives the model and effort of the Claude Code high tier; --model replaces the model).
 export function queueOptions(opt, models, cwd) {
   const budget = opt['budget-usd'] === undefined ? 5 : Number(opt['budget-usd']);
   if (!(Number.isFinite(budget) && budget > 0 && budget <= 1000)) fail(`--budget-usd needs a positive number (at most 1000), got ${opt['budget-usd']}`);
@@ -322,7 +323,7 @@ function locate(o, env) {
   const remote = parseGithubRemote(url);
   if (!remote) fail(`${repoDir} has no GitHub origin (remote.origin.url is ${url ? `"${url}"` : 'not set'}); nothing changed`);
   // Owner and repo are separate path segments, so a-b/c and a/b-c never share a state folder.
-  const state = o.state ?? path.join(os.homedir(), '.orc', 'queue', remote.owner, remote.repo);
+  const state = o.state ?? path.join(orcHome(env), 'queue', remote.owner, remote.repo);
   // The script pushes to this URL, not to the remote name, so a pushurl or other remote.origin.* setting a session
   // writes into the shared .git/config cannot redirect the push.
   return { git, repoDir, slug: `${remote.owner}/${remote.repo}`, state, originUrl: url };
@@ -430,13 +431,13 @@ function warnUnprotected(ctx, io) {
 }
 
 // The headless command. The prompt goes on stdin, never through a shell.
-export function queuePlan(o, prompt, env = process.env) {
+export function queuePlan(o, prompt, env = process.env, { binaries = null, configFile = null } = {}) {
   const args = [
     '-p', '--output-format', 'json', '--permission-mode', 'acceptEdits', '--max-budget-usd', String(o.budgetUsd), '--no-session-persistence', '--strict-mcp-config',
     '--model', o.model, ...(o.effort ? ['--effort', o.effort] : []), '--allowedTools', o.tools.join(','), '--disallowedTools', DENY_TOOLS.join(','),
   ];
-  const exe = resolveExecutable('claude', 'claude-code', env);
-  return { command: 'claude', args, stdin: prompt, toolId: 'claude-code', exe, argv: [...exe.pre, ...args] };
+  const exe = resolveExecutable('claude', 'claude-code', env, { binaries, configFile });
+  return { command: 'claude', args, stdin: prompt, stdinHolds: 'the prompt', toolId: 'claude-code', exe, argv: [...exe.pre, ...args] };
 }
 
 // The name of the file that lets one run take over one stale lock: it is derived from the stale lock's exact content.
@@ -716,7 +717,7 @@ async function runIssue(ctx, o, issue, io) {
   let changedConfig = [];
   try {
     const { prompt } = buildPrompt(issue, { branch });
-    const r = await runTool(queuePlan(o, prompt), { timeoutSec: o.timeoutSec, err: io.err, capture: true, captureStderr: true, cwd: wt, env: sessionEnv(process.env, { blockHooks, ghDir }), label: 'queue' });
+    const r = await runTool(queuePlan(o, prompt, process.env, { binaries: ctx.binaries, configFile: ctx.configFile }), { timeoutSec: o.timeoutSec, err: io.err, capture: true, captureStderr: true, cwd: wt, env: sessionEnv(process.env, { blockHooks, ghDir }), label: 'queue' });
     stderr = String(r.stderr ?? '');
     cls = classify(r, o.timeoutSec);
   } finally {
@@ -766,8 +767,9 @@ function writeRecord(state, rec) {
 
 // `queue list` and `queue run`. Exit 0: no work, every issue done or blocked, or a usage-limit stop; 1: a failure, an
 // abort or a stop.
-export async function runQueue({ sub, models, opt, cwd }, io) {
+export async function runQueue({ sub, models, opt, cwd, binaries = null, configFile = null }, io) {
   const env = process.env;
+  const bins = { binaries, configFile };
   const now = () => (io.now ? io.now() : new Date());
   const o = queueOptions(opt, models, cwd);
   const loc = locate(o, env);
@@ -783,7 +785,7 @@ export async function runQueue({ sub, models, opt, cwd }, io) {
       fs.mkdirSync(loc.state, { recursive: true });
       release = takeLock(loc.state, io, o.max * o.timeoutSec + 3600);
     }
-    const ctx = survey(o, loc, io, env);
+    const ctx = Object.assign(survey(o, loc, io, env), bins);
     if (pastUntil && sub === 'run') io.out(`the run started less than an hour after --until ${o.until.text}, so that time counts as passed: no issue starts`);
     if (sub === 'list') {
       if (!ctx.issues.length) io.out(`no open issue with label ${o.label} in ${ctx.slug}`);
@@ -819,18 +821,21 @@ export async function runQueue({ sub, models, opt, cwd }, io) {
           io.out(`would push the commit kept from an earlier run for issue #${i.number} (${i.branch} at ${i.retryPush.sha.slice(0, 12)}) and open the draft PR; no model run`);
           continue;
         }
-        const plan = queuePlan(o, buildPrompt(i, { branch: i.branch }).prompt, env);
+        const plan = queuePlan(o, buildPrompt(i, { branch: i.branch }).prompt, env, bins);
         io.out(`would run issue #${i.number}: ${oneLine(i.title)}`);
         io.out(`  worktree: ${wt} (detached at origin/${ctx.base}, then branch ${i.branch})`);
         io.out(`  when done: git push origin ${i.branch}; gh pr create --draft --base ${ctx.base} --head ${i.branch}`);
-        io.out(formatCommand(plan).replace('(the brief)', '(the prompt)').replace(/^/gm, '  '));
+        io.out(formatCommand(plan).replace(/^/gm, '  '));
       }
       if (deadline && !pastUntil) io.out(`no new issue starts at or after ${deadline.toString()}`);
       io.out('dry run: nothing changed; add --apply to run');
       return 0;
     }
-    const first = queuePlan(o, '', env);
-    if (first.exe.missing && todo.some((i) => !i.prOnly && !i.retryPush)) fail(`cannot run claude: not found${first.exe.shim ? ' (only a .cmd/.bat shim)' : ''}; set ORC_TOOL_BIN_CLAUDE_CODE to its full path`);
+    if (todo.some((i) => !i.prOnly && !i.retryPush)) {
+      const first = queuePlan(o, '', env, bins);
+      if (first.exe.reason) fail(`cannot run claude-code: ${first.exe.reason}`);
+      if (first.exe.missing) fail(`cannot run claude: not found${first.exe.shim ? ' (only a .cmd/.bat shim)' : ''}; set ORC_TOOL_BIN_CLAUDE_CODE to its full path`);
+    }
     let failed = 0;
     for (const issue of todo) {
       if (deadline && now().getTime() >= deadline.getTime()) {
