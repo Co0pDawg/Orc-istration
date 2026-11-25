@@ -92,7 +92,7 @@ export function agentDefinition(adapter, role, models) {
 }
 
 // The headless command for one role on Claude Code. The brief goes on stdin, never through a shell.
-export function benchPlan(adapter, role, models, briefText, { budgetUsd, env = process.env } = {}) {
+export function benchPlan(adapter, role, models, briefText, { budgetUsd, env = process.env, binaries = null, configFile = null } = {}) {
   if (adapter.id !== 'claude-code') return { error: `bench: no bench recipe for ${adapter.id}` };
   const tiers = models[adapter.id] ?? {};
   const base = tiers[role.tier] ?? {};
@@ -108,7 +108,7 @@ export function benchPlan(adapter, role, models, briefText, { budgetUsd, env = p
     '--output-format', 'json', '--permission-mode', 'acceptEdits', '--allowedTools', tools.join(','),
     '--max-budget-usd', String(budgetUsd), '--no-session-persistence',
   ];
-  const exe = resolveExecutable('claude', adapter.id, env);
+  const exe = resolveExecutable('claude', adapter.id, env, { binaries, configFile });
   const plan = { command: 'claude', args, stdin: briefText, stdinHolds: 'the brief', toolId: adapter.id, exe, argv: [...exe.pre, ...args], model, effort: effort ?? null };
   const bytes = plan.argv.reduce((n, a) => n + Buffer.byteLength(a) + 1, Buffer.byteLength(exe.command));
   if (bytes > ARGV_LIMIT) return { error: `bench: the command line is ${bytes} bytes (the --agents definition is passed inline); the limit is about ${ARGV_LIMIT} on Windows` };
@@ -391,7 +391,7 @@ async function runOne(c, plan, o, ctx, io) {
 
 // `bench run`: every selected case (default all), `runs` times each, into <out>/<runId>/. Exits 1 when a case is
 // malformed or unknown (nothing started) or when any run errored.
-export async function runBench({ repo, root, adapter, roles, models, opt, cwd }, io) {
+export async function runBench({ repo, root, adapter, roles, models, opt, cwd, binaries = null, configFile = null }, io) {
   const top = spawnSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', shell: false, windowsHide: true });
   const o = runOptions(opt, cwd, top.status === 0 ? top.stdout.trim() : null);
   const all = listBenchCases(root, []);
@@ -404,7 +404,7 @@ export async function runBench({ repo, root, adapter, roles, models, opt, cwd },
   for (const c of cases) {
     const role = roles.find((r) => r.name === ROLE_OF[c.kind]);
     if (!role) throw new Error(`bench: no ${ROLE_OF[c.kind]} role in core/roles/`);
-    const plan = benchPlan(adapter, role, models, readText(path.join(c.dir, 'brief.md')), { budgetUsd: o.budgetUsd });
+    const plan = benchPlan(adapter, role, models, readText(path.join(c.dir, 'brief.md')), { budgetUsd: o.budgetUsd, binaries, configFile });
     if (plan.error) throw new Error(plan.error);
     plans.set(c.id, plan);
   }
@@ -414,6 +414,7 @@ export async function runBench({ repo, root, adapter, roles, models, opt, cwd },
   }
   const first = plans.get(cases[0]?.id);
   if (!first) throw new Error('bench: no cases to run');
+  if (first.exe.reason) throw new Error(`bench: cannot run ${adapter.id}: ${first.exe.reason}`);
   if (first.exe.missing) throw new Error(`bench: cannot run claude: not found${first.exe.shim ? ' (only a .cmd/.bat shim)' : ''}; set ${binEnv(adapter.id)} to its full path`);
   const runId = `${utcStamp(new Date())}-${o.variant}`;
   const outDir = path.join(o.out, runId);

@@ -1605,10 +1605,20 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       }
       if (sub === 'run' && opt._.length === 2) {
         const toolId = opt.tool ?? 'claude-code';
-        const adapter = (await loadAdapters(repo)).find((a) => a.id === toolId);
+        const adapters = await loadAdapters(repo);
+        const adapter = adapters.find((a) => a.id === toolId);
         if (toolId !== 'claude-code' || !adapter) return fail(`bench: no bench recipe for ${toolId} (bench runs Claude Code only)`);
+        const roles = loadRoles(repo);
+        let cfg;
+        try {
+          cfg = loadConfig({ tools: adapters.map((a) => a.id), roles: roles.map((r) => r.name) });
+        } catch (e) {
+          io.err(`WARN ${e instanceof Error ? e.message : String(e)} (bench run goes on without its binaries)`);
+          cfg = { file: configFile(), config: null };
+        }
+        (cfg.warnings ?? []).forEach((w) => io.err(`WARN ${w}`));
         const models = loadModels(repo, { local: false, extra: opt.models ? path.resolve(opt.models) : null });
-        return await runBench({ repo, root, adapter, roles: loadRoles(repo), models, opt, cwd: io.cwd ? io.cwd() : process.cwd() }, io);
+        return await runBench({ repo, root, adapter, roles, models, opt, cwd: io.cwd ? io.cwd() : process.cwd(), binaries: cfg.config?.binaries ?? null, configFile: cfg.file }, io);
       }
       if (sub === 'report' && opt._.length === 2) {
         const dir = path.resolve(opt.dir ?? path.join(repoTop(process.cwd()) ?? process.cwd(), '.orc', 'bench'));
@@ -1626,7 +1636,17 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const sub = opt._[1];
     if (!['list', 'run'].includes(sub) || opt._.length !== 2) return fail(QUEUE_USAGE);
     try {
-      return await runQueue({ sub, models: loadModels(repo), opt, cwd: io.cwd ? io.cwd() : process.cwd() }, io);
+      let cfg = { file: configFile(), config: null };
+      if (sub === 'run') {
+        try {
+          cfg = loadConfig({ tools: knownTools(repo), roles: loadRoles(repo).map((r) => r.name) });
+        } catch (e) {
+          io.err(`WARN ${e instanceof Error ? e.message : String(e)} (queue run goes on without its binaries)`);
+        }
+        (cfg.warnings ?? []).forEach((w) => io.err(`WARN ${w}`));
+      }
+      const models = loadModels(repo, { shared: true, warn: (w) => io.err(`WARN ${w}`) });
+      return await runQueue({ sub, models, opt, cwd: io.cwd ? io.cwd() : process.cwd(), binaries: cfg.config?.binaries ?? null, configFile: cfg.file }, io);
     } catch (e) {
       return fail(e.message.startsWith('queue:') ? e.message : `queue: ${e.message}`);
     }

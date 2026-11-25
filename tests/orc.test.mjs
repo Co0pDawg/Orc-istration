@@ -251,12 +251,27 @@ test('antigravity emits only agy 1.5.16 tools, no deprecated tools, read-only ha
         : ['read_file', 'run_command'];
     assert.deepStrictEqual(data.tools, want, `${f.path} tools`);
   }
-  const gap = res.adapter.gaps.find((g) => /listing, searching and URL fetching/i.test(g));
-  assert.ok(gap, 'gaps mentions listing, searching and URL fetching');
+  const missingToolsGaps = res.adapter.gaps.filter((g) => /listing, searching and URL fetching/i.test(g));
+  assert.strictEqual(missingToolsGaps.length, 1, 'gaps mentions listing, searching and URL fetching once');
+  const [gap] = missingToolsGaps;
   assert.match(gap, /run_command/);
   assert.match(gap, /search_web/);
+  assert.match(gap, /sandbox/);
   const rulebook = res.files.find((f) => f.path === '.gemini/AGENTS.md');
+  assert.strictEqual((rulebook.content.match(/listing, searching and URL fetching/gi) ?? []).length, 1, 'generated rulebook includes the missing-tools gap exactly once');
   assert.ok(rulebook.content.includes(gap), 'generated rulebook includes the missing-tools gap');
+});
+
+test('no adapter has duplicate gap entries starting with the same first six words', async () => {
+  const adapters = await loadAdapters(REPO);
+  for (const adapter of adapters) {
+    const seen = new Map();
+    for (const gap of adapter.gaps) {
+      const prefix = gap.trim().toLowerCase().split(/\s+/).slice(0, 6).join(' ');
+      assert.ok(!seen.has(prefix), `${adapter.id}: duplicate gap prefix "${prefix}"`);
+      seen.set(prefix, gap);
+    }
+  }
 });
 
 test('models helper reads agy models output and supports --family', async () => {

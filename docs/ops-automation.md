@@ -25,7 +25,8 @@ One PowerShell 7 script per job (`#Requires -Version 7`). Skeleton:
 ```powershell
 $ErrorActionPreference = 'Stop'
 $env:GIT_TERMINAL_PROMPT = '0'          # fail fast, never wait on a prompt
-$state = Join-Path $HOME '.claude\<job>'; New-Item -ItemType Directory -Force $state | Out-Null
+$orcHome = if ($env:ORC_DATA_DIR -and $env:ORC_DATA_DIR.Trim()) { $env:ORC_DATA_DIR } else { Join-Path $HOME '.orc' }
+$state = Join-Path $orcHome '<job>'; New-Item -ItemType Directory -Force $state | Out-Null
 Start-Transcript -Path (Join-Path $state 'job.log') -Append | Out-Null
 # 1. cheap check: is there work? return early if not (no model call)
 # 2. idempotency check
@@ -83,7 +84,7 @@ Give the job its own worktree outside the main checkout. Each run: fetch, check 
 ## 9. Checklist for a new job
 
 1. One-sentence goal and the cheap "is there work?" check; no work means exit without a model call.
-2. State folder `~/.claude/<job>/`, transcript, per-item log.
+2. State folder `~/.orc/<job>/` (or `$ORC_DATA_DIR/<job>/`), transcript, per-item log.
 3. Marker file and `-Force`.
 4. Dedicated worktree; forced detached checkout and clean each run.
 5. Prompt with numbered steps, existing-work check and explicit prohibitions.
