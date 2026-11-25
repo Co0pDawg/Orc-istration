@@ -19,6 +19,8 @@ export default {
   title: 'Antigravity CLI',
   home: { root: '.gemini', rulebook: '.gemini/AGENTS.md', agentsDir: '.gemini/config/agents' },
   capabilityTools,
+  // Script wired by `orc hooks --tool antigravity`; install copies it to <root>/tools/guard.mjs.
+  hookScripts: ['tools/guard.mjs'],
   // nonEmptyTools: how agy reads `tools: []` is not established, so the build refuses one.
   limits: { ruleBytes: 24000, nonEmptyTools: true },
   conflicts: [
@@ -35,6 +37,7 @@ export default {
     'Low and Mid are the same per-agent model (flash) in the shipped `models.json`, so a per-dispatch tier override between them changes nothing outside a headless run.',
     'No subagent-stop hook: the board update after an agent report is a build-loop step.',
     'Read-only is enforced only by the tools allowlist; run_command can still change files, so the role body forbids edits.',
+    'PreToolUse hook payloads carry no agent identity, so the git guard\'s read-only-role rule (blocking git writes for scout, researcher, refuter and review roles) is Claude Code only; the other git guard rules are available through `orc hooks --tool antigravity`, and an allow prints nothing.',
     'Listing, searching and URL fetching have no dedicated tool on Antigravity and go through run_command (or search_web); whether run_command can reach the network under the `sandbox` policy is not established, so only search_web is known to reach the web.',
   ],
   renderAgent(role, tierModel) {

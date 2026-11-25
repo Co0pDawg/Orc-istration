@@ -41,7 +41,7 @@ export const HELP = {
   },
   install: {
     repo: true,
-    summary: 'Install one tool\'s generated files, or with --all every active tool\'s (for claude-code also its hook scripts, six workflow commands and orc-permissions skill), into a home folder (dry run without --apply); the rulebook names this checkout as the setup checkout',
+    summary: 'Install one tool\'s generated files, or with --all every active tool\'s (for claude-code also its hook scripts, six workflow commands and orc-permissions skill; for antigravity also tools/guard.mjs), into a home folder (dry run without --apply); the rulebook names this checkout as the setup checkout',
     synopsis: 'install (--tool <id> | --all) [--home <dir>] [--apply] [--force] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board] [--sprint-kit [--stack dotnet|node|python]]',
     options: {
       '--tool <id>': 'the adapter to install (this or --all; not all)',
@@ -60,7 +60,7 @@ export const HELP = {
   },
   uninstall: {
     repo: true,
-    summary: 'Delete the files an install recorded in its manifest (dry run without --apply); for a sprint kit also remove its settings.json entries and restore the files it replaced',
+    summary: 'Delete the files an install recorded in its manifest (dry run without --apply); for a sprint kit also remove its settings.json entries and restore the files it replaced; for antigravity remind to remove orc-guard from hooks.json when still present',
     synopsis: 'uninstall --tool <id> [--home <dir>] [--apply] [--force]',
     options: {
       '--tool <id>': 'the adapter to uninstall (required; not all)',
@@ -217,7 +217,7 @@ export const HELP = {
   },
   doctor: {
     repo: true,
-    summary: 'Check ~/.orc/config.json and models.json, each active tool (install state; for a tool with a headless recipe also its binary, --version, sign-in and headless models), the routing table, the board and a retired ~/.claude/board.local.md, without writing',
+    summary: 'Check ~/.orc/config.json and models.json, each active tool (install state; for antigravity its hooks.json orc-guard entry; for a tool with a headless recipe also its binary, --version, sign-in and headless models), the routing table, the board and a retired ~/.claude/board.local.md, without writing',
     synopsis: 'doctor [--home <dir>] [--json]',
     options: {
       '--home <dir>': 'the home folder the tools install into (default your home)',
@@ -226,12 +226,14 @@ export const HELP = {
   },
   hooks: {
     repo: true,
-    summary: 'Merge the example hooks from adapters/claude-code/ into <home>/.claude/settings.json (dry run without --apply); reports stale .claude/tools/{worklog,peon} entries under the same event without duplicating them. Run it from the checkout you keep: the worklog and peon hook commands point into it',
-    synopsis: 'hooks --home <dir> [--apply] [--node]',
+    summary: 'Wire hooks into <home>/.claude/settings.json (default, --tool claude-code) or <home>/.gemini/config/hooks.json (--tool antigravity, orc-guard only; dry run without --apply). For claude-code, merges the example hooks from adapters/claude-code/ and reports stale .claude/tools/{worklog,peon} entries without duplicating them; run it from the checkout you keep',
+    synopsis: 'hooks [--tool claude-code|antigravity] --home <dir> [--apply] [--node] [--remove]',
     options: {
+      '--tool <id>': 'claude-code (default) or antigravity',
       '--home <dir>': 'home folder (required; no default)',
       '--apply': 'write the file, after a backup',
-      '--node': 'use adapters/claude-code/hooks.node.example.json (board reminder and git guard on Node, no PowerShell)',
+      '--node': 'claude-code only: use adapters/claude-code/hooks.node.example.json (board reminder and git guard on Node, no PowerShell)',
+      '--remove': 'antigravity only: remove the orc-guard hook key from hooks.json, leaving every other named hook untouched',
     },
   },
   standards: {

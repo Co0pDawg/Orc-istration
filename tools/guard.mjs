@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-// Node port of guard.ps1: a PreToolUse hook on Bash|PowerShell that enforces the rulebook's hard git rules.
+// Node port of guard.ps1: a PreToolUse hook on Claude Code (Bash|PowerShell) and Antigravity (run_command) that
+// enforces the rulebook's hard git rules.
 // Deny: commit on a protected branch, push to a protected branch, `git stash` (other than list/show) in a linked
-// worktree, and commands that change a checkout from read-only roles (scout, researcher, refuter, review-*). Ask:
-// force-push and `git add -A|--all|.`. Protected branches: main, develop, master, or ORC_PROTECTED_BRANCHES (comma list).
+// worktree, and (Claude Code only, where agent_type is present) commands that change a checkout from read-only roles
+// (scout, researcher, refuter, review-*). Ask: force-push and `git add -A|--all|.`. Protected branches: main, develop,
+// master, or ORC_PROTECTED_BRANCHES (comma list).
 // It reads the command text only, so it is a seat belt, not a sandbox. Any failure exits 0 (fail open).
 // Usage: node guard.mjs  (PreToolUse hook JSON on stdin)
 import { spawnSync } from 'node:child_process';
@@ -235,9 +237,12 @@ export function splitCommand(text, powershell) {
 }
 
 // Git Bash writes C: as /c; ~ is the home directory.
-function resolveDir(base, dir) {
+function resolveDir(base, dir, env = process.env) {
   let d = dir;
-  if (d === '~' || d.startsWith('~/') || d.startsWith('~\\')) d = path.join(os.homedir(), d.slice(1));
+  if (d === '~' || d.startsWith('~/') || d.startsWith('~\\')) {
+    const home = (process.platform === 'win32' ? (env.USERPROFILE || env.HOME) : env.HOME) || os.homedir();
+    d = path.join(home, d.slice(1));
+  }
   if (process.platform === 'win32') {
     const m = /^\/([a-zA-Z])(\/.*)?$/.exec(d);
     if (m) d = `${m[1]}:${m[2] ?? '/'}`;
@@ -395,17 +400,47 @@ function dropAssignment(words) {
   }
 }
 
-// Returns {decision, reason} for the strongest rule hit (deny before ask), or null to allow.
-export function decide(hook, env, warn = () => {}) {
-  const command = hook?.tool_input?.command;
-  if (typeof command !== 'string') {
-    warn('no tool_input.command in the payload; allowed');
-    return null;
+function isAntigravityPayload(hook) {
+  return Boolean(
+    hook && typeof hook === 'object' && !Array.isArray(hook)
+      && hook.toolCall && typeof hook.toolCall === 'object' && !Array.isArray(hook.toolCall)
+      && typeof hook.toolCall.name === 'string',
+  );
+}
+
+// Extracts { command, role, ps } from a Claude Code or Antigravity PreToolUse payload, or null to allow.
+function parsePayload(hook, warn, platform) {
+  if (isAntigravityPayload(hook)) {
+    if (hook.toolCall.name !== 'run_command') return null;
+    const command = hook.toolCall.args?.CommandLine;
+    if (typeof command !== 'string') {
+      warn('no toolCall.args.CommandLine in the payload; allowed');
+      return null;
+    }
+    return { command, role: '', ps: platform === 'win32' };
   }
+  if (hook && typeof hook === 'object' && !Array.isArray(hook)) {
+    const command = hook.tool_input?.command;
+    if (typeof command === 'string') {
+      return { command, role: readOnlyRole(hook.agent_type), ps: hook.tool_name === 'PowerShell' };
+    }
+    if (Object.hasOwn(hook, 'tool_input') || Object.hasOwn(hook, 'tool_name')) {
+      warn('no tool_input.command in the payload; allowed');
+      return null;
+    }
+  }
+  warn('unrecognized payload (no tool_input.command or toolCall); allowed');
+  return null;
+}
+
+// Returns {decision, reason} for the strongest rule hit (deny before ask), or null to allow.
+export function decide(hook, env, warn = () => {}, platform = process.platform) {
+  const parsed = parsePayload(hook, warn, platform);
+  if (!parsed) return null;
+  const { command, role, ps } = parsed;
   if (!/git/i.test(command)) return null;
   const startDir = typeof hook.cwd === 'string' && hook.cwd ? hook.cwd : process.cwd();
-  const ctx = { probe: makeProbe(warn), protectedList: protectedBranches(env), role: readOnlyRole(hook.agent_type), warn };
-  const ps = hook.tool_name === 'PowerShell';
+  const ctx = { probe: makeProbe(warn), protectedList: protectedBranches(env), role, warn };
   let cwd = startDir;
   const subshells = [];
   let ask = null;
@@ -423,7 +458,7 @@ export function decide(hook, env, warn = () => {}) {
     const head = words[0].toLowerCase();
     if (CD_COMMANDS.includes(head)) {
       const target = words.slice(1).filter((w) => !/^-(path|literalpath)$/i.test(w))[0];
-      if (target && target !== '-') cwd = resolveDir(cwd, target);
+      if (target && target !== '-') cwd = resolveDir(cwd, target, env);
       continue;
     }
     if (!isGit(words[0])) continue;
@@ -431,7 +466,7 @@ export function decide(hook, env, warn = () => {}) {
     let i = 1;
     while (i < words.length && words[i].startsWith('-')) {
       const o = words[i];
-      if (o === '-C') dir = resolveDir(dir, words[++i] ?? '.');
+      if (o === '-C') dir = resolveDir(dir, words[++i] ?? '.', env);
       else if (['-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env'].includes(o)) i++;
       i++;
     }
@@ -451,9 +486,18 @@ export function decide(hook, env, warn = () => {}) {
   return ask;
 }
 
-export function run(stdinText, env = process.env, warn = () => {}) {
-  const verdict = decide(JSON.parse(String(stdinText).replace(/^\uFEFF/, '')), env, warn);
+export function run(stdinText, env = process.env, warn = () => {}, platform = process.platform) {
+  const hook = JSON.parse(String(stdinText).replace(/^\uFEFF/, ''));
+  const verdict = decide(hook, env, warn, platform);
   if (!verdict) return '';
+  if (isAntigravityPayload(hook)) {
+    // A headless Antigravity run does not stop at an ask (the command runs), so under `orc dispatch`, which sets
+    // ORC_HEADLESS=1, an ask is refused: nobody is there to answer it.
+    if (verdict.decision === 'ask' && env.ORC_HEADLESS === '1') {
+      return JSON.stringify({ decision: 'deny', reason: `${verdict.reason} (headless run: nobody can answer, so it is refused)` });
+    }
+    return JSON.stringify({ decision: verdict.decision, reason: verdict.reason });
+  }
   return JSON.stringify({
     hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: verdict.decision, permissionDecisionReason: verdict.reason },
   });

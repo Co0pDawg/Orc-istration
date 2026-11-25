@@ -7,6 +7,7 @@ import { orcHome, configFile, loadConfig, routeChain, boardDefault } from './con
 import { dispatchPlan, resolveExecutable, unavailable, binEnv, killTree } from './dispatch.mjs';
 import { TIERS } from './models.mjs';
 import { loadManifest } from './manifest.mjs';
+import { readSettings, ANTIGRAVITY_GUARD_KEY, antigravityGuardScript } from './hooks.mjs';
 import { readText } from './text.mjs';
 
 // The --version and auth probes are killed after 5 seconds, the board health GET after 3 (tests pass shorter ones).
@@ -155,6 +156,47 @@ export async function runDoctor({ repo, home, json, io, env = process.env, timeo
         else if (r.missing === r.files) add('WARN', 'install', `not installed in ${home}`, id);
         else add('WARN', 'install', `drift in ${home} (status --tool ${id} lists the files)`, id);
       });
+      if (id === 'antigravity') {
+        await guarded('hooks', id, async () => {
+          const hooksFile = path.join(home, '.gemini', 'config', 'hooks.json');
+          const homeArg = /\s/.test(home) ? `"${home}"` : home;
+          const wireCmd = `node tools/orc.mjs hooks --tool antigravity --home ${homeArg} --apply`;
+          if (!fs.existsSync(hooksFile)) {
+            add('WARN', 'hooks', `${hooksFile} not found; run ${wireCmd}`, id);
+            return;
+          }
+          let settings;
+          try {
+            ({ settings } = readSettings(hooksFile));
+          } catch (e) {
+            add('WARN', 'hooks', `${hooksFile} cannot be parsed (${message(e)})`, id);
+            return;
+          }
+          if (!Object.hasOwn(settings, ANTIGRAVITY_GUARD_KEY)) {
+            add('WARN', 'hooks', `${hooksFile} has no ${ANTIGRAVITY_GUARD_KEY} entry; run ${wireCmd}`, id);
+            return;
+          }
+          const { command, script, disabled } = antigravityGuardScript(settings[ANTIGRAVITY_GUARD_KEY]);
+          if (disabled) {
+            add('WARN', 'hooks', `${ANTIGRAVITY_GUARD_KEY} in ${hooksFile} is disabled (enabled: false)`, id);
+            return;
+          }
+          if (!command || !script) {
+            add('WARN', 'hooks', `${ANTIGRAVITY_GUARD_KEY} in ${hooksFile} does not name a guard script; run ${wireCmd}`, id);
+            return;
+          }
+          const resolved = script.startsWith('~/') || script.startsWith('~\\')
+            ? path.join(home, script.slice(2))
+            : path.isAbsolute(script)
+              ? script
+              : path.resolve(path.dirname(hooksFile), script);
+          if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+            add('WARN', 'hooks', `${ANTIGRAVITY_GUARD_KEY} in ${hooksFile} names ${script}, which does not exist (run install --tool antigravity --apply)`, id);
+            return;
+          }
+          add('OK', 'hooks', `${ANTIGRAVITY_GUARD_KEY} wired`, id);
+        });
+      }
     }
 
     for (const role of roles) {

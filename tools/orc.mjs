@@ -19,7 +19,7 @@ import { listBenchCases, runBench, loadBenchResults, benchReport, BENCH_USAGE } 
 import { runQueue, QUEUE_USAGE } from './lib/queue.mjs';
 import { capture, loadRuns, metricsReport, repoTop, DEFAULT_PRICES } from './lib/metrics.mjs';
 import { dispatchPlan, runDispatch, formatCommand, argvProblem, binEnv, unavailable } from './lib/dispatch.mjs';
-import { mergeHooks, formatLike, readSettings, writeSettings } from './lib/hooks.mjs';
+import { mergeHooks, formatLike, readSettings, writeSettings, ANTIGRAVITY_GUARD_KEY, antigravityGuardPath, setAntigravityGuard, removeAntigravityGuard } from './lib/hooks.mjs';
 import { KIT_HOOK_SCRIPTS, KIT_SKILLS, KIT_NOTES, KNOWN_STACKS, presetRules, detectStacks, kitHookExample, planKitSettings, removeKitSettings, kitRecordProblem, guardStatus } from './lib/sprintkit.mjs';
 import { decodeText, readText } from './lib/text.mjs';
 import { USAGE, globalHelp, commandHelp } from './lib/help.mjs';
@@ -571,7 +571,7 @@ const LIST_OPTIONS = ['profile', 'stack'];
 // Value options that may repeat but are never comma-split (paths, case ids, logins, tool rules).
 const REPEAT_OPTIONS = ['from', 'case', 'author', 'allow'];
 
-const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print', 'json', 'sprint-kit', 'keep', 'keep-output', 'all'];
+const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print', 'json', 'sprint-kit', 'keep', 'keep-output', 'all', 'remove'];
 
 // The argv index of the command word (the first argument that is neither an option nor an option's value).
 function commandIndex(argv) {
@@ -785,6 +785,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   const kitStack = opt.stack && cmd === 'install' && opt['sprint-kit'];
   if (((opt.stack && !kitStack) || opt.from || (opt.json && cmd !== 'doctor')) && cmd !== 'standards') return fail('--stack, --from and --json apply to standards only (and --stack to install --sprint-kit, --json to doctor)');
   if (opt.family !== undefined && cmd !== 'models') return fail('--family applies to models only');
+  if (opt.remove && cmd !== 'hooks') return fail('--remove applies to hooks only');
+  if (opt.node && cmd !== 'hooks') return fail('--node applies to hooks only');
   if (opt.model !== undefined && !['dispatch', 'queue'].includes(cmd)) return fail('--model applies to dispatch and queue only');
   if (opt.prefer !== undefined && cmd !== 'dispatch') return fail('--prefer applies to dispatch only');
   if (opt.all && !['install', 'status'].includes(cmd)) return fail('--all applies to install and status only');
@@ -1463,6 +1465,17 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         io.out(`kept manifest listing ${Object.keys(kept).length} kept file(s): ${file}`);
       } else io.out(`removed manifest: ${file}`);
     } else io.out(`dry run for ${adapter.id}; add --apply to delete`);
+    if (adapter.id === 'antigravity') {
+      const hooksFile = path.join(home, '.gemini', 'config', 'hooks.json');
+      try {
+        if (fs.existsSync(hooksFile) && Object.hasOwn(readSettings(hooksFile).settings, ANTIGRAVITY_GUARD_KEY)) {
+          const homeArg = /\s/.test(home) ? `"${home}"` : home;
+          io.out(`note: ${hooksFile} still has ${ANTIGRAVITY_GUARD_KEY}; run node tools/orc.mjs hooks --tool antigravity --home ${homeArg} --remove --apply to remove it`);
+        }
+      } catch {
+        // Unreadable hooks.json never blocks uninstalling the manifest files.
+      }
+    }
     return 0;
   }
 
@@ -1763,8 +1776,73 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   }
 
   if (cmd === 'hooks') {
+    const tool = opt.tool ?? 'claude-code';
+    if (!['claude-code', 'antigravity'].includes(tool)) {
+      return fail(`hooks: unsupported tool ${tool}; supported: claude-code, antigravity`);
+    }
+    if (opt.remove && tool !== 'antigravity') return fail('hooks: --remove is for --tool antigravity only');
+    if (opt.node && tool !== 'claude-code') return fail('hooks: --node is for --tool claude-code only');
     if (!opt.home) return fail('hooks needs --home <dir> (no default)');
     const home = path.resolve(opt.home);
+    if (tool === 'antigravity') {
+      const target = path.join(home, '.gemini', 'config', 'hooks.json');
+      const unsafe = escapes(home, '.gemini', target);
+      if (unsafe) return fail(`hooks: ${unsafe}; nothing written`);
+      try {
+        const { original, bom, settings } = readSettings(target);
+        if (opt.remove) {
+          const { status, merged } = removeAntigravityGuard(settings);
+          if (status === 'absent') {
+            io.out(`nothing to remove: ${ANTIGRAVITY_GUARD_KEY} is not in ${target}`);
+            return 0;
+          }
+          io.out(`${opt.apply ? 'removed' : 'would remove'} ${ANTIGRAVITY_GUARD_KEY} from ${target}`);
+          if (original !== null && formatLike(original, settings) !== original) {
+            io.err(`WARN ${target} is not in plain indented JSON layout; writing it re-indents the existing content (values and order unchanged)`);
+          }
+          if (!opt.apply) {
+            io.out(`dry run: would update ${target}; add --apply to write`);
+            return 0;
+          }
+          const backup = backupPath(target, stamp(io.now ? io.now() : new Date()));
+          writeSettings(target, bom + formatLike(original, merged), backup);
+          io.out(`backed up: ${backup}`);
+          io.out(`updated ${target}`);
+          return 0;
+        }
+        const scriptFs = path.join(home, '.gemini', 'tools', 'guard.mjs');
+        const scriptFwd = antigravityGuardPath(home);
+        const { status, merged, entry, diff } = setAntigravityGuard(settings, home);
+        if (!fs.existsSync(scriptFs)) {
+          io.err(`WARN hook script not found: ${scriptFwd}; run install --tool antigravity --apply first`);
+        }
+        if (status === 'unchanged') {
+          io.out(`already wired: ${ANTIGRAVITY_GUARD_KEY} in ${target}`);
+          return 0;
+        }
+        if (status === 'added') {
+          io.out(`${opt.apply ? 'added' : 'would add'} ${ANTIGRAVITY_GUARD_KEY} (PreToolUse [run_command]: ${entry.PreToolUse[0].hooks[0].command})`);
+        } else {
+          io.out(`${opt.apply ? 'replaced' : 'would replace'} ${ANTIGRAVITY_GUARD_KEY} (${diff})`);
+        }
+        if (original !== null && formatLike(original, settings) !== original) {
+          io.err(`WARN ${target} is not in plain indented JSON layout; writing it re-indents the existing content (values and order unchanged)`);
+        }
+        if (!opt.apply) {
+          io.out(`dry run: ${original === null ? 'would create' : 'would update'} ${target}; add --apply to write`);
+          return 0;
+        }
+        const backup = original === null ? null : backupPath(target, stamp(io.now ? io.now() : new Date()));
+        writeSettings(target, bom + formatLike(original, merged), backup);
+        if (backup) io.out(`backed up: ${backup}`);
+        io.out(`${original === null ? 'created' : 'updated'} ${target}`);
+        return 0;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const detail = e instanceof SyntaxError ? `${target} is not valid JSON (${msg}); nothing written` : msg;
+        return fail(`hooks: ${detail}`);
+      }
+    }
     const source = path.join(repo, 'adapters', 'claude-code', opt.node ? 'hooks.node.example.json' : 'settings.example.json');
     const target = path.join(home, '.claude', 'settings.json');
     const unsafe = escapes(home, '.claude', target);

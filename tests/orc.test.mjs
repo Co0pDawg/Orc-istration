@@ -260,6 +260,10 @@ test('antigravity emits only agy 1.5.16 tools, no deprecated tools, read-only ha
   const rulebook = res.files.find((f) => f.path === '.gemini/AGENTS.md');
   assert.strictEqual((rulebook.content.match(/listing, searching and URL fetching/gi) ?? []).length, 1, 'generated rulebook includes the missing-tools gap exactly once');
   assert.ok(rulebook.content.includes(gap), 'generated rulebook includes the missing-tools gap');
+  assert.match(rulebook.content, /orc hooks --tool antigravity/);
+  assert.match(rulebook.content, /read-only-role rule.*Claude Code only/i);
+  assert.match(rulebook.content, /allow prints nothing/i);
+  assert.strictEqual((rulebook.content.match(/hook fires in a headless `agy -p` run/g) ?? []).length, 1, 'headless hook behaviour stated once in rulebook');
 });
 
 test('no adapter has duplicate gap entries starting with the same first six words', async () => {
@@ -665,10 +669,62 @@ test('install copies the hook scripts for claude-code; status reports them; a ha
   assert.equal(fs.readdirSync(tools).filter((f) => f.startsWith('board-reminder.ps1.orc-backup-')).length, 1);
   assert.equal((await run(['status', '--tool', 'claude-code', '--home', home, '--no-board'])).code, 0);
   for (const s of scripts) assert.ok(fs.existsSync(path.join(tools, s)), s);
-  // Other tools wire no hooks and get no scripts.
-  const agy = tempDir('hookscripts-agy');
-  assert.equal((await run(['install', '--tool', 'antigravity', '--home', agy, '--apply', '--no-board'])).code, 0);
-  assert.ok(!fs.existsSync(path.join(agy, '.gemini', 'tools')));
+  // Tools without hookScripts wire no hooks and get no scripts.
+  const codex = tempDir('hookscripts-codex');
+  assert.equal((await run(['install', '--tool', 'codex', '--home', codex, '--apply', '--no-board'])).code, 0);
+  assert.ok(!fs.existsSync(path.join(codex, '.codex', 'tools')));
+});
+
+test('install copies tools/guard.mjs for antigravity; status compares it; hand copy kept unless --force; uninstall removes it and reminds about orc-guard', async () => {
+  const home = tempDir('hookscripts-agy');
+  const guardPath = path.join(home, '.gemini', 'tools', 'guard.mjs');
+  // Pre-seed a differing hand-copied guard.mjs: install keeps it without --force.
+  fs.mkdirSync(path.dirname(guardPath), { recursive: true });
+  fs.writeFileSync(guardPath, '// old hand copy\n');
+  const first = await run(['install', '--tool', 'antigravity', '--home', home, '--apply', '--no-board']);
+  assert.strictEqual(first.code, 0, first.err);
+  assert.match(first.out, /kept \(hand-copied hook script, differs; --force replaces it, with a backup\): .*guard\.mjs/);
+  assert.strictEqual(fs.readFileSync(guardPath, 'utf8'), '// old hand copy\n');
+  const st1 = await run(['status', '--tool', 'antigravity', '--home', home, '--no-board']);
+  assert.strictEqual(st1.code, 1);
+  assert.match(st1.out, /differs \(first difference at line 1; a hand-copied hook script.*guard\.mjs/);
+
+  // --force replaces it with a backup and records it in the manifest.
+  const forced = await run(['install', '--tool', 'antigravity', '--home', home, '--apply', '--no-board', '--force']);
+  assert.strictEqual(forced.code, 0, forced.err);
+  assert.strictEqual(read(guardPath), read(path.join(REPO, 'tools', 'guard.mjs')));
+  assert.strictEqual(fs.readdirSync(path.dirname(guardPath)).filter((f) => f.startsWith('guard.mjs.orc-backup-')).length, 1);
+  const mf = JSON.parse(fs.readFileSync(path.join(home, '.gemini', '.orc-manifest.antigravity.json'), 'utf8'));
+  assert.ok(mf.files['.gemini/tools/guard.mjs'], 'guard.mjs recorded in antigravity manifest');
+  assert.strictEqual((await run(['status', '--tool', 'antigravity', '--home', home, '--no-board'])).code, 0);
+
+  // The installed copy runs standalone on an Antigravity PreToolUse payload.
+  const repo = path.join(home, 'r');
+  fs.mkdirSync(repo);
+  spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repo });
+  const hook = spawnSync(process.execPath, [guardPath], {
+    input: JSON.stringify({ cwd: repo, hookEventName: 'PreToolUse', toolCall: { id: 't1', name: 'run_command', args: { CommandLine: 'git commit -m x' } } }),
+    encoding: 'utf8',
+  });
+  assert.strictEqual(hook.status, 0, hook.stderr);
+  assert.strictEqual(JSON.parse(hook.stdout).decision, 'deny');
+
+  // Wire orc-guard in hooks.json: uninstall reminds the user to run hooks --tool antigravity --home <home> --remove --apply.
+  assert.strictEqual((await run(['hooks', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
+  const unDry = await run(['uninstall', '--tool', 'antigravity', '--home', home]);
+  assert.strictEqual(unDry.code, 0, unDry.err);
+  assert.ok(unDry.out.includes(`hooks --tool antigravity --home ${home} --remove --apply`), unDry.out);
+  const unApply = await run(['uninstall', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.strictEqual(unApply.code, 0, unApply.err);
+  assert.ok(!fs.existsSync(guardPath), 'guard.mjs deleted by uninstall');
+  assert.ok(unApply.out.includes(`hooks --tool antigravity --home ${home} --remove --apply`), unApply.out);
+
+  // Once orc-guard is removed from hooks.json, uninstall prints no reminder.
+  assert.strictEqual((await run(['hooks', '--tool', 'antigravity', '--home', home, '--remove', '--apply'])).code, 0);
+  assert.strictEqual((await run(['install', '--tool', 'antigravity', '--home', home, '--apply', '--no-board'])).code, 0);
+  const unClean = await run(['uninstall', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.strictEqual(unClean.code, 0, unClean.err);
+  assert.doesNotMatch(unClean.out, /--remove --apply/);
 });
 
 test('install --board adds the Board line; without it a warning', async () => {
