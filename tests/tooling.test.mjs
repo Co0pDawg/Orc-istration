@@ -4,18 +4,23 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
-import { main, loadModels } from '../tools/orc.mjs';
+import { spawn, spawnSync, ChildProcess } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { main, loadModels, loadRoles } from '../tools/orc.mjs';
 import { parseMarchingOrders, briefTemplate, lintBrief } from '../tools/lib/brief.mjs';
 import { classify } from '../tools/lib/reviewtier.mjs';
 import { costlog, dispatchRows } from '../tools/lib/costlog.mjs';
 import { mergeHooks, formatLike } from '../tools/lib/hooks.mjs';
+import { killTree, runDispatch } from '../tools/lib/dispatch.mjs';
 import { run as reminder } from '../tools/board-reminder.mjs';
+import { q } from './helpers.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORC = path.join(REPO, 'tools', 'orc.mjs');
 const AGENTS = fs.readFileSync(path.join(REPO, 'AGENTS.md'), 'utf8').replace(/\r\n/g, '\n');
 const tempDir = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `orc-${name}-`));
+// No test reads this machine's ~/.orc: the shared state home is an empty scratch folder, which children inherit.
+process.env.ORC_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'orc-data-'));
 
 async function run(argv) {
   const out = [];
@@ -24,10 +29,27 @@ async function run(argv) {
   return { code, out: out.join('\n'), err: err.join('\n') };
 }
 
-// A child CLI with HOME and USERPROFILE on an empty scratch dir that must stay empty.
+// An environment in which dispatch can never start a real claude, agy or codex: PATH holds no agent CLI (System32
+// stays for taskkill), the Antigravity install folder (%LOCALAPPDATA%/agy/bin) is scratch, and no ORC_TOOL_BIN_* is
+// inherited; the stubs come in through `extra`.
+function agentFree(env, extra = {}) {
+  const out = { ...env };
+  const set = (key, value) => {
+    for (const k of Object.keys(out)) if (k.toLowerCase() === key.toLowerCase()) delete out[k];
+    out[key] = value;
+  };
+  for (const k of Object.keys(out)) if (k.startsWith('ORC_TOOL_BIN_')) delete out[k];
+  set('PATH', [tempDir('nopath'), ...(process.platform === 'win32' ? [path.join(process.env.SystemRoot ?? 'C:/Windows', 'System32')] : [])].join(path.delimiter));
+  set('LOCALAPPDATA', tempDir('localappdata'));
+  for (const [k, v] of Object.entries(extra)) set(k, v);
+  return out;
+}
+
+// A child CLI with HOME and USERPROFILE on an empty scratch dir that must stay empty. A dispatch runs agent-free.
 function isolated(argv, extraEnv = {}) {
   const fakeHome = tempDir('fakehome');
-  const env = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome, ...extraEnv };
+  const base = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome };
+  const env = argv[0] === 'dispatch' ? agentFree(base, extraEnv) : { ...base, ...extraEnv };
   const r = spawnSync(process.execPath, [ORC, ...argv], { env, encoding: 'utf8', timeout: 60000 });
   assert.deepEqual(fs.readdirSync(fakeHome), [], 'scratch home stays empty');
   return { code: r.status, out: r.stdout, err: r.stderr };
@@ -303,6 +325,29 @@ test('costlog rows, spans and per-card tokens from a real-shaped export', async 
   assert.equal(costlog(EXPORT, SID).includes('TODO'), true);
 });
 
+test('the cost-log template follows the Record format in orchestration/README.md', () => {
+  const readme = fs.readFileSync(path.join(REPO, 'orchestration', 'README.md'), 'utf8').replace(/\r\n/g, '\n');
+  const template = fs.readFileSync(path.join(REPO, 'orchestration', 'log', 'TEMPLATE.md'), 'utf8').replace(/\r\n/g, '\n');
+  const record = readme.split('## Record format')[1].split('\n## ')[0];
+  const columns = [...record.matchAll(/^\| (.+?) \| .+ \|$/gm)].map((m) => m[1].replace(/`/g, '')).filter((c) => c !== 'Column' && !/^-+$/.test(c));
+  const header = template.split('\n').find((l) => l.startsWith('| # |'));
+  assert.deepEqual(header.split('|').slice(1, -1).map((c) => c.trim()), columns, 'one column per Record format column, in order');
+  assert.doesNotMatch(header, /\bCard\b|\bStart\b/, 'Card and Start are draft-only columns from costlog');
+  for (const h of ['- Date:', '- Project:', '- Branch:', '- Task:', '- Outcome:', '## Totals', 'Orchestrator context:', '## Loop signal', 'Escaped defects:', '## Spec misses']) assert.ok(template.includes(h), h);
+});
+
+test('.gitignore tracks the cost-log template and ignores the cost logs', () => {
+  // --no-index judges the rules alone, whatever the index holds; exit 0 = ignored, 1 = not ignored.
+  const ignored = (p) => {
+    const r = spawnSync('git', ['check-ignore', '--no-index', '-q', p], { cwd: REPO, encoding: 'utf8' });
+    assert.ok(r.status === 0 || r.status === 1, `git check-ignore ${p}: exit ${r.status} ${r.stderr}`);
+    return r.status === 0;
+  };
+  assert.equal(ignored('orchestration/log/TEMPLATE.md'), false, 'the template is tracked');
+  assert.equal(ignored('orchestration/log/2026-01-01-x.md'), true, 'a cost log stays local');
+  assert.equal(ignored('orchestration/log/anomalies.md'), true, 'the anomaly log stays local');
+});
+
 test('costlog --board reads through the board CLI export', async () => {
   const boardRepo = tempDir('boardrepo');
   fs.mkdirSync(path.join(boardRepo, 'local'));
@@ -328,17 +373,17 @@ test('dispatch --dry-run prints the argv for antigravity and claude-code', () =>
   const agy = isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', brief, '--dry-run']);
   assert.equal(agy.code, 0, agy.err);
   const slug = models.antigravity.headless.low;
-  assert.ok(agy.out.includes(` -p ${JSON.stringify(fs.readFileSync(brief, 'utf8'))} --agent scout --model ${slug} --output-format json\n`), agy.out);
+  assert.ok(agy.out.includes(` -p ${JSON.stringify(fs.readFileSync(brief, 'utf8'))} --agent scout --model ${slug} --output-format json --disable-slash-commands\n`), agy.out);
   assert.match(agy.out, /stdin: none/);
   const cc = isolated(['dispatch', '--tool', 'claude-code', '--role', 'builder', '--brief', brief, '--dry-run']);
   assert.equal(cc.code, 0, cc.err);
   assert.match(cc.out, new RegExp(` -p --agent builder --model ${models['claude-code'].high.model}\\n`));
-  assert.match(cc.out, /stdin: \d+ bytes \(the brief\)/);
+  assert.match(cc.out, /stdin: \d+ bytes \(the brief\)\n/);
 });
 
 test('dispatch refuses a tool without a recipe and a failing brief', () => {
   const good = briefFile();
-  for (const tool of ['codex', 'cursor', 'copilot', 'gemini-cli', 'opencode']) {
+  for (const tool of ['cursor', 'copilot', 'gemini-cli', 'opencode']) {
     const r = isolated(['dispatch', '--tool', tool, '--role', 'scout', '--brief', good, '--dry-run']);
     assert.equal(r.code, 1);
     assert.match(r.err, new RegExp(`no headless recipe for ${tool}`));
@@ -389,11 +434,89 @@ test('dispatch real run passes the brief byte-identical, with no shell, and retu
     if (tool === 'antigravity') {
       assert.equal(argv[0], '-p');
       assert.equal(argv[1], text, 'brief arrives byte-identical as one argument');
+      assert.ok(argv.includes('--disable-slash-commands'), 'antigravity headless passes --disable-slash-commands');
       assert.equal(stdin, '');
     } else {
       assert.deepEqual(argv.slice(0, 3), ['-p', '--agent', 'builder']);
       assert.equal(stdin, text, 'brief arrives byte-identical on stdin');
     }
+  }
+});
+
+test('dispatch codex: read-only sandbox only for scout and researcher, effort only when the tier has one, role body and brief on stdin', () => {
+  const brief = briefFile(goodBrief({ 7: NASTY.replace(/\n/g, '\n   ') }));
+  const text = fs.readFileSync(brief, 'utf8');
+  const models = loadModels(REPO);
+  const roles = loadRoles(REPO);
+  const effort = (tier) => (models.codex[tier].effort ? ['-c', `model_reasoning_effort=${JSON.stringify(models.codex[tier].effort)}`] : []);
+  assert.equal(models.codex.low.effort, undefined, 'the low tier has no effort, so scout covers the no-effort branch');
+  assert.ok(models.codex.high.effort, 'the high tier has an effort');
+  // Only scout and researcher run read-only (they report inline: that sandbox cannot write a scratch file); the refuter
+  // runs tests and builds a throwaway worktree, and the review-* roles write at most an overflow scratch report.
+  const winMxc = process.platform === 'win32' ? ['-c', 'windows.sandbox=mxc'] : [];
+  for (const [role, sandbox] of [['scout', 'read-only'], ['researcher', 'read-only'], ['refuter', 'workspace-write'], ['review-code-explorer', 'workspace-write'], ['builder', 'workspace-write']]) {
+    const r0 = roles.find((r) => r.name === role);
+    const want = ['exec', '--model', models.codex[r0.tier].model, '--sandbox', sandbox, ...effort(r0.tier), ...winMxc, '-'];
+    const dir = tempDir('stub');
+    const r = isolated(['dispatch', '--tool', 'codex', '--role', role, '--brief', brief], { ORC_TOOL_BIN_CODEX: stub(dir), STUB_EXIT: '0' });
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'argv.json'), 'utf8')), want, role);
+    assert.equal(fs.readFileSync(path.join(dir, 'stdin.txt'), 'utf8'), `${r0.body}\n\n---\n\n${text}`, `${role}: role body, separator, brief byte-identical`);
+    const dry = isolated(['dispatch', '--tool', 'codex', '--role', role, '--brief', brief, '--dry-run']);
+    assert.equal(dry.code, 0, dry.err);
+    assert.ok(dry.out.includes(` ${want.map(q).join(' ')}\n`), dry.out);
+    assert.match(dry.out, new RegExp(`stdin: ${Buffer.byteLength(`${r0.body}\n\n---\n\n${text}`)} bytes \\(the role body, then the brief\\)\\n`));
+  }
+});
+
+test('F8: codex headless adds -c windows.sandbox=mxc before - on Windows for every role, and leaves other platforms unchanged', async () => {
+  const codex = (await import('../adapters/codex.mjs')).default;
+  const roles = loadRoles(REPO);
+  const models = loadModels(REPO, { local: false });
+  for (const name of ['scout', 'researcher', 'builder', 'refuter']) {
+    const role = roles.find((r) => r.name === name);
+    const tierModel = models.codex[role.tier];
+    const win = codex.headless(role, tierModel, 'brief', { platform: 'win32' });
+    assert.deepEqual(win.args.slice(-3), ['-c', 'windows.sandbox=mxc', '-'], `win32 ${name}`);
+    for (const platform of ['linux', 'darwin']) {
+      const other = codex.headless(role, tierModel, 'brief', { platform });
+      assert.equal(other.args.at(-1), '-', `${platform} ${name}`);
+      assert.ok(!other.args.includes('windows.sandbox=mxc'), `${platform} ${name} has no windows.sandbox=mxc`);
+      assert.deepEqual(win.args, [...other.args.slice(0, -1), '-c', 'windows.sandbox=mxc', '-'], `${platform} vs win32 ${name}`);
+    }
+  }
+});
+
+test('killTree on a gone pid and a live process: the POSIX fallback runs only when the tree kill throws', async () => {
+  // A pid no process can have (not a multiple of 4 on Windows, above pid_max on Linux), so nothing real is killed.
+  // On POSIX process.kill(-pid) throws and the fallback runs, silently. On Windows taskkill exits 128 (already gone),
+  // which counts as success; its failure fallback is covered with an injected runSync below.
+  const gone = 2147483647;
+  const calls = [];
+  const said = [];
+  killTree({ pid: gone, kill: (sig) => calls.push(sig) }, { err: (s) => said.push(s) });
+  assert.deepEqual(calls, process.platform === 'win32' ? [] : ['SIGKILL']);
+  assert.deepEqual(said, []);
+  // A live process: the tree kill works, so the fallback is not called.
+  const live = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore', detached: process.platform !== 'win32' });
+  const liveCalls = [];
+  const liveSaid = [];
+  try {
+    killTree({ pid: live.pid, kill: (sig) => liveCalls.push(sig) }, { err: (s) => liveSaid.push(s) });
+    assert.deepEqual(liveCalls, []);
+    assert.deepEqual(liveSaid, [], 'nothing to say when the tree kill works');
+    // Wait on the exit event: a synchronous poll never lets Node reap the child, and on POSIX a killed but unreaped
+    // child still answers signal 0.
+    const ended = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), 5000);
+      live.once('exit', () => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+    assert.equal(ended, true, 'the tree kill ended the process');
+  } finally {
+    if (alive(live.pid)) live.kill('SIGKILL');
   }
 });
 
@@ -420,6 +543,90 @@ test('dispatch honours the timeout and kills the child tree', () => {
   const until = Date.now() + 5000;
   while (alive(pid) && Date.now() < until) spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},200)']);
   assert.equal(alive(pid), false, 'grandchild was killed with the tree');
+});
+
+test('killTree on Windows falls back to child.kill() and says so when taskkill errors or exits non-zero', () => {
+  const calls = [];
+  const makeChild = () => {
+    const killed = [];
+    const lines = [];
+    return { pid: 4242, killed, lines, err: (s) => lines.push(s), kill: (...a) => killed.push(a) };
+  };
+  const partial = (why) => [`dispatch: taskkill failed (${why}); killed only pid 4242, its child processes may still be running`];
+
+  // taskkill errors (e.g. ENOENT/EACCES in a sandbox): falls back to child.kill().
+  const cErr = makeChild();
+  killTree(cErr, {
+    platform: 'win32',
+    err: cErr.err,
+    runSync: (cmd, args, opts) => {
+      calls.push({ cmd, args, opts });
+      return { error: Object.assign(new Error('EACCES'), { code: 'EACCES' }), status: null };
+    },
+  });
+  assert.deepStrictEqual(calls[0], { cmd: 'taskkill', args: ['/pid', '4242', '/T', '/F'], opts: { stdio: 'ignore', shell: false } });
+  assert.deepStrictEqual(cErr.killed, [[]]);
+  assert.deepStrictEqual(cErr.lines, partial('EACCES'));
+
+  // taskkill exits non-zero (other than 128): falls back to child.kill().
+  const cNonZero = makeChild();
+  killTree(cNonZero, { platform: 'win32', err: cNonZero.err, runSync: () => ({ status: 1 }) });
+  assert.deepStrictEqual(cNonZero.killed, [[]]);
+  assert.deepStrictEqual(cNonZero.lines, partial('exit status 1'));
+
+  // runSync throws: falls back to child.kill() exactly once.
+  const cThrow = makeChild();
+  killTree(cThrow, {
+    platform: 'win32',
+    err: cThrow.err,
+    runSync: () => {
+      throw Object.assign(new Error('spawnSync failed'), { code: 'EPERM' });
+    },
+  });
+  assert.deepStrictEqual(cThrow.killed, [[]]);
+  assert.deepStrictEqual(cThrow.lines, partial('EPERM'));
+
+  // taskkill succeeds (status 0, no error) or the process was already gone (128): no child.kill(), no line.
+  for (const status of [0, 128]) {
+    const c = makeChild();
+    killTree(c, { platform: 'win32', err: c.err, runSync: () => ({ status }) });
+    assert.deepStrictEqual(c.killed, [], `status ${status}`);
+    assert.deepStrictEqual(c.lines, [], `status ${status}`);
+  }
+
+  // Without an err function the fallback still kills and writes nothing.
+  const cQuiet = makeChild();
+  killTree(cQuiet, { platform: 'win32', runSync: () => ({ status: 1 }) });
+  assert.deepStrictEqual(cQuiet.killed, [[]]);
+
+  // Non-Windows: kills process group, falls back to child.kill('SIGKILL') on throw.
+  const cPosix = makeChild();
+  killTree(cPosix, {
+    platform: 'linux',
+    killProcess: () => {
+      throw new Error('ESRCH');
+    },
+  });
+  assert.deepStrictEqual(cPosix.killed, [['SIGKILL']]);
+});
+
+test('runDispatch: an error after the timeout kill began is a failed kill, and the run still exits 124', async (t) => {
+  let child = null;
+  t.mock.method(ChildProcess.prototype, 'on', function (ev, fn) {
+    child ??= this;
+    return EventEmitter.prototype.on.call(this, ev, fn);
+  });
+  const lines = [];
+  const err = (s) => {
+    lines.push(s);
+    // Runs before killTree, so the error lands while the kill is under way.
+    if (s.startsWith('dispatch: timed out')) child.emit('error', new Error('kill EPERM'));
+  };
+  const plan = { exe: { command: process.execPath }, argv: ['-e', 'setTimeout(() => {}, 30000)'], stdin: null, toolId: 'antigravity' };
+  const code = await runDispatch(plan, { timeoutSec: 1, err });
+  assert.strictEqual(code, 124);
+  assert.ok(lines.includes('dispatch: kill failed: kill EPERM'), lines.join('\n'));
+  assert.ok(!lines.some((l) => l.startsWith('dispatch: cannot start')), lines.join('\n'));
 });
 
 // ---------- hooks ----------
@@ -587,22 +794,23 @@ test('models validation rejects bad ids, tiers, efforts and values in both files
   const cases = [
     [{ nosuchtool: { low: { model: 'x' } } }, /unknown tool id "nosuchtool"/],
     [{ codex: { huge: { model: 'x' } } }, /codex: unknown tier key "huge"/],
-    [{ codex: { mid: { effort: 'extreme' } } }, /codex\.mid\.effort: "extreme" is not one of/],
+    [{ codex: { mid: { effort: 'extreme' } } }, /codex\.mid\.effort: must be one of low, medium, high, xhigh, max, ultra/],
     [{ codex: { low: { model: 5 } } }, /codex\.low\.model: must be a string/],
     [{ antigravity: { headless: { low: 7 } } }, /antigravity\.headless\.low: model must be a string/],
     [{ antigravity: { headless: { turbo: 'x' } } }, /antigravity\.headless: unknown tier key "turbo"/],
   ];
   for (const [bad, re] of cases) {
     fs.writeFileSync(path.join(copy, 'models.local.json'), JSON.stringify(bad));
-    assert.throws(() => loadModels(copy), (e) => /^models\.local\.json: /.test(e.message) && re.test(e.message), JSON.stringify(bad));
+    assert.throws(() => loadModels(copy), (e) => /^models\.local\.json: /.test(e.message) && re.test(e.message) && !e.message.includes('extreme'), JSON.stringify(bad));
     const c = await run(['check', '--repo', copy]);
     assert.equal(c.code, 1);
     assert.match(c.err, re);
+    assert.doesNotMatch(c.err, /extreme/);
     fs.rmSync(path.join(copy, 'models.local.json'));
     const [tool] = Object.keys(bad);
     const merged = { ...base, [tool]: { ...(base[tool] ?? {}), ...bad[tool] } };
     fs.writeFileSync(path.join(copy, 'models.json'), JSON.stringify(merged));
-    assert.throws(() => loadModels(copy, { local: false }), (e) => /^models\.json: /.test(e.message) && re.test(e.message));
+    assert.throws(() => loadModels(copy, { local: false }), (e) => /^models\.json: /.test(e.message) && re.test(e.message) && !e.message.includes('extreme'));
     fs.writeFileSync(path.join(copy, 'models.json'), JSON.stringify(base));
   }
   assert.doesNotThrow(() => loadModels(copy));
@@ -626,7 +834,13 @@ test('dispatch names the executable and the override when the tool is not instal
   const missing = path.join(tempDir('nobin'), 'agy-not-here.exe');
   const r = isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile()], { ORC_TOOL_BIN_ANTIGRAVITY: missing });
   assert.equal(r.code, 127);
-  assert.match(r.err, /cannot start .*agy-not-here\.exe: .*not installed or not on PATH; set ORC_TOOL_BIN_ANTIGRAVITY/);
+  // The override is already set, so the hint names it and the path it gives, not "set it".
+  assert.match(r.err, /cannot start .*agy-not-here\.exe: ORC_TOOL_BIN_ANTIGRAVITY names .*agy-not-here\.exe, which does not exist; point it at the real executable/);
+  assert.doesNotMatch(r.err, /set ORC_TOOL_BIN_ANTIGRAVITY to its full path/);
+  // The dry run says the same before anything starts.
+  const dry = isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile(), '--dry-run'], { ORC_TOOL_BIN_ANTIGRAVITY: missing });
+  assert.equal(dry.code, 0, dry.err);
+  assert.ok(dry.out.includes(`note: ORC_TOOL_BIN_ANTIGRAVITY names ${missing}, which does not exist`), dry.out);
 });
 
 test('gemini-cli gap says the headless syntax exists and why dispatch does not use it', async () => {
@@ -659,10 +873,17 @@ test('a tool whose tiers share a model in models.json has a gap naming those tie
 test('review-tier: prompts count as product; uncommitted changes warn', async () => {
   for (const p of ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'roles/scout.md', 'agents/scout.md', '.claude/x.md', '.agents/x.md', '.codex/AGENTS.md',
     '.cursor/agents/a.md', '.gemini/GEMINI.md', 'profiles/p.md', 'adapters/codex.notes.md', 'skills/x/SKILL.md', 'a/b.agent.md',
-    'review/PROCEDURE.md', 'review/lanes/code-reviewer.md', 'workflows/start.md', 'commands/start.md']) {
+    'review/PROCEDURE.md', 'review/lanes/code-reviewer.md', 'workflows/start.md', 'commands/pre-pr-review.md', 'commands/start.md']) {
     assert.equal(classify([p]).tier, 'Full', p);
   }
   assert.equal(classify(['README.md', 'docs/rulebook-notes.md', 'tests/a.test.mjs']).tier, 'Light-eligible');
+  // Only the top-level prompt folders: a docs page about them stays Light-eligible.
+  assert.equal(classify(['docs/review/notes.md', 'docs/workflows.md', 'docs/commands/x.md']).tier, 'Light-eligible');
+  for (const p of ['review/PROCEDURE.md', 'workflows/start.md', 'commands/start.md']) {
+    const d = repoWith({ [p]: 'a\n', 'README.md': 'r\n' });
+    commit(d, (dir) => fs.writeFileSync(path.join(dir, p), 'b\n'));
+    assert.match((await run(['review-tier', '--base', 'base', '--repo-dir', d])).out, new RegExp(`^Full: .*${p.replace('.', '\\.')}`, 'm'), p);
+  }
   // Every tracked file in the prompt folders counts as product, not only the samples above.
   const tracked = spawnSync('git', ['ls-files', 'review', 'workflows', 'commands'], { cwd: REPO, encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
   for (const dir of ['review/', 'workflows/', 'commands/']) assert.ok(tracked.some((p) => p.startsWith(dir)), `tracked files under ${dir}`);
@@ -855,7 +1076,7 @@ test('R3: a signal to orc kills the dispatched tree', { skip: NO_SIGNALS }, asyn
   for (const [sig, code] of [['SIGTERM', 143], ['SIGINT', 130]]) {
     const dir = tempDir('stub');
     const child = spawn(process.execPath, [ORC, 'dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile()], {
-      env: { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome, ORC_TOOL_BIN_ANTIGRAVITY: stub(dir), STUB_SLEEP: '1' },
+      env: agentFree({ ...process.env, HOME: fakeHome, USERPROFILE: fakeHome }, { ORC_TOOL_BIN_ANTIGRAVITY: stub(dir), STUB_SLEEP: '1' }),
       stdio: 'ignore',
     });
     const until = Date.now() + 15000;
@@ -1025,6 +1246,9 @@ test('help: every dispatched command has a help entry, and every entry is a comm
     if (c !== 'help') assert.equal((await run([c, '--help'])).out, one.out, c);
   }
   assert.match((await run(['install', '--help'])).out, /--board-repo <dir> +the Orc-Dashboard checkout/);
+  const modelsHelp = (await run(['help', 'models'])).out;
+  assert.match(modelsHelp, /--family <name>/);
+  assert.doesNotMatch(modelsHelp, /Flash slugs only/i);
   assert.equal((await run(['help', 'nope'])).code, 1);
   const nope = await run(['nope']);
   assert.equal(nope.code, 1);

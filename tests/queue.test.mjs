@@ -391,7 +391,7 @@ test('the queue options are refused by every other command (bench run --model is
   for (const argv of [['bench', 'run', '--dry-run', '--model', 'x'], ['dispatch', '--tool', 'claude-code', '--role', 'builder', '--brief', 'b.md', '--state', 's'], ['review-tier', '--max', '1']]) {
     const r = spawnSync(process.execPath, [ORC, ...argv], { encoding: 'utf8' });
     assert.strictEqual(r.status, 1, argv.join(' '));
-    assert.match(r.stderr, /apply to queue only/, argv.join(' '));
+    assert.match(r.stderr, /appl(y|ies) to (dispatch and )?queue only/, argv.join(' '));
   }
 });
 

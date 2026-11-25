@@ -1,14 +1,29 @@
-# <date> · <project> · <slug>
-Branch: <branch> · Task: <task>
-Outcome: shipped | partial | abandoned — verification passed: <...>
+# Cost log: <YYYY-MM-DD> <project> <slug>
+
+- Date: YYYY-MM-DD
+- Project: <project>
+- Branch: <branch>
+- Task: <ticket or one line>
+- Outcome: <shipped | partial | abandoned> — <what verification passed>
 
 | # | Agent | Model | Purpose | Tokens | Tools | Time | Result | Value |
 |---|---|---|---|---|---|---|---|---|
-| 1 | | | | | | | | earned / marginal / waste |
+| 1 | <scout\|researcher\|builder\|refuter\|debugger\|review-*\|orchestrator> | <model> | <one line> | <tokens> | <tools> | <min> | <ACCEPT/REWORK/DONE/...> | <earned\|marginal\|waste: reason> |
 
-Value: earned = changed the next step or caught a real defect; marginal = correct but doable inline in under 5 tool calls; waste = wrong, ignored, duplicated or rate-limited. A resumed agent gets its own row with its token delta.
+## Totals
 
-Totals: <tokens>, <wall clock>. Orchestrator context: <start>k → <end>k (target share under 20%)
-Loop signal: spec defects found by the builder, must-fixes confirmed vs rejected, SPEC VS INTENT entries, REWORK rounds, review tier used, what later review or CI caught that the tier missed
-Escaped defects: <one line per defect found after the loop accepted: what, who caught it, why the loop missed it; or none>
-Spec misses: <what the marching orders got wrong; feed back into the template>
+- Tokens: <sum of subagent tokens>
+- Wall clock: <minutes> min across <n> dispatch(es)
+- Orchestrator context: <start>k → <end>k
+
+## Loop signal
+
+- Spec defects found by builder: <none | list>
+- Refuter must-fixes: <confirmed> confirmed, <rejected> rejected
+- SPEC VS INTENT entries: <count or none>
+- REWORK rounds: <count>
+- Escaped defects: <none | one line per defect found after the loop accepted: what, who caught it, why the loop missed it>
+
+## Spec misses
+
+- <none | what the marching orders got wrong that cost a dispatch or rework round>

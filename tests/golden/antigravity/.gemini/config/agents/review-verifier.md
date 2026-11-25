@@ -2,10 +2,7 @@
 name: review-verifier
 description: Review panel only (review/PROCEDURE.md). Settles a batch of review leads, or in findings mode the explorers' issue and warning findings, against the code (CONFIRMED, PLAUSIBLE or REFUTED, each with evidence), and in severity-review mode raises under-rated suggestions, nits and questions that meet an escalation rule. Read-only.
 tools:
-  - list_dir
-  - find_by_name
-  - grep_search
-  - view_file
+  - read_file
   - run_command
 subagent: true
 mainAgent: true

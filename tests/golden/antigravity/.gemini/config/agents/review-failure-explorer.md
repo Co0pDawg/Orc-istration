@@ -2,10 +2,7 @@
 name: review-failure-explorer
 description: Review panel only (review/PROCEDURE.md). Runs the silent-failure-hunter lane over a branch diff as its own agent - swallowed, hidden or misreported failures - with a written failure-injection pass per call site and the failure/retry and fallback-persistence angles. Read-only; reports findings, leads and questions per review/contract.md.
 tools:
-  - list_dir
-  - find_by_name
-  - grep_search
-  - view_file
+  - read_file
   - run_command
 subagent: true
 mainAgent: true

@@ -2,10 +2,7 @@
 name: review-docs-explorer
 description: Review panel only (review/PROCEDURE.md). Runs the comment-analyzer lane over a branch diff - comment and doc-comment accuracy, <file>.md annotation files, area documentation co-change and internal doc accuracy. Read-only; reports findings, leads and questions per review/contract.md.
 tools:
-  - list_dir
-  - find_by_name
-  - grep_search
-  - view_file
+  - read_file
   - run_command
 subagent: true
 mainAgent: true
