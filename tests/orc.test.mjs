@@ -183,24 +183,199 @@ test('install: dry run, apply, backup, claude-code guard', async () => {
   assert.match(refused.err, /refusing --tool claude-code without --home/);
 });
 
-const SAMPLE = `gemini-3.8-flash-high     Gemini 3.8 Flash (High)
-gemini-3.8-flash-medium   Gemini 3.8 Flash (Medium)
-gemini-3.8-flash-low      Gemini 3.8 Flash (Low)
-claude-sonnet-4-6         Claude Sonnet 4.6 (Thinking)
-claude-opus-4-6-thinking  Claude Opus 4.6 (Thinking)
-gpt-oss-120b-medium       GPT-OSS 120B (Medium)
-`;
+const FULL_AGY_MODELS = [
+  'gemini-4-neon-high\tGemini 4 Neon (High)',
+  'gemini-4-neon-xhigh\tGemini 4 Neon (Extra High)',
+  'gemini-4-neon-medium\tGemini 4 Neon (Medium)',
+  'gemini-4-neon-low\tGemini 4 Neon (Low)',
+  'gemini-4-hydrogen-high\tGemini 4 Hydrogen (High)',
+  'gemini-3.8-flash-high\tGemini 3.8 Flash (High)',
+  'gemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)',
+  'gemini-3.8-flash-low\tGemini 3.8 Flash (Low)',
+  'claude-sonnet-4-6\tClaude Sonnet 4.6',
+  'gpt-oss-120b-medium\tGPT-OSS 120B (Medium)',
+  'gemini-pro-orchestrator-neon\tGemini Pro Orchestrator Neon',
+].join('\n') + '\n';
 
-test('models helper reads agy models output', async () => {
-  assert.deepEqual(parseAgyModels(SAMPLE).fragment, {
+test('antigravity emits only agy 1.5.16 tools, no deprecated tools, read-only has no edit, gaps documented', async () => {
+  const roles = loadRoles(REPO);
+  const [res] = await buildGolden(REPO, 'antigravity');
+  assert.deepStrictEqual(res.errors, []);
+  assert.ok(res.rulebook && res.rulebook.size < 24000, `rulebook size ${res.rulebook?.size} under 24000`);
+  const deprecated = ['find_by_name', 'grep_search', 'list_dir', 'view_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content', 'read_url_content'];
+  for (const f of res.files) {
+    for (const d of deprecated) {
+      assert.ok(!f.content.includes(d), `${f.path} must not name deprecated tool ${d}`);
+    }
+  }
+  const agents = res.files.filter((f) => f.role);
+  assert.strictEqual(agents.length, roles.length);
+  for (const f of agents) {
+    const role = roles.find((r) => r.name === f.role);
+    const { data } = parse(f.content);
+    assert.ok(Array.isArray(data.tools), `${f.path} tools array`);
+    const want = role.access === 'write'
+      ? ['read_file', 'run_command', 'write_file', 'edit_file', 'search_web']
+      : role.capabilities.includes('web-search')
+        ? ['read_file', 'run_command', 'search_web']
+        : ['read_file', 'run_command'];
+    assert.deepStrictEqual(data.tools, want, `${f.path} tools`);
+  }
+  const gap = res.adapter.gaps.find((g) => /listing, searching and URL fetching/i.test(g));
+  assert.ok(gap, 'gaps mentions listing, searching and URL fetching');
+  assert.match(gap, /run_command/);
+  assert.match(gap, /search_web/);
+  const rulebook = res.files.find((f) => f.path === '.gemini/AGENTS.md');
+  assert.ok(rulebook.content.includes(gap), 'generated rulebook includes the missing-tools gap');
+});
+
+test('models helper reads agy models output and supports --family', async () => {
+  const expectedFlash = {
     antigravity: { headless: { low: 'gemini-3.8-flash-low', mid: 'gemini-3.8-flash-medium', high: 'gemini-3.8-flash-high' } },
+  };
+  assert.deepStrictEqual(parseAgyModels(FULL_AGY_MODELS).fragment, expectedFlash);
+  const ok = await run(['models', '--tool', 'antigravity', '--from-stdin'], FULL_AGY_MODELS);
+  assert.strictEqual(ok.code, 0, ok.err);
+  assert.strictEqual(ok.out, JSON.stringify(expectedFlash, null, 2));
+
+  const neon = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', 'neon'], FULL_AGY_MODELS);
+  assert.strictEqual(neon.code, 0, neon.err);
+  assert.deepStrictEqual(JSON.parse(neon.out), {
+    antigravity: { headless: { low: 'gemini-4-neon-low', mid: 'gemini-4-neon-medium', high: 'gemini-4-neon-high' } },
   });
-  const ok = await run(['models', '--tool', 'antigravity', '--from-stdin'], SAMPLE);
-  assert.equal(ok.code, 0);
-  assert.equal(JSON.parse(ok.out).antigravity.headless.mid, 'gemini-3.8-flash-medium');
+
+  // Order check: -xhigh and orchestrator-neon before valid tiers, and a later neon family after, are ignored.
+  const ordered = [
+    'gemini-4-neon-xhigh\tExtra High',
+    'gemini-pro-orchestrator-neon\tOrchestrator',
+    FULL_AGY_MODELS,
+    'gemini-3.9-neon-high\tOlder High',
+  ].join('\n');
+  const neonEq = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family=neon'], ordered);
+  assert.strictEqual(neonEq.code, 0, neonEq.err);
+  assert.deepStrictEqual(JSON.parse(neonEq.out), {
+    antigravity: { headless: { low: 'gemini-4-neon-low', mid: 'gemini-4-neon-medium', high: 'gemini-4-neon-high' } },
+  });
+
+  // Missing tiers for a partial family name the missing tiers and the family.
+  const hydrogen = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', 'hydrogen'], FULL_AGY_MODELS);
+  assert.strictEqual(hydrogen.code, 1);
+  assert.match(hydrogen.err, /cannot tell the low, mid hydrogen slug\(s\)/);
+  assert.doesNotMatch(hydrogen.err, /\bhigh\b/);
+
   const bad = await run(['models', '--tool', 'antigravity', '--from-stdin'], 'gpt-oss-120b-medium  GPT\n');
-  assert.equal(bad.code, 1);
+  assert.strictEqual(bad.code, 1);
   assert.match(bad.err, /cannot tell the low, mid, high flash slug/);
+
+  // Regex metacharacters in --family are escaped literally.
+  const regexFamily = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', '.*'], FULL_AGY_MODELS);
+  assert.strictEqual(regexFamily.code, 1);
+  assert.match(regexFamily.err, /cannot tell the low, mid, high \.\* slug\(s\)/);
+
+  const missingVal = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family'], FULL_AGY_MODELS);
+  assert.strictEqual(missingVal.code, 1);
+  assert.match(missingVal.err, /--family needs a value/);
+
+  // (a) Without --family, the original pattern still matches flash-lite slugs.
+  const flashLite = [
+    'gemini-2.5-flash-lite-high\tGemini 2.5 Flash Lite (High)',
+    'gemini-2.5-flash-lite-medium\tGemini 2.5 Flash Lite (Medium)',
+    'gemini-2.5-flash-lite-low\tGemini 2.5 Flash Lite (Low)',
+  ].join('\n') + '\n';
+  const liteRes = await run(['models', '--tool', 'antigravity', '--from-stdin'], flashLite);
+  assert.strictEqual(liteRes.code, 0, liteRes.err);
+  assert.deepStrictEqual(JSON.parse(liteRes.out), {
+    antigravity: { headless: { low: 'gemini-2.5-flash-lite-low', mid: 'gemini-2.5-flash-lite-medium', high: 'gemini-2.5-flash-lite-high' } },
+  });
+
+  // (b) Without --family, uppercase FLASH slugs still fail (case-sensitive original pattern).
+  const upperFlash = [
+    'GEMINI-FLASH-HIGH\tHigh',
+    'GEMINI-FLASH-MEDIUM\tMedium',
+    'GEMINI-FLASH-LOW\tLow',
+  ].join('\n') + '\n';
+  const upperRes = await run(['models', '--tool', 'antigravity', '--from-stdin'], upperFlash);
+  assert.strictEqual(upperRes.code, 1);
+  assert.match(upperRes.err, /cannot tell the low, mid, high flash slug\(s\)/);
+
+  // (c) Explicit --family requires a whole hyphen-separated segment: eon does not match neon.
+  const partialSeg = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', 'eon'], FULL_AGY_MODELS);
+  assert.strictEqual(partialSeg.code, 1);
+  assert.match(partialSeg.err, /cannot tell the low, mid, high eon slug\(s\)/);
+
+  // (d) Explicit --family is case-sensitive: NEON does not match neon.
+  const upperFamily = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', 'NEON'], FULL_AGY_MODELS);
+  assert.strictEqual(upperFamily.code, 1);
+  assert.match(upperFamily.err, /cannot tell the low, mid, high NEON slug\(s\)/);
+
+  // Empty or whitespace-only explicit family returns the empty-family error.
+  assert.deepStrictEqual(parseAgyModels(FULL_AGY_MODELS, ''), { error: 'family name must not be empty' });
+  assert.deepStrictEqual(parseAgyModels(FULL_AGY_MODELS, '   '), { error: 'family name must not be empty' });
+});
+
+test('models --family refuses slugs from two generations; a version in the name picks one', async () => {
+  const neon4 = { antigravity: { headless: { low: 'gemini-4-neon-low', mid: 'gemini-4-neon-medium', high: 'gemini-4-neon-high' } } };
+  const v4 = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', '4-neon'], FULL_AGY_MODELS);
+  assert.strictEqual(v4.code, 0, v4.err);
+  assert.deepStrictEqual(JSON.parse(v4.out), neon4);
+
+  // The first generation lacks a low slug, so the first match per tier mixes 4 and 3.9.
+  const mixed = FULL_AGY_MODELS.replace('gemini-4-neon-low\tGemini 4 Neon (Low)\n', '') + 'gemini-3.9-neon-low\tGemini 3.9 Neon (Low)\n';
+  const m = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', 'neon'], mixed);
+  assert.strictEqual(m.code, 1, m.out);
+  assert.strictEqual(m.out, '');
+  assert.match(m.err, /gemini-3\.9-neon-low, gemini-4-neon-medium, gemini-4-neon-high\); name one model, for example --family 4-neon$/);
+  // The list was readable, so this error does not ask for the "agy models" output again; a missing tier does.
+  assert.doesNotMatch(m.err, /paste the output/);
+  const m4 = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', '4-neon'], mixed);
+  assert.strictEqual(m4.code, 1);
+  assert.match(m4.err, /cannot tell the low 4-neon slug\(s\)/);
+
+  // A consistent first generation still wins over a later one listed in full.
+  const twoFull = FULL_AGY_MODELS + ['gemini-3.9-neon-high\tOld', 'gemini-3.9-neon-medium\tOld', 'gemini-3.9-neon-low\tOld'].join('\n') + '\n';
+  const first = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', 'neon'], twoFull);
+  assert.strictEqual(first.code, 0, first.err);
+  assert.deepStrictEqual(JSON.parse(first.out), neon4);
+
+  // Without --family nothing changed: mixed flash generations still give the first match per tier.
+  const mixedFlash = FULL_AGY_MODELS.replace('gemini-3.8-flash-low\tGemini 3.8 Flash (Low)\n', '') + 'gemini-3.5-flash-low\tGemini 3.5 Flash (Low)\n';
+  const legacy = await run(['models', '--tool', 'antigravity', '--from-stdin'], mixedFlash);
+  assert.strictEqual(legacy.code, 0, legacy.err);
+  assert.deepStrictEqual(JSON.parse(legacy.out), {
+    antigravity: { headless: { low: 'gemini-3.5-flash-low', mid: 'gemini-3.8-flash-medium', high: 'gemini-3.8-flash-high' } },
+  });
+});
+
+test('models: the default and --family flash agree on the full list, and differ on flash-lite', async () => {
+  const dflt = await run(['models', '--tool', 'antigravity', '--from-stdin'], FULL_AGY_MODELS);
+  const flash = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', 'flash'], FULL_AGY_MODELS);
+  assert.strictEqual(dflt.code, 0, dflt.err);
+  assert.strictEqual(flash.code, 0, flash.err);
+  assert.strictEqual(flash.out, dflt.out);
+
+  const lite = ['gemini-2.5-flash-lite-low', 'gemini-2.5-flash-lite-medium', 'gemini-2.5-flash-lite-high'].map((s) => `${s}\tLite`).join('\n') + '\n';
+  const liteDefault = await run(['models', '--tool', 'antigravity', '--from-stdin'], lite);
+  assert.strictEqual(liteDefault.code, 0, liteDefault.err);
+  assert.deepStrictEqual(JSON.parse(liteDefault.out).antigravity.headless, {
+    low: 'gemini-2.5-flash-lite-low', mid: 'gemini-2.5-flash-lite-medium', high: 'gemini-2.5-flash-lite-high',
+  });
+  const liteFamily = await run(['models', '--tool', 'antigravity', '--from-stdin', '--family', 'flash'], lite);
+  assert.strictEqual(liteFamily.code, 1);
+  assert.match(liteFamily.err, /cannot tell the low, mid, high flash slug\(s\)/);
+});
+
+test('antigravity build refuses a role whose capabilities map to no tool; every real role has tools', async () => {
+  const { roles, models, adapters } = await buildRepo();
+  const agy = adapters.find((a) => a.id === 'antigravity');
+  const lister = parseRole('---\nname: lister\ndescription: lists\ntier: low\naccess: read-only\ncapabilities: [list, search, web-fetch]\n---\nbody\n');
+  const { errors } = buildTool(agy, [lister], models, 'x');
+  assert.deepStrictEqual(errors, ['antigravity: .gemini/config/agents/lister.md has an empty tools list; give the role a capability that maps to a tool']);
+
+  const real = buildTool(agy, roles, models, 'x');
+  assert.deepStrictEqual(real.errors, []);
+  const agents = real.files.filter((f) => f.role);
+  assert.strictEqual(agents.length, 11);
+  for (const f of agents) assert.ok(parse(f.content).data.tools.length > 0, f.path);
 });
 
 test('AGENTS.md hygiene', () => {
@@ -469,11 +644,34 @@ test('install warns about two rulebooks in a shared ~/.gemini', async () => {
   await run(['install', '--tool', 'gemini-cli', '--home', home2, '--apply']);
   const a = await run(['install', '--tool', 'antigravity', '--home', home2]);
   assert.match(a.err, /GEMINI\.md is an orc-generated Gemini CLI rulebook .*Remove .*GEMINI\.md unless you also use Gemini CLI/);
-  // A hand-written file is not ours: no warning.
+  // A hand-written file is not orc-generated: still warns, without calling it orc-generated or telling the user to remove it.
   const home3 = tempDir('gemini3');
   fs.mkdirSync(path.join(home3, '.gemini'));
   fs.writeFileSync(path.join(home3, '.gemini', 'GEMINI.md'), '# my own rules\n');
-  assert.doesNotMatch((await run(['install', '--tool', 'antigravity', '--home', home3])).err, /two copies/);
+  const hwAgy = await run(['install', '--tool', 'antigravity', '--home', home3]);
+  assert.strictEqual(hwAgy.code, 0, hwAgy.err);
+  assert.match(hwAgy.err, /WARN .*GEMINI\.md exists in the same folder \(Gemini CLI rulebook\): Antigravity may load both this file and AGENTS\.md/);
+  assert.doesNotMatch(hwAgy.err, /orc-generated|remove|two copies/i);
+
+  const home4 = tempDir('gemini4');
+  fs.mkdirSync(path.join(home4, '.gemini'));
+  fs.writeFileSync(path.join(home4, '.gemini', 'AGENTS.md'), '# my own rules\n');
+  const hwGem = await run(['install', '--tool', 'gemini-cli', '--home', home4]);
+  assert.strictEqual(hwGem.code, 0, hwGem.err);
+  assert.match(hwGem.err, /WARN .*AGENTS\.md exists in the same folder \(Antigravity rulebook\): Antigravity may load both this file and GEMINI\.md/);
+  assert.doesNotMatch(hwGem.err, /orc-generated|remove|two copies/i);
+
+  // No conflict warning when the other tool's rulebook does not exist.
+  const home5 = tempDir('gemini5');
+  const cleanAgy = await run(['install', '--tool', 'antigravity', '--home', home5]);
+  assert.doesNotMatch(cleanAgy.err, /GEMINI\.md/);
+
+  // The other tool's rulebook path is a directory, not a file: no warning about it.
+  const home6 = tempDir('gemini6');
+  fs.mkdirSync(path.join(home6, '.gemini', 'GEMINI.md'), { recursive: true });
+  const dirAgy = await run(['install', '--tool', 'antigravity', '--home', home6]);
+  assert.strictEqual(dirAgy.code, 0, dirAgy.err);
+  assert.doesNotMatch(dirAgy.err, /GEMINI\.md/);
 });
 
 test('install backups never collide within one second', async () => {

@@ -119,9 +119,9 @@ Each tool's specifics (dispatch, model mapping, hooks, what it cannot do) are in
 # Antigravity CLI
 
 - **Dispatch:** call `invoke_subagent` with the roster name and the marching orders; `@name` in the CLI messages one. Subagents run concurrently with a clean context; the High-tier cap of three still applies.
-- **Tiers:** subagent `model` is `flash` (Low, Mid) or `pro` (High). A headless run (`agy -p`) takes `--model <slug>` from `models.json` `headless`; refresh the slugs with `agy models | node tools/orc.mjs models --tool antigravity --from-stdin` (Flash slugs only; write any other listed slug into `models.local.json` by hand). Every role is a main agent as well as a subagent, because `agy --agent <name>` selects only main agents (verified by a headless builder run on agy 1.5.16; an earlier run on older agy does not count, since older agy runs the default agent for an unknown `--agent` without saying so). Headless dispatch needs agy 1.5.16 or later.
+- **Tiers:** subagent `model` is `flash` (Low, Mid) or `pro` (High). A headless run (`agy -p`) takes `--model <slug>` from `models.json` `headless`; refresh the slugs with `agy models | node tools/orc.mjs models --tool antigravity --from-stdin [--family <name>]` (without `--family`, picks the slugs containing `flash`; with `--family <name>`, picks that family's `-low`, `-medium` and `-high` slugs, or write individual slugs into `models.local.json` by hand). Every role is a main agent as well as a subagent, because `agy --agent <name>` selects only main agents (verified by a headless builder run on agy 1.5.16; an earlier run on older agy does not count, since older agy runs the default agent for an unknown `--agent` without saying so). Headless dispatch needs agy 1.5.16 or later.
 - **Hooks:** `hooks.json` (SessionStart, PreToolUse, PostToolUse, PreInvocation, PostInvocation, Stop).
-- **Shared `~/.gemini`:** Antigravity may load both `AGENTS.md` and a Gemini CLI `GEMINI.md` there, so two rulebook copies; `install` warns. Remove `~/.gemini/GEMINI.md` unless you also use Gemini CLI.
+- **Shared `~/.gemini`:** Antigravity may load both `AGENTS.md` and a Gemini CLI `GEMINI.md` there; `install` warns whether the other file is orc-generated (remove it unless you also use Gemini CLI) or hand-written.
 - **Review panel:** no slash command here: follow `review/PROCEDURE.md` in the setup checkout, dispatching the `review-*` agents by name. `metrics capture` reads Claude Code transcripts only, so it is unsupported here.
 
 What Antigravity CLI cannot do (generated from the adapter's gaps):
@@ -130,3 +130,4 @@ What Antigravity CLI cannot do (generated from the adapter's gaps):
 - Low and Mid are the same per-agent model (flash) in the shipped `models.json`, so a per-dispatch tier override between them changes nothing outside a headless run.
 - No subagent-stop hook: the board update after an agent report is a build-loop step.
 - Read-only is enforced only by the tools allowlist; run_command can still change files, so the role body forbids edits.
+- Listing, searching and URL fetching have no dedicated tool on Antigravity and go through run_command (or search_web); whether run_command can reach the network under the `sandbox` policy is not established, so only search_web is known to reach the web.

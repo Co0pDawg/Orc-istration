@@ -2,10 +2,7 @@
 name: refuter
 description: Adversarial reviewer of a builder's work. Given a spec and a diff, tries to prove the change is wrong or incomplete, reruns the tests itself, and returns ACCEPT or REWORK with must-fixes. Never trusts a "done" claim.
 tools:
-  - list_dir
-  - find_by_name
-  - grep_search
-  - view_file
+  - read_file
   - run_command
 subagent: true
 mainAgent: true
