@@ -41,7 +41,7 @@ export const HELP = {
   },
   install: {
     repo: true,
-    summary: 'Install one tool\'s generated files, or with --all every active tool\'s (for claude-code also its hook scripts, six workflow commands and orc-permissions skill; for antigravity also tools/guard.mjs), into a home folder (dry run without --apply); the rulebook names this checkout as the setup checkout',
+    summary: 'Install one tool\'s generated files, or with --all every active tool\'s (generated agents, and skills and commands from core/procedures.mjs; for claude-code also its hook scripts and orc-permissions skill; for antigravity also tools/guard.mjs), into a home folder (dry run without --apply); the rulebook names this checkout as the setup checkout',
     synopsis: 'install (--tool <id> | --all) [--home <dir>] [--apply] [--force] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board] [--sprint-kit [--stack dotnet|node|python]]',
     options: {
       '--tool <id>': 'the adapter to install (this or --all; not all)',
@@ -49,7 +49,7 @@ export const HELP = {
       '--home <dir>': 'home folder (default your home)',
       '--apply': 'write the files (backs up each replaced file)',
       '--force': 'replace hand-written or edited files, with a backup',
-      '--sprint-kit': 'claude-code only: also the sprint skill, the Node git guard hook and a stack permission preset in settings.json (merged, backed up), no board; uninstall removes it and restores what it replaced (docs/interview-machine.md)',
+      '--sprint-kit': 'claude-code only: only the sprint skill and review commands of the generated ones, the Node git guard hook and a stack permission preset in settings.json (merged, backed up), no board; uninstall removes it and restores what it replaced (docs/interview-machine.md)',
       '--stack <ids>': 'with --sprint-kit: dotnet, node and/or python (default: detected in the current folder)',
       '--profile <name>': 'append profiles/<name>.md (repeatable or comma-separated); recorded in the manifest',
       '--no-profile': 'clear the profiles recorded at install',

@@ -357,7 +357,7 @@ test('.gitignore: a standard deny-list; the cost-log template and every source s
     assert.equal(ignored(p), true, `${p} is ignored`);
   }
   for (const p of ['AGENTS.md', 'CLAUDE.md', 'core/AGENTS.md', 'core/roles/scout.md', '.claude/skills/ship-prompts/SKILL.md', '.agents/skills/ship-prompts/SKILL.md', 'tests/golden/claude-code/.claude/CLAUDE.md',
-    'tests/golden/claude-code/.claude/agents/scout.md', 'adapters/claude-code/commands/start.md', 'adapters/claude-code/skills/orc-permissions/SKILL.md', 'extras/worklog/worklog.ps1', 'skills/brief/SKILL.md', 'tools/orc.mjs', 'orchestration/README.md', 'docs/board.local.md', 'new-top-level-file.md']) {
+    'tests/golden/claude-code/.claude/agents/scout.md', 'core/procedures.mjs', 'adapters/claude-code/skills/orc-permissions/SKILL.md', 'extras/worklog/worklog.ps1', 'orchestration/brief.md', 'orchestration/sprint/make-story.mjs', 'tools/orc.mjs', 'orchestration/README.md', 'docs/board.local.md', 'new-top-level-file.md']) {
     assert.equal(ignored(p), false, `${p} can be tracked`);
   }
   // No tracked file is matched by an ignore rule.
@@ -1339,8 +1339,10 @@ test('review-tier: prompts count as product; uncommitted changes warn', async ()
     assert.match((await run(['review-tier', '--base', 'base', '--repo-dir', d])).out, new RegExp(`^Full: .*${p.replace('.', '\\.')}`, 'm'), p);
   }
   // Every tracked file in the prompt folders counts as product, not only the samples above.
-  const tracked = spawnSync('git', ['ls-files', 'review', 'workflows', 'adapters/claude-code/commands'], { cwd: REPO, encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
-  for (const dir of ['review/', 'workflows/', 'adapters/claude-code/commands/']) assert.ok(tracked.some((p) => p.startsWith(dir)), `tracked files under ${dir}`);
+  // The routine procedures and the sprint assets the generated skills point at are product too.
+  const procs = ['orchestration/board.md', 'orchestration/brief.md', 'orchestration/wrap-up.md', 'orchestration/sprint.md', 'orchestration/standards.md'];
+  const tracked = spawnSync('git', ['ls-files', 'review', 'workflows', 'adapters/claude-code', 'orchestration/sprint', 'core', ...procs], { cwd: REPO, encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
+  for (const dir of ['review/', 'workflows/', 'adapters/claude-code/', 'orchestration/sprint/', 'core/procedures.mjs', ...procs]) assert.ok(tracked.some((p) => p.startsWith(dir)), `tracked files under ${dir}`);
   for (const p of tracked) assert.equal(classify([p]).tier, 'Full', p);
   // The cost-log template the rulebook points at is tracked; the cost logs beside it stay ignored.
   const git = (...a) => spawnSync('git', a, { cwd: REPO, encoding: 'utf8' });
@@ -1731,11 +1733,13 @@ test('check names the source to edit for a golden rulebook, agent and command', 
   fs.appendFileSync(path.join(gold, 'CLAUDE.md'), 'hand edit\n');
   fs.rmSync(path.join(gold, 'agents', 'refuter.md'));
   fs.rmSync(path.join(gold, 'commands', 'pre-pr-review.md'));
+  fs.appendFileSync(path.join(copy, 'tests', 'golden', 'antigravity', '.gemini', 'config', 'skills', 'sprint', 'SKILL.md'), 'hand edit\n');
   const r = await run(['check', '--repo', copy]);
   assert.equal(r.code, 1);
+  assert.match(r.err, /tests\/golden\/antigravity\/\.gemini\/config\/skills\/sprint\/SKILL\.md: differs from the build at line \d+ \(generated from core\/procedures\.mjs \/ adapters\/antigravity\.mjs; edit those, then run node tools\/orc\.mjs golden\)/);
   assert.match(r.err, /tests\/golden\/claude-code\/\.claude\/CLAUDE\.md: differs from the build at line \d+ \(generated from core\/AGENTS\.md \/ adapters\/claude-code\.notes\.md \/ adapters\/claude-code\.mjs; edit those, then run node tools\/orc\.mjs golden\)/);
   assert.match(r.err, /tests\/golden\/claude-code\/\.claude\/agents\/refuter\.md: missing \(generated from core\/roles\/refuter\.md; run node tools\/orc\.mjs golden\)/);
-  assert.match(r.err, /tests\/golden\/claude-code\/\.claude\/commands\/pre-pr-review\.md: missing \(generated from adapters\/claude-code\.mjs; run node tools\/orc\.mjs golden\)/);
+  assert.match(r.err, /tests\/golden\/claude-code\/\.claude\/commands\/pre-pr-review\.md: missing \(generated from core\/procedures\.mjs \/ adapters\/claude-code\.mjs; run node tools\/orc\.mjs golden\)/);
   // golden repairs every one of them, and check passes again.
   assert.equal((await run(['golden', '--repo', copy])).code, 0);
   assert.equal((await run(['check', '--repo', copy])).code, 0);

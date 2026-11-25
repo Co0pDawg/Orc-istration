@@ -1,9 +1,9 @@
-// skills/sprint/theme/theme-picker.js: the pure logic behind the triggers, imported without a browser.
+// orchestration/sprint/theme/theme-picker.js: the pure logic behind the triggers, imported without a browser.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   LOOKS, BRAND_PRESSES, BRAND_WINDOW_MS, isLook, nextTyped, nextPresses, initialLook, eventPath, isEditable,
-} from '../skills/sprint/theme/theme-picker.js';
+} from '../orchestration/sprint/theme/theme-picker.js';
 
 // A tiny element stub. closest() understands only the selector parts the picker uses, and throws on any
 // other part, so a change to the picker's selector shows up here.

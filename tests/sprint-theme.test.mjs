@@ -1,11 +1,11 @@
-// skills/sprint/theme: the token layer stays consistent across looks, and the theme stays offline and safe.
+// orchestration/sprint/theme: the token layer stays consistent across looks, and the theme stays offline and safe.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const THEME = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'sprint', 'theme');
+const THEME = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'orchestration', 'sprint', 'theme');
 const read = (name) => fs.readFileSync(path.join(THEME, name), 'utf8');
 const css = read('theme.css').replace(/\/\*[\s\S]*?\*\//g, '');
 const picker = read('theme-picker.js');

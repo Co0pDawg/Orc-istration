@@ -1,6 +1,7 @@
 // Antigravity CLI (agy). Syntax source: antigravity.google/docs/subagents, /rules, /hooks, /cli/headless.
 import { serialize, generatedMarker } from '../tools/lib/frontmatter.mjs';
 import { ALL_CAPABILITIES } from '../tools/lib/roles.mjs';
+import { checkoutLookup, readStep } from '../core/procedures.mjs';
 
 // Tool names come from agy 1.5.16 itself (its deprecation log and the roles' own tool report), not from the docs
 // pages above. list, search and web-fetch have no tool.
@@ -14,6 +15,38 @@ const capabilityTools = {
   'web-search': ['search_web'],
 };
 
+// What differs on Antigravity for each procedure (core/procedures.mjs): every one is a skill and also the slash command
+// /<name>; roster agents are dispatched with invoke_subagent; metrics capture reads Claude Code transcripts only; there
+// is no subagent-stop hook; the artifact board is Claude Code only.
+const DISPATCH = "Dispatch each roster agent with `invoke_subagent` and its roster name, as the tool notes' Dispatch line says.";
+const NO_METRICS = 'Skip every metrics capture step: `metrics capture` reads Claude Code transcripts only, so it is unsupported here.';
+const NO_STOP_HOOK = 'There is no subagent-stop hook here, so update the board session yourself after every agent report.';
+const procedureNotes = {
+  board: [NO_STOP_HOOK, 'The artifact backend can be written only from Claude Code; use a local board here.'],
+  brief: [DISPATCH],
+  'wrap-up': [NO_STOP_HOOK],
+  sprint: [DISPATCH],
+  'repo-standards': [DISPATCH],
+  start: [DISPATCH, NO_METRICS],
+  grill: [DISPATCH],
+  'draft-pr': [],
+  'peer-review': [DISPATCH, NO_METRICS],
+  create: [],
+  'fix-ci': [DISPATCH],
+  'pre-pr-review': [DISPATCH, NO_METRICS],
+  'review-verdict': [],
+  'calibration-report': [],
+};
+
+function renderProcedure(p) {
+  const own = procedureNotes[p.name];
+  if (!own) throw new Error(`antigravity: no notes for procedure ${p.name} in adapters/antigravity.mjs`);
+  const slash = `On Antigravity this skill is also the slash command \`/${p.name}\`${p.argumentHint ? ', and its arguments are the text after it' : ''}.`;
+  const args = p.argumentHint ? `with the arguments the user gave (\`${p.argumentHint}\`)` : '';
+  const body = `${generatedMarker('antigravity')}\n\n# ${p.title}\n\n1. ${checkoutLookup(`CHECKOUT/${p.source.file}`)}\n2. ${readStep(p, args)}\n3. ${[slash, ...own].join(' ')}\n`;
+  return { path: `.gemini/config/skills/${p.name}/SKILL.md`, content: serialize({ name: p.name, description: p.description }, body) };
+}
+
 export default {
   id: 'antigravity',
   title: 'Antigravity CLI',
@@ -22,7 +55,8 @@ export default {
   // Script wired by `orc hooks --tool antigravity`; install copies it to <root>/tools/guard.mjs.
   hookScripts: ['tools/guard.mjs'],
   // nonEmptyTools: how agy reads `tools: []` is not established, so the build refuses one.
-  limits: { ruleBytes: 24000, nonEmptyTools: true },
+  // skillBytes: `agy plugin validate` warns when a skill body is over 24 KB.
+  limits: { ruleBytes: 24000, nonEmptyTools: true, skillBytes: 24000 },
   conflicts: [
     {
       path: '.gemini/GEMINI.md',
@@ -70,4 +104,6 @@ export default {
   renderRulebook(agentsMd, notesMd) {
     return [{ path: '.gemini/AGENTS.md', content: `${generatedMarker('antigravity')}\n${agentsMd}\n${notesMd}` }];
   },
+  // Every procedure is a global skill (~/.gemini/config/skills/<name>/SKILL.md): a thin wrapper over the checkout.
+  renderProcedure,
 };

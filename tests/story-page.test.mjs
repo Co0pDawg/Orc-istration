@@ -1,4 +1,4 @@
-// skills/sprint/story-template.html: the page's inline script, run in node:vm against a tiny stub document.
+// orchestration/sprint/story-template.html: the page's inline script, run in node:vm against a tiny stub document.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -7,7 +7,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const TEMPLATE = fs.readFileSync(
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'sprint', 'story-template.html'), 'utf8');
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'orchestration', 'sprint', 'story-template.html'), 'utf8');
 const SCRIPT = /<script>\r?\n([\s\S]*?)<\/script>/.exec(TEMPLATE)[1];
 const SAMPLE = /<script type="application\/json" id="sprint-events">([\s\S]*?)<\/script>/.exec(TEMPLATE)[1];
 const IDS = ['sprint-events', 'story-error', 'story-title', 'story-clock', 'story-elapsed', 'story-tiles', 'story-acs', 'story-timeline'];

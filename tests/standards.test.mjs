@@ -307,7 +307,7 @@ test('standards apply: --out below an existing file, or inside .git, fails clean
 
 test('install ends with the standards-setup pointer, dry run and --apply', async () => {
   const home = tempDir('next');
-  const line = `set up each project's coding standards: see ${fs.realpathSync.native(REPO).replace(/\\/g, '/')}/orchestration/standards.md (Claude Code: the repo-standards skill, where ~/.claude/skills has it).`;
+  const line = `set up each project's coding standards: see ${fs.realpathSync.native(REPO).replace(/\\/g, '/')}/orchestration/standards.md (Claude Code and Antigravity: the repo-standards skill that install generates).`;
   const dry = await run(['install', '--tool', 'antigravity', '--home', home]);
   assert.equal(dry.out.split('\n').at(-1), `After --apply, next: ${line}`);
   const done = await run(['install', '--tool', 'antigravity', '--home', home, '--apply']);
@@ -484,8 +484,9 @@ test('install writes the Setup checkout line, status matches it, build and golde
   assert.match(st.out, /status antigravity: all same/);
   const out = tempDir('setupbuild');
   assert.equal((await run(['build', '--tool', 'antigravity', '--out', out])).code, 0);
-  assert.doesNotMatch(read(path.join(out, 'antigravity', '.gemini', 'AGENTS.md')), /Setup checkout \(this machine\)/);
-  assert.doesNotMatch(read(path.join(REPO, 'tests', 'golden', 'antigravity', '.gemini', 'AGENTS.md')), /Setup checkout \(this machine\)/);
+  // The tool notes name the line in the checkout lookup sentence; only install writes the line itself.
+  assert.doesNotMatch(read(path.join(out, 'antigravity', '.gemini', 'AGENTS.md')), /^- Setup checkout \(this machine\): /m);
+  assert.doesNotMatch(read(path.join(REPO, 'tests', 'golden', 'antigravity', '.gemini', 'AGENTS.md')), /^- Setup checkout \(this machine\): /m);
 });
 
 test('golden refuses a golden folder that differs only by case, writing nothing (A2)', { skip: caseInsensitive ? false : 'case-sensitive file system' }, async () => {

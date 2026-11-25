@@ -1085,6 +1085,30 @@ test('doctor warns only for unrecorded differing hand-copied board-reminder hook
   assert.doesNotMatch(clean.out, /WARN claude-code hooks:/);
 });
 
+test('doctor warns about a hand-copied skill or command from before generation; delete + install clears it', async () => {
+  const home = tempDir('doc-skills-migr');
+  const skill = path.join(home, '.claude', 'skills', 'board', 'SKILL.md');
+  const cmd = path.join(home, '.claude', 'commands', 'start.md');
+  fs.mkdirSync(path.dirname(skill), { recursive: true });
+  fs.mkdirSync(path.dirname(cmd), { recursive: true });
+  fs.writeFileSync(skill, '---\nname: board\ndescription: old\n---\n\n# Board\n');
+  fs.writeFileSync(cmd, '# my own start\n');
+  const dir = tempDir('stub');
+  const data = dataDir({ version: 1, activeTools: ['claude-code'], binaries: { 'claude-code': stub(dir) } });
+  const warn = (f) => `WARN claude-code skills: ${f} is a hand copy from before install generated it, so install keeps it; delete it and run install --tool claude-code --apply to get the generated one`;
+  const before = await run(['doctor', '--home', home], data);
+  assert.equal(before.code, 0, before.out);
+  for (const f of [skill, cmd]) assert.ok(before.out.includes(warn(f)), before.out);
+  // Install keeps both; the generated files it writes elsewhere carry the marker, so they draw no warning.
+  assert.equal((await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board'], data)).code, 0);
+  const kept = await run(['doctor', '--home', home], data);
+  assert.equal(kept.out.split('\n').filter((l) => l.startsWith('WARN claude-code skills:')).length, 2, kept.out);
+  fs.rmSync(skill);
+  fs.rmSync(cmd);
+  assert.equal((await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board'], data)).code, 0);
+  assert.doesNotMatch((await run(['doctor', '--home', home], data)).out, /WARN claude-code skills:/);
+});
+
 // runDoctor with the real dependencies and `extra` added to the environment it is given (process.env is untouched).
 async function runDoctorIn(data, extra = {}, { home = tempDir('home'), compare = compareInstall } = {}) {
   const out = [];
