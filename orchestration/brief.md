@@ -2,7 +2,7 @@
 
 How the orchestrator writes the marching orders for a roster dispatch (scout, researcher, builder, refuter, debugger) and lints them before dispatching. Use it when about to dispatch a roster agent in an orchestrated task; not for a PR description, a ticket or a summary. The generated `brief` skill points here.
 
-The template is the numbered "Marching orders" list in the rulebook (`core/AGENTS.md`); `orc brief` parses it, so the linter is the source of truth for the items. `<setup>` is the setup checkout: CHECKOUT in the generated skill, named by the "Setup checkout (this machine)" line of the tool notes. Commands run as `node "<setup>/tools/orc.mjs" brief ...`, quoted for paths with spaces.
+The template is the numbered "Marching orders" list in the rulebook (`core/AGENTS.md`); `orc brief` parses it, so the linter is the source of truth for the items. `<setup>` is the setup checkout (CHECKOUT in the generated skill). Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `config.json` (under `ORC_DATA_DIR` when set, else under `~/.orc/`), else ask the user. Call it CHECKOUT and confirm `CHECKOUT/orchestration/brief.md` exists there; if it does not, stop and say so. Commands run as `node "<setup>/tools/orc.mjs" brief ...`, quoted for paths with spaces.
 
 1. Print the template into the session scratchpad: `brief new --role <role> --out "<scratchpad>/brief-<role>-<topic>.md"`.
 2. Fill every item. For each one:

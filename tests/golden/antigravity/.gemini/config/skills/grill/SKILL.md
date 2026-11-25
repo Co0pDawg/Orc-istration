@@ -7,6 +7,6 @@ description: Grill the developer on a plan until no decision is left open, in ro
 
 # Grill
 
-1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `~/.orc/config.json`, else ask the user. Call it CHECKOUT and confirm `CHECKOUT/workflows/grill.md` exists there; if it does not, stop and say so.
+1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `config.json` (under `ORC_DATA_DIR` when set, else under `~/.orc/`), else ask the user. Call it CHECKOUT and confirm `CHECKOUT/workflows/grill.md` exists there; if it does not, stop and say so.
 2. Read `CHECKOUT/workflows/grill.md` and follow it with the arguments the user gave (`[plan file]`).
 3. On Antigravity this skill is also the slash command `/grill`, and the user's request after the command name gives its arguments. Dispatch each roster agent with `invoke_subagent` and its roster name, as the tool notes' Dispatch line says.

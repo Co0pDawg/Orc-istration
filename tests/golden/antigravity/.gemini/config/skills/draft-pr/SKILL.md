@@ -7,6 +7,6 @@ description: Write a PR description for the current branch from its diff and wor
 
 # Draft PR
 
-1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `~/.orc/config.json`, else ask the user. Call it CHECKOUT and confirm `CHECKOUT/workflows/draft-pr.md` exists there; if it does not, stop and say so.
+1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `config.json` (under `ORC_DATA_DIR` when set, else under `~/.orc/`), else ask the user. Call it CHECKOUT and confirm `CHECKOUT/workflows/draft-pr.md` exists there; if it does not, stop and say so.
 2. Read `CHECKOUT/workflows/README.md`, then `CHECKOUT/workflows/draft-pr.md`, and follow it.
 3. On Antigravity this skill is also the slash command `/draft-pr`.

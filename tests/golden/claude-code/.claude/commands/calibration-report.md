@@ -15,5 +15,5 @@ allowed-tools:
 
 **Arguments:** "$ARGUMENTS"
 
-1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `~/.orc/config.json`, else ask the user. Call it CHECKOUT and confirm `CHECKOUT/review/calibration.md` exists there; if it does not, stop and say so.
+1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `config.json` (under `ORC_DATA_DIR` when set, else under `~/.orc/`), else ask the user. Call it CHECKOUT and confirm `CHECKOUT/review/calibration.md` exists there; if it does not, stop and say so.
 2. Read `CHECKOUT/review/calibration.md` and follow its "Calibration report" section with these arguments. The counting is `node CHECKOUT/tools/orc.mjs calibration`. Recommend, then wait for approval before editing any lane or role.

@@ -7,6 +7,6 @@ description: Finish an orchestrated task (full test projects once, the diff read
 
 # Wrap-up
 
-1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `~/.orc/config.json`, else ask the user. Call it CHECKOUT and confirm `CHECKOUT/orchestration/wrap-up.md` exists there; if it does not, stop and say so.
+1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `config.json` (under `ORC_DATA_DIR` when set, else under `~/.orc/`), else ask the user. Call it CHECKOUT and confirm `CHECKOUT/orchestration/wrap-up.md` exists there; if it does not, stop and say so.
 2. Read `CHECKOUT/orchestration/wrap-up.md` and follow it.
 3. On Antigravity this skill is also the slash command `/wrap-up`. There is no subagent-stop hook here, so update the board session yourself after every agent report.

@@ -62,13 +62,13 @@ A pipeline that triggers on push may already have started one: check `TRACKER bu
 
 ## Step 7 - Monitor
 
-Wait with **one** background poll that exits on a terminal status, not repeated foreground checks. `orc poll` runs the tracker helper every 300 seconds until the build's `status` is `completed`, then prints the build:
+Wait with **one** background poll that exits on a terminal status, not repeated foreground checks. `orc poll` runs the tracker helper every 300 seconds until the build's `status` is `completed`, then prints the build, and gives up after 4 hours:
 
 ```
-node <checkout>/tools/orc.mjs poll --every 300 --until 'status\W+completed' -- <helper> build-get -Build <id>
+node <checkout>/tools/orc.mjs poll --every 300 --timeout 14400 --until '\x22status\x22:\s*\x22completed\x22' -- <helper> build-get -Build <id>
 ```
 
-`<helper>` is the `Tracker helper` command, word by word. `poll` starts it without a shell, so the command names its interpreter, as in `pwsh -NoProfile -File <checkout>/tools/tracker/ado.ps1`. Read `result` from the printed build. Continue only when the poll finishes. A transient helper failure (a non-zero exit) just means another run; if the poll itself dies, re-arm it. While waiting, do not start another fix for the same run.
+`<helper>` is the `Tracker helper` command, word by word. `poll` starts it without a shell, so the command names its interpreter, as in `pwsh -NoProfile -File <checkout>/tools/tracker/ado.ps1`. Read `result` from the printed build. Continue only when the poll finishes. A transient helper failure (a non-zero exit) just means another run, and `poll` prints that run's stderr once per distinct message: the same error on every run (a missing setting, an expired sign-in) is not transient, so stop the poll and fix it. Exit 124 means the timeout passed: read the last output and stderr it printed, check the run in the pipeline, and either re-arm the poll or report the run as still going. If the poll itself dies, re-arm it. While waiting, do not start another fix for the same run.
 
 ## Step 8 - Review and loop
 

@@ -7,7 +7,7 @@ description: Set up or refresh a repo's coding standards (STANDARDS.md at the pr
 
 # Repo standards
 
-1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `~/.orc/config.json`, else ask the user. Call it CHECKOUT and confirm `CHECKOUT/orchestration/standards.md` exists there; if it does not, stop and say so.
+1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `config.json` (under `ORC_DATA_DIR` when set, else under `~/.orc/`), else ask the user. Call it CHECKOUT and confirm `CHECKOUT/orchestration/standards.md` exists there; if it does not, stop and say so.
 2. Read `CHECKOUT/orchestration/standards.md` and follow it. On Claude Code, Step 2 is one `AskUserQuestion` call. Keep each `header` to 12 characters or fewer, and do not add "Other" as an option: the free-text "Other" is added automatically. With no `STANDARDS.md`, the ask looks like this:
 
 ```json

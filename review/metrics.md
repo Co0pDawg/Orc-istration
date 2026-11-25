@@ -22,7 +22,7 @@ node <orc checkout>/tools/orc.mjs metrics capture --workflow pre-pr-review [--se
 - **Window:** `--workflow pre-pr-review` starts the run at the session's last `/pre-pr-review` invocation (a typed command or a Skill tool call) and ends it at the last activity of any agent. `--workflow session` covers the whole transcript. Any other name is matched against invocations the same way. When the session holds no matching invocation, the report covers the whole session and the command prints a `WARN` line on stderr. A run log whose `Leads:` line lacks a count warns the same way, and that count is `null`.
 - **Output:** one file at `<out>/<yyyy-MM>/<runId>.json`, where `--out` defaults to `.orc/metrics/` under the current repo. The command prints the file's path. `--print` writes nothing and prints the report instead.
 - **Re-capture:** a run keeps its `runId` (the start time does not change), so running the same command again replaces the report. The review procedure does this after its verdict sweep, so the report carries the final verdict counts.
-- **Errors:** a transcript or session that is given but not found, a missing run log or a missing workflow name exits 1 with a `metrics:` error. The review procedure reports it and carries on. With no `--session`, no `--transcript` and no `CLAUDE_CODE_SESSION_ID`, capture is skipped instead (above).
+- **Errors:** a transcript or session that is given but not found, a missing run log or a missing workflow name exits 1 with a `metrics:` error. The review procedure reports it and carries on. With no `--session`, no `--transcript`, no `CLAUDE_CODE_SESSION_ID` and an empty or unset `CLAUDECODE`, capture is skipped instead (above).
 
 ## Nested runs
 

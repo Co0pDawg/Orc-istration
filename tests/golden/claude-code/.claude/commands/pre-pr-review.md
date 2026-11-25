@@ -19,5 +19,5 @@ allowed-tools:
 
 **Arguments:** "$ARGUMENTS"
 
-1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `~/.orc/config.json`, else ask the user. Call it CHECKOUT and confirm `CHECKOUT/review/PROCEDURE.md` exists there; if it does not, stop and say so.
+1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `config.json` (under `ORC_DATA_DIR` when set, else under `~/.orc/`), else ask the user. Call it CHECKOUT and confirm `CHECKOUT/review/PROCEDURE.md` exists there; if it does not, stop and say so.
 2. Read `CHECKOUT/review/PROCEDURE.md` and follow it with these arguments. Dispatch each explorer and the verifier by its roster name as `subagent_type`, never `general-purpose`; launch all selected explorers in one message, each with `run_in_background: true`, so they run in parallel; pass a tier override as `model:` (the Tiers line of the tool notes maps tiers to models); resume an explorer with SendMessage; ask the developer with `AskUserQuestion`.

@@ -9,7 +9,7 @@ one consolidated report, a run log for calibration and per-run metrics. It is to
 to dispatch an agent by roster name, override its tier for one dispatch, resume it and ask the user a question, and
 name the command or skill that runs this file.
 
-`CHECKOUT` below is the setup checkout (the Orc-istration clone). Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `~/.orc/config.json`, else ask the user. Call it CHECKOUT and confirm `CHECKOUT/review/PROCEDURE.md` exists there; if it does not, stop and say so. Every `review/...` path is relative to it. The review itself runs in the
+`CHECKOUT` below is the setup checkout (the Orc-istration clone). Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `config.json` (under `ORC_DATA_DIR` when set, else under `~/.orc/`), else ask the user. Call it CHECKOUT and confirm `CHECKOUT/review/PROCEDURE.md` exists there; if it does not, stop and say so. Every `review/...` path is relative to it. The review itself runs in the
 reviewed repo's working directory.
 
 **Arguments (all optional):**

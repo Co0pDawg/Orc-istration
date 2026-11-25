@@ -27,7 +27,7 @@ const procedureNotes = {
   },
   brief: {
     notes:
-      'On Claude Code, dispatch with `subagent_type: "<role>"` and the brief as the prompt. Pass `model:` only to override the tier for this one dispatch, such as `model: "sonnet"` for a Mid-tier refuter. Parallel builders get `isolation: "worktree"`. A refuter cannot write the board here, so its brief says `BOARD: none` (see the `board` skill).',
+      'On Claude Code, dispatch with `subagent_type: "<role>"` and the brief as the prompt. Pass `model:` only to override the tier for this one dispatch, such as `model: "sonnet"` for a Mid-tier refuter. Parallel builders get `isolation: "worktree"`. On the artifact backend a refuter cannot write the board, so its brief says `BOARD: none` (see the `board` skill); on a local board a refuter writes its own card, so its brief carries the `BOARD:` line.',
   },
   'wrap-up': {
     notes: 'On Claude Code, the Full review tier is `/pre-pr-review`, and the orchestrator\'s context size for the cost log comes from the status line or `/context`.',

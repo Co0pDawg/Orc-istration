@@ -7,6 +7,6 @@ description: "Work a ticket end to end: fetch and judge it, plan, branch, grill,
 
 # Start
 
-1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `~/.orc/config.json`, else ask the user. Call it CHECKOUT and confirm `CHECKOUT/workflows/start.md` exists there; if it does not, stop and say so.
+1. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `config.json` (under `ORC_DATA_DIR` when set, else under `~/.orc/`), else ask the user. Call it CHECKOUT and confirm `CHECKOUT/workflows/start.md` exists there; if it does not, stop and say so.
 2. Read `CHECKOUT/workflows/README.md`, then `CHECKOUT/workflows/start.md`, and follow it with the arguments the user gave (`<work item id or URL> [--lite|--full]`).
 3. On Antigravity this skill is also the slash command `/start`, and the user's request after the command name gives its arguments. Dispatch each roster agent with `invoke_subagent` and its roster name, as the tool notes' Dispatch line says. Skip every metrics capture step: `metrics capture` reads Claude Code transcripts only, so it is unsupported here.

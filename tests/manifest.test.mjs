@@ -388,6 +388,15 @@ test('junction: the tool root itself as a junction refuses install, uninstall an
   assert.equal(h.code, 1);
   assert.match(h.err, /\.claude is a symlink or junction/);
   assert.deepEqual(fs.readdirSync(c.outside), ['victim.txt']);
+  // hooks --tool antigravity writes <home>/.gemini/config/hooks.json: a .gemini junction is refused, add and remove.
+  const g = junctionHome('junc-gemini-hooks');
+  fs.symlinkSync(g.outside, path.join(g.home, '.gemini'), 'junction');
+  for (const extra of [[], ['--remove']]) {
+    const r = await run(['hooks', '--tool', 'antigravity', '--home', g.home, '--apply', ...extra]);
+    assert.equal(r.code, 1, extra.join(' '));
+    assert.match(r.err, /^hooks: .*\.gemini is a symlink or junction; refusing to follow it; nothing written$/);
+    assert.deepEqual(fs.readdirSync(g.outside), ['victim.txt'], 'nothing written outside the home');
+  }
 });
 
 test('junction: a home that is itself reached through a junction still installs and uninstalls', { skip }, async () => {

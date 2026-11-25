@@ -263,7 +263,7 @@ test('sprint kit: refused over a full install (dry run too), home byte-identical
   for (const extra of [[], ['--apply']]) {
     const r = await kit(home, '--stack', 'node', ...extra);
     assert.equal(r.code, 1, extra.join(' ') || 'dry run');
-    assert.match(r.err, /refused: .*\.orc-manifest\.claude-code\.json records a full orc install, not a sprint kit; nothing written\. The full install already has the roster agents, the sprint skill and the hook scripts/);
+    assert.match(r.err, /refused: .*\.orc-manifest\.claude-code\.json records a full orc install, not a sprint kit; nothing written\. The full install already has the roster agents and the hook scripts \(hooks --node --apply wires the guard\); a full install made before skill generation gets the sprint skill by running install --tool claude-code --apply again \(delete a hand-copied skills\/sprint\/SKILL\.md first, or install keeps it\)/);
     assert.match(r.err, /To switch to a sprint kit, run uninstall/);
     assert.doesNotMatch(r.err, /by hand/);
     assert.deepEqual(snapshot(home), before, 'nothing written');

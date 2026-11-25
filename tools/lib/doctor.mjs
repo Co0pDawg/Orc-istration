@@ -8,6 +8,7 @@ import { dispatchPlan, resolveExecutable, unavailable, binEnv, killTree } from '
 import { TIERS } from './models.mjs';
 import { loadManifest } from './manifest.mjs';
 import { readSettings, ANTIGRAVITY_GUARD_KEY, antigravityGuardScript } from './hooks.mjs';
+import { KIT_PROCEDURES } from './sprintkit.mjs';
 import { readText } from './text.mjs';
 
 // The --version and auth probes are killed after 5 seconds, the board health GET after 3 (tests pass shorter ones).
@@ -273,7 +274,8 @@ export async function runDoctor({ repo, home, json, io, env = process.env, timeo
   // Unrecorded hand-copied board-reminder hook scripts in <home>/.claude/tools/ that differ from this checkout:
   // install keeps them without --force. A manifest-recorded copy that differs is ordinary install drift.
   const claudeAdapter = adapters.find((a) => a.id === 'claude-code');
-  const recordedClaudeFiles = (claudeAdapter ? loadManifest(home, claudeAdapter).manifest?.files : null) ?? {};
+  const claudeInstall = claudeAdapter ? loadManifest(home, claudeAdapter) : null;
+  const recordedClaudeFiles = claudeInstall?.manifest?.files ?? {};
   for (const name of ['board-reminder.ps1', 'board-reminder.mjs']) {
     if (Object.hasOwn(recordedClaudeFiles, `.claude/tools/${name}`)) continue;
     const installed = path.join(home, '.claude', 'tools', name);
@@ -286,15 +288,19 @@ export async function runDoctor({ repo, home, json, io, env = process.env, timeo
     });
   }
 
-  // Hand copies of the routine skills and workflow commands from before install generated them: unrecorded and with no
-  // generated marker, so install keeps them in place of the generated wrapper.
-  if (loadProcedures && isOrcGenerated && claudeAdapter) {
+  // Files with no generated marker and no manifest entry at a generated skill or command path: install keeps them in
+  // place of the generated wrapper. Checked only where Claude Code is used (active, or installed here), and on a sprint
+  // kit only at the procedures the kit installs.
+  const claudeUsed = (config?.activeTools ?? []).includes('claude-code') || (claudeInstall?.file && fs.existsSync(claudeInstall.file));
+  if (loadProcedures && isOrcGenerated && claudeAdapter && claudeUsed) {
     await guarded('skills', 'claude-code', async () => {
+      const kit = claudeInstall?.manifest?.options?.sprintKit === true;
       for (const p of await loadProcedures(repo)) {
-        const rel = p.kind === 'routine' ? `.claude/skills/${p.name}/SKILL.md` : `.claude/commands/${p.name}.md`;
+        if (kit && !KIT_PROCEDURES.includes(p.name)) continue;
+        const rel = claudeAdapter.renderProcedure(p).path;
         const installed = path.join(home, ...rel.split('/'));
         if (Object.hasOwn(recordedClaudeFiles, rel) || !fs.existsSync(installed) || isOrcGenerated(readText(installed))) continue;
-        add('WARN', 'skills', `${installed} is a hand copy from before install generated it, so install keeps it; delete it and run install --tool claude-code --apply to get the generated one`, 'claude-code');
+        add('WARN', 'skills', `${installed} is not orc's generated file, so install keeps it; if it is an old copy of orc's, delete it and run install --tool claude-code --apply to get the generated one`, 'claude-code');
       }
     });
   }

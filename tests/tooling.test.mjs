@@ -11,7 +11,7 @@ import { main, loadModels, loadRoles } from '../tools/orc.mjs';
 import { parseMarchingOrders, briefTemplate, lintBrief } from '../tools/lib/brief.mjs';
 import { classify } from '../tools/lib/reviewtier.mjs';
 import { costlog, dispatchRows } from '../tools/lib/costlog.mjs';
-import { mergeHooks, formatLike } from '../tools/lib/hooks.mjs';
+import { mergeHooks, formatLike, setAntigravityGuard, antigravityGuardScript, antigravityGuardEntry } from '../tools/lib/hooks.mjs';
 import { killTree, runDispatch } from '../tools/lib/dispatch.mjs';
 import { run as reminder } from '../tools/board-reminder.mjs';
 import { q } from './helpers.mjs';
@@ -42,7 +42,7 @@ function agentFree(env, extra = {}) {
     for (const k of Object.keys(out)) if (k.toLowerCase() === key.toLowerCase()) delete out[k];
     out[key] = value;
   };
-  for (const k of Object.keys(out)) if (k.startsWith('ORC_TOOL_BIN_')) delete out[k];
+  for (const k of Object.keys(out)) if (k.startsWith('ORC_TOOL_BIN_') || k === 'ORC_HEADLESS') delete out[k];
   set('PATH', [tempDir('nopath'), ...(process.platform === 'win32' ? [path.join(process.env.SystemRoot ?? 'C:/Windows', 'System32')] : [])].join(path.delimiter));
   set('LOCALAPPDATA', tempDir('localappdata'));
   for (const [k, v] of Object.entries(extra)) set(k, v);
@@ -57,6 +57,28 @@ function isolated(argv, extraEnv = {}) {
   const r = spawnSync(process.execPath, [ORC, ...argv], { env, encoding: 'utf8', timeout: 60000 });
   assert.deepEqual(fs.readdirSync(fakeHome), [], 'scratch home stays empty');
   return { code: r.status, out: r.stdout, err: r.stderr };
+}
+
+// The same as `isolated`, without blocking, so several runs can wait side by side; killed after `killMs`. Resolves to
+// {code, out, err, ms}, `ms` being how long the run took.
+function isolatedAsync(argv, extraEnv = {}, killMs = 20000) {
+  const fakeHome = tempDir('fakehome');
+  const base = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome };
+  const env = argv[0] === 'dispatch' ? agentFree(base, extraEnv) : { ...base, ...extraEnv };
+  const t0 = Date.now();
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [ORC, ...argv], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
+    child.stdout.setEncoding('utf8').on('data', (c) => (out += c));
+    child.stderr.setEncoding('utf8').on('data', (c) => (err += c));
+    const timer = setTimeout(() => child.kill(), killMs);
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      assert.deepEqual(fs.readdirSync(fakeHome), [], 'scratch home stays empty');
+      resolve({ code, out, err, ms: Date.now() - t0 });
+    });
+  });
 }
 
 // A brief that passes lint for any role: every rulebook item, filled.
@@ -424,6 +446,7 @@ const stdin = process.stdin.isTTY ? '' : await new Promise((r) => { let s = ''; 
 fs.writeFileSync(dir + '/argv.json', JSON.stringify(process.argv.slice(2)));
 fs.writeFileSync(dir + '/stdin.txt', stdin);
 fs.writeFileSync(dir + '/stub.pid', String(process.pid));
+fs.writeFileSync(dir + '/env.json', JSON.stringify({ ORC_HEADLESS: process.env.ORC_HEADLESS ?? null }));
 if (process.env.STUB_SLEEP) {
   const g = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
   fs.writeFileSync(dir + '/grandchild.pid', String(g.pid));
@@ -447,6 +470,8 @@ test('dispatch real run passes the brief byte-identical, with no shell, and retu
     const r = isolated(['dispatch', '--tool', tool, '--role', role, '--brief', brief], env);
     assert.equal(r.code, 3, r.err);
     assert.match(r.out, /stub output/);
+    // The tool runs with ORC_HEADLESS=1 (absent from orc's own environment), so its hooks know nobody can answer.
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'env.json'), 'utf8')), { ORC_HEADLESS: '1' }, tool);
     const argv = JSON.parse(fs.readFileSync(path.join(dir, 'argv.json'), 'utf8'));
     const stdin = fs.readFileSync(path.join(dir, 'stdin.txt'), 'utf8');
     if (tool === 'antigravity') {
@@ -462,7 +487,7 @@ test('dispatch real run passes the brief byte-identical, with no shell, and retu
 });
 
 // A stub agy that prints STUB_PAD bytes of plain lines, then the contents of STUB_STDOUT_FILE, and exits STUB_EXIT
-// (with STUB_HANG, it then stays running instead).
+// (with STUB_HANG, it then writes STUB_READY_FILE, when given, and stays running instead).
 function resultStub(dir) {
   const file = path.join(dir, 'result-stub.mjs');
   fs.writeFileSync(file, `import fs from 'node:fs';
@@ -470,7 +495,11 @@ const pad = Number(process.env.STUB_PAD ?? 0);
 const line = 'x'.repeat(99) + '\\n';
 let out = line.repeat(Math.floor(pad / 100));
 if (process.env.STUB_STDOUT_FILE) out += fs.readFileSync(process.env.STUB_STDOUT_FILE, 'utf8');
-process.stdout.write(out, () => (process.env.STUB_HANG ? setTimeout(() => {}, 60000) : process.exit(Number(process.env.STUB_EXIT ?? 0))));
+const hang = () => {
+  if (process.env.STUB_READY_FILE) fs.writeFileSync(process.env.STUB_READY_FILE, 'printed');
+  setTimeout(() => {}, 60000);
+};
+process.stdout.write(out, () => (process.env.STUB_HANG ? hang() : process.exit(Number(process.env.STUB_EXIT ?? 0))));
 `);
   return file;
 }
@@ -503,6 +532,12 @@ test('dispatch antigravity: exit 1 with one stderr line when agy reports ERROR o
   const pretty = runWith(`working...\n${JSON.stringify({ ...JSON.parse(AGY_ERROR), response: 'quota reached\nmore' }, null, 2)}\n`, { STUB_EXIT: '2' });
   assert.strictEqual(pretty.code, 1);
   assert.strictEqual(pretty.err, 'dispatch: antigravity reported ERROR: quota reached\n');
+
+  // A denied permission with a report is not a failure: the agent worked around it and said so.
+  const deniedWithReport = JSON.stringify({ ...JSON.parse(AGY_DENIED), response: 'STATUS: DONE\nCHANGED: a.mjs' });
+  const worked = runWith(`${deniedWithReport}\n`);
+  assert.strictEqual(worked.code, 0, worked.err);
+  assert.strictEqual(worked.err, '');
 
   const ok = runWith(`${AGY_OK}\n`);
   assert.strictEqual(ok.code, 0, ok.err);
@@ -542,15 +577,58 @@ test('dispatch: a tool with no headlessResult keeps its own exit code and stream
   }
 });
 
-test('dispatch antigravity: a timeout wins over a result object already printed', () => {
-  const dir = tempDir('stub-result-hang');
-  const outFile = path.join(dir, 'stdout.txt');
-  for (const printed of [AGY_ERROR, AGY_DENIED, AGY_OK]) {
+test('dispatch antigravity: a timeout wins over a result object already printed', async () => {
+  // The three runs wait side by side, so the 4-second timeout leaves the stub time to start and print on a loaded
+  // runner without the test waiting 3 x 4 seconds; the ready file shows the stub printed before it was killed.
+  const runs = [AGY_ERROR, AGY_DENIED, AGY_OK].map(async (printed) => {
+    const dir = tempDir('stub-result-hang');
+    const outFile = path.join(dir, 'stdout.txt');
+    const ready = path.join(dir, 'ready');
     fs.writeFileSync(outFile, `${printed}\n`);
-    const r = isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile(), '--timeout', '2'], { ORC_TOOL_BIN_ANTIGRAVITY: resultStub(dir), STUB_STDOUT_FILE: outFile, STUB_HANG: '1' });
+    const r = await isolatedAsync(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile(), '--timeout', '4'], { ORC_TOOL_BIN_ANTIGRAVITY: resultStub(dir), STUB_STDOUT_FILE: outFile, STUB_HANG: '1', STUB_READY_FILE: ready });
+    assert.ok(fs.existsSync(ready), 'the stub was up and had printed before the timeout');
     assert.strictEqual(r.code, 124, r.err);
-    assert.match(r.err, /^dispatch: timed out after 2s; killing the process tree\n$/);
+    assert.match(r.err, /^dispatch: timed out after 4s; killing the process tree\n$/);
     assert.ok(r.out.endsWith(`${printed}\n`));
+  });
+  await Promise.all(runs);
+});
+
+test('dispatch antigravity: a tool that exits while a grandchild still holds stdout returns its code and result within seconds', async () => {
+  const dir = tempDir('stub-grandchild');
+  const pidFile = path.join(dir, 'grandchild.pid');
+  const file = path.join(dir, 'gc-stub.mjs');
+  // The grandchild inherits the stub's stdout (the pipe orc reads) and outlives it, detached.
+  fs.writeFileSync(file, `import fs from 'node:fs';
+import { spawn } from 'node:child_process';
+const g = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { detached: true, stdio: ['ignore', 'inherit', 'ignore'], windowsHide: true });
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(g.pid));
+g.unref();
+process.stdout.write(process.env.STUB_RESULT + '\\n', () => process.exit(Number(process.env.STUB_EXIT)));
+`);
+  const kill = () => {
+    try {
+      process.kill(Number(fs.readFileSync(pidFile, 'utf8')));
+    } catch {
+      // already gone, or never started
+    }
+  };
+  try {
+    const brief = briefFile();
+    const ok = AGY_OK;
+    const code = await isolatedAsync(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', brief], { ORC_TOOL_BIN_ANTIGRAVITY: file, STUB_RESULT: ok, STUB_EXIT: '3' }, 15000);
+    kill();
+    assert.strictEqual(code.code, 3, code.err);
+    assert.ok(code.out.endsWith(`${ok}\n`));
+    assert.ok(code.ms < 6000, `returned after ${code.ms} ms`);
+    // The result object is still read: an ERROR result exits 1 with its line.
+    const failed = await isolatedAsync(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', brief], { ORC_TOOL_BIN_ANTIGRAVITY: file, STUB_RESULT: AGY_ERROR, STUB_EXIT: '0' }, 15000);
+    kill();
+    assert.strictEqual(failed.code, 1, failed.err);
+    assert.strictEqual(failed.err, 'dispatch: antigravity reported ERROR: no response\n');
+    assert.ok(failed.ms < 6000, `returned after ${failed.ms} ms`);
+  } finally {
+    kill();
   }
 });
 
@@ -1184,6 +1262,38 @@ test('hooks --tool antigravity: existing differing orc-guard reports what differ
   assert.deepStrictEqual(left['first-hook'], initial['first-hook']);
   assert.deepStrictEqual(left['last-hook'], initial['last-hook']);
   assert.ok(fs.readdirSync(path.dirname(target)).filter((f) => f.startsWith('hooks.json.orc-backup-')).length >= 2, 'each write is backed up');
+});
+
+test('setAntigravityGuard names each difference of an existing orc-guard', () => {
+  const home = '/h';
+  const entry = antigravityGuardEntry(home);
+  const want = entry.PreToolUse[0].hooks[0].command;
+  const diff = (prev) => setAntigravityGuard({ 'orc-guard': prev }, home).diff;
+  const hook = (over) => ({ PreToolUse: [{ matcher: 'run_command', hooks: [{ ...entry.PreToolUse[0].hooks[0], ...over }] }] });
+  assert.strictEqual(diff('x'), 'was "x"');
+  assert.strictEqual(diff({ ...entry, enabled: true }), 'enabled was true');
+  assert.strictEqual(diff({ ...entry, Stop: [], note: 1 }), 'extra key(s): Stop, note');
+  assert.strictEqual(diff({ PreToolUse: [] }), 'PreToolUse was []');
+  assert.strictEqual(diff({ PreToolUse: [{ matcher: 'run_command', hooks: [] }] }), 'PreToolUse hooks was []');
+  assert.strictEqual(diff(hook({ type: 'script' })), 'type "script" -> "command"');
+  assert.strictEqual(diff(hook({ command: 'node "/old/guard.mjs"' })), `command "node \\"/old/guard.mjs\\"" -> ${JSON.stringify(want)}`);
+  assert.strictEqual(diff({ enabled: false, ...hook({ timeout: 30 }) }), 'enabled was false; timeout 30 -> 10');
+  assert.strictEqual(setAntigravityGuard({ 'orc-guard': entry }, home).status, 'unchanged');
+});
+
+test('antigravityGuardScript: the script a node command runs, quoted or bare; none for another program; disabled', () => {
+  const at = (command, extra = {}) => antigravityGuardScript({ ...extra, PreToolUse: [{ matcher: 'run_command', hooks: [{ type: 'command', command }] }] });
+  assert.deepStrictEqual(at(`node '/my dir/guard.mjs'`), { command: `node '/my dir/guard.mjs'`, script: '/my dir/guard.mjs', disabled: false });
+  assert.strictEqual(at('node "C:/My Tools/guard.mjs"').script, 'C:/My Tools/guard.mjs');
+  assert.strictEqual(at('node /srv/orc/.gemini/tools/guard.mjs').script, '/srv/orc/.gemini/tools/guard.mjs');
+  assert.strictEqual(at('node.exe "C:/Program Files/orc/guard.mjs"').script, 'C:/Program Files/orc/guard.mjs');
+  assert.strictEqual(at('node.exe C:/orc/guard.mjs').script, 'C:/orc/guard.mjs');
+  assert.strictEqual(at('NODE C:/orc/guard.mjs').script, 'C:/orc/guard.mjs', 'the program name is matched case-insensitively');
+  assert.deepStrictEqual(at('python C:/orc/guard.py'), { command: 'python C:/orc/guard.py', script: null, disabled: false });
+  assert.strictEqual(at('echo guard').script, null);
+  assert.deepStrictEqual(at('node /x/guard.mjs', { enabled: false }), { command: 'node /x/guard.mjs', script: '/x/guard.mjs', disabled: true });
+  assert.deepStrictEqual(antigravityGuardScript(null), { command: null, script: null, disabled: false });
+  assert.deepStrictEqual(antigravityGuardScript({ enabled: false, PreToolUse: [{ hooks: [{ command: '  ' }] }] }), { command: null, script: null, disabled: true });
 });
 
 test('hooks --tool antigravity: one WARN for a Claude-style "hooks" key, left alone; --remove says removed only after the write', async () => {
