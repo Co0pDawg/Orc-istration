@@ -35,7 +35,9 @@ export default {
       description: role.description,
       tools: caps.flatMap((c) => capabilityTools[c]),
       subagent: true,
-      mainAgent: false,
+      // `agy --agent <name>` (the headless recipe below) selects only main agents; with `false`, agy 1.5.16
+      // answers `unknown agent "<name>" (no custom agents are available)`.
+      mainAgent: true,
       model: tierModel.model,
     };
     // commandExecutionPolicy: `sandbox` is the documented default; the research does not document what

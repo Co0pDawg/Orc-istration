@@ -54,8 +54,8 @@ It writes nothing. Read the output:
 
 - `sprint kit: stack ...` names the stack it found; `no stack detected` means no preset (pass `--stack`).
 - `would create` / `would replace ...` for each file; `would replace (hand-written; backed up, uninstall restores it)` marks a file of the owner's, such as an existing `CLAUDE.md`.
-- `would unchanged: ... (already there and not installed by orc ...)` marks an identical copy the owner already has (such as a hand-copied `SKILL.md`); it stays theirs, and uninstall leaves it.
-- `would keep (hand-copied hook script, differs; --force replaces it, with a backup)` means the owner has an older `guard.mjs`. It is kept, so `status` will say `differs` for it; run the install with `--force` added to replace it (a backup is kept and uninstall restores it).
+- `would unchanged: ... (already there and in no orc manifest ...)` marks an identical copy the owner already has (such as a hand-copied `SKILL.md`); it stays theirs, and uninstall leaves it.
+- `would keep (hand-copied hook script, differs; --force replaces it, with a backup)` means the owner has an older `guard.mjs`. It is kept, so `status` will say `differs` for it (and that `--force` replaces it); run the install with `--force` added to replace it (a backup is kept and uninstall restores it).
 - `would add to settings.json ...` for the guard hook and each preset entry; existing entries are kept, and a working guard the owner already has is not added twice.
 - `WARN ... which is not on disk, so it guards nothing` names an old guard hook whose script is gone; the kit adds its own guard and leaves that entry alone. Mention it to the user.
 - `refused: ... settings.json is not valid JSON` means the owner's `settings.json` is broken. Stop and tell the user; do not edit it.

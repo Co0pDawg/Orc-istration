@@ -8,7 +8,7 @@ tools:
   - view_file
   - run_command
 subagent: true
-mainAgent: false
+mainAgent: true
 model: flash
 commandExecutionPolicy: sandbox
 ---
