@@ -77,12 +77,12 @@ export const HELP = {
     },
   },
   models: {
-    summary: 'Turn the output of "agy models" into a models.local.json fragment',
+    summary: 'Turn the output of "agy models" into a models.local.json fragment (Flash slugs without --family, or one --family)',
     synopsis: 'models --tool antigravity --from-stdin [--family <name>]',
     options: {
       '--tool antigravity': 'the only supported tool',
       '--from-stdin': 'read the model list from stdin',
-      '--family <name>': 'model family substring to match (default flash)',
+      '--family <name>': 'pick this family\'s -low, -medium and -high slugs (without it, picks the slugs containing flash); name a family listed in more than one generation with its version, for example --family 4-neon',
     },
   },
   brief: {

@@ -375,6 +375,7 @@ export function buildTool(adapter, roles, models, agentsMd, { extraNotes = [], p
       continue;
     }
     for (const t of tools) if (!allowed.has(t)) errors.push(`${adapter.id}: ${f.path} emits unknown tool ${t}`);
+    if (adapter.limits?.nonEmptyTools && tools.length === 0) errors.push(`${adapter.id}: ${f.path} has an empty tools list; give the role a capability that maps to a tool`);
     const role = roles.find((r) => r.name === f.role);
     if (role.access === 'read-only') {
       for (const t of tools) if (editTools.has(t)) errors.push(`${adapter.id}: read-only ${role.name} gets ${t}`);
@@ -503,24 +504,35 @@ export function args(argv) {
   return out;
 }
 
-export function parseAgyModels(text, family = 'flash') {
-  if (!String(family).trim()) return { error: 'family must not be empty' };
-  const escaped = String(family).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`^\\s*(\\S*${escaped}\\S*-(low|medium|high))\\s`, 'i');
-  const found = { low: new Set(), mid: new Set(), high: new Set() };
+export function parseAgyModels(text, family) {
+  let re;
+  let label;
+  if (family === undefined) {
+    re = /^\s*(\S*flash\S*-(low|medium|high))\s/;
+    label = 'flash';
+  } else {
+    const name = typeof family === 'string' ? family.trim() : '';
+    if (!name) return { error: 'family name must not be empty' };
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    re = new RegExp(`^\\s*((?:\\S*-)?${esc}-(low|medium|high))\\s`);
+    label = name;
+  }
+  const found = {};
   for (const line of normalizeEol(text).split('\n')) {
     const m = re.exec(`${line} `);
-    if (m) found[{ low: 'low', medium: 'mid', high: 'high' }[m[2].toLowerCase()]].add(m[1]);
+    if (m) found[{ low: 'low', medium: 'mid', high: 'high' }[m[2]]] ??= m[1];
   }
-  const missing = ['low', 'mid', 'high'].filter((t) => !found[t].size);
-  if (missing.length) return { error: `cannot tell the ${missing.join(', ')} ${family} slug(s) from this list` };
-  // A family that matches two slugs for one tier (e.g. "gemini") is ambiguous: name the candidates, never pick one.
-  const ambiguous = ['low', 'mid', 'high'].filter((t) => found[t].size > 1);
-  if (ambiguous.length) {
-    return { error: `${family} matches more than one slug for ${ambiguous.map((t) => `${t} (${[...found[t]].join(', ')})`).join(', ')}; pass a longer --family` };
+  const missing = ['low', 'mid', 'high'].filter((t) => !found[t]);
+  if (missing.length) return { error: `cannot tell the ${missing.join(', ')} ${label} slug(s) from this list` };
+  if (family !== undefined) {
+    const stems = new Set([found.low.slice(0, -'-low'.length), found.mid.slice(0, -'-medium'.length), found.high.slice(0, -'-high'.length)]);
+    if (stems.size > 1) {
+      // The list was readable, so the caller must not add its "paste the output" hint to this one.
+      const example = found.high.slice(0, -'-high'.length).replace(/^gemini-/, '');
+      return { error: `--family ${label} picks slugs from more than one model (${found.low}, ${found.mid}, ${found.high}); name one model, for example --family ${example}`, readable: true };
+    }
   }
-  const [low, mid, high] = ['low', 'mid', 'high'].map((t) => [...found[t]][0]);
-  return { fragment: { antigravity: { headless: { low, mid, high } } } };
+  return { fragment: { antigravity: { headless: { low: found.low, mid: found.mid, high: found.high } } } };
 }
 
 // The comparison status prints and doctor summarises: every file install would write, against what is in `home`.
@@ -946,7 +958,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       if (isGenerated(read(other))) {
         io.err(`WARN ${other} is an orc-generated ${c.tool} rulebook in the same folder: ${c.warning}. Remove ${other} unless you also use ${c.tool}.`);
       } else {
-        io.err(`WARN ${other} already exists in the same folder (${c.tool} rulebook): ${c.warning}.`);
+        io.err(`WARN ${other} exists in the same folder (${c.tool} rulebook): ${c.handWrittenWarning ?? c.warning}. Review both files so their rules do not conflict.`);
       }
     }
     const when = stamp(io.now ? io.now() : new Date());
@@ -1340,8 +1352,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
 
   if (cmd === 'models') {
     if (opt.tool !== 'antigravity' || !opt['from-stdin']) return fail('usage: models --tool antigravity --from-stdin [--family <name>]');
-    const { fragment, error } = parseAgyModels(decodeText(io.stdin()), opt.family ?? 'flash');
-    if (error) return fail(`${error}; paste the output of "agy models"`);
+    const { fragment, error, readable } = parseAgyModels(decodeText(io.stdin()), opt.family);
+    if (error) return fail(readable ? error : `${error}; paste the output of "agy models"`);
     io.out(JSON.stringify(fragment, null, 2));
     return 0;
   }

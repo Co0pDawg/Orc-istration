@@ -100,19 +100,25 @@ export function formatCommand(plan) {
   return lines.join('\n');
 }
 
-// On Windows a failed taskkill falls back to killing the direct child only, and says so through `err`.
-export function killTree(child, err = () => {}) {
-  if (process.platform === 'win32') {
-    const r = spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', shell: false });
-    if (r.error || r.status !== 0) {
-      err(`dispatch: taskkill failed for pid ${child.pid}; killing only the direct child, so its child processes may still run`);
-      try {
-        child.kill('SIGKILL');
-      } catch {}
+// taskkill exit status 128 means the process was already gone.
+export function killTree(child, { platform = process.platform, runSync = spawnSync, killProcess = process.kill, err = () => {} } = {}) {
+  if (platform === 'win32') {
+    let ok = false;
+    let why;
+    try {
+      const r = runSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', shell: false });
+      if (r?.error) why = r.error.code ?? r.error.message;
+      else if (r?.status === 0 || r?.status === 128) ok = true;
+      else why = `exit status ${r?.status}`;
+    } catch (e) {
+      why = e.code ?? e.message;
     }
+    if (ok) return;
+    child.kill();
+    err(`dispatch: taskkill failed (${why}); killed only pid ${child.pid}, its child processes may still be running`);
   } else {
     try {
-      process.kill(-child.pid, 'SIGKILL');
+      killProcess(-child.pid, 'SIGKILL');
     } catch {
       child.kill('SIGKILL');
     }
@@ -150,7 +156,7 @@ export function runDispatch(plan, { timeoutSec, err = console.error } = {}) {
       if (signalled) return;
       signalled = sig;
       err(`dispatch: ${sig} received; killing the process tree`);
-      killTree(child, err);
+      killTree(child, { err });
     };
     for (const s of signals) process.on(s, onSignal);
     const unhook = () => signals.forEach((s) => process.off(s, onSignal));
@@ -158,10 +164,19 @@ export function runDispatch(plan, { timeoutSec, err = console.error } = {}) {
       ? setTimeout(() => {
           timedOut = true;
           err(`dispatch: timed out after ${timeoutSec}s; killing the process tree`);
-          killTree(child, err);
+          killTree(child, { err });
         }, timeoutSec * 1000)
       : null;
     child.on('error', (e) => {
+      // After a timeout or signal kill began, an error is a failed kill, not a failed start. The process may have
+      // survived, in which case `close` never comes, so resolve now with the timeout or signal code.
+      if (timedOut || signalled) {
+        err(`dispatch: kill failed: ${e.message}`);
+        if (timer) clearTimeout(timer);
+        unhook();
+        resolve(signalled ? CODES[signalled] : 124);
+        return;
+      }
       if (timer) clearTimeout(timer);
       unhook();
       cannot(e);

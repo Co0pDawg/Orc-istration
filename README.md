@@ -124,7 +124,7 @@ Every change that goes through the build loop gets an independent adversarial re
 | Tool | What gets generated | Verified how | Main gap |
 |---|---|---|---|
 | Claude Code | `CLAUDE.md` + `agents/*.md` + the review panel's `commands/*.md` in `~/.claude` | Live: sessions run on the generated files since 2026-11-18 | Builder and debugger keep MCP tools (no allowlist) |
-| Antigravity CLI | `~/.gemini/AGENTS.md` + `config/agents/` | Golden-file tests and the agy 1.5.16 `--help` (an earlier headless scout run most likely ran agy's default agent, since the roles were not yet main agents, so it does not count) | Models only `flash` or `pro`; no per-agent effort; no dedicated list, search or URL-fetch tool |
+| Antigravity CLI | `~/.gemini/AGENTS.md` + `config/agents/` | One headless live builder run on a throwaway project (agy 1.5.16, 2026-11-24) | Models only `flash` or `pro`; no per-agent effort |
 | Gemini CLI | `~/.gemini/GEMINI.md` + `agents/` | Golden-file tests against documented formats | No nested or documented parallel subagents |
 | Codex CLI | `~/.codex/AGENTS.md` + `agents/*.toml` | Golden-file tests, a live practice build, and [named-role and MXC workspace-write trials](docs/example-prompts.md#native-windows-execution-checks) | No per-role tool allowlist. Windows results cover the MXC configuration tested. |
 | Cursor | Project `AGENTS.md` + `~/.cursor/agents/` | Golden-file tests against documented formats | No global rulebook; model ids must be set |
@@ -160,7 +160,7 @@ agy models | node tools/orc.mjs models --tool antigravity --from-stdin          
 agy models | node tools/orc.mjs models --tool antigravity --from-stdin --family neon    # or another family
 ```
 
-Save the last command's output as `models.local.json`; `--family <name>` (default `flash`) picks the family whose `-low`, `-medium` and `-high` slugs fill the Low, Mid and High headless tiers, and any other slug goes into `models.local.json` by hand. The generated roles are main agents as well as subagents (`mainAgent: true`), so `agy agents` lists them and `dispatch --tool antigravity --role <name>` can select one. Then, in each project, run the standards setup in [`orchestration/standards.md`](orchestration/standards.md); `install` prints this pointer too, and writes this clone's path into the rulebook as the setup checkout. The rest: [Install and Quick Start](https://github.com/Co0pDawg/Orc-istration/wiki/Install-And-Quick-Start).
+Save the output as `models.local.json`. Without `--family`, it picks the first slugs whose name contains `flash` and ends in `-low`, `-medium` or `-high` (so a `flash-lite` slug matches); with `--family <name>`, it picks that family's first `-low`, `-medium` and `-high` slugs. A family listed in more than one generation is named with its version, for example `--family 4-neon`. To mix families across tiers or pick a model without all three tiers, edit the file's `headless` block by hand. The generated roles are main agents as well as subagents (`mainAgent: true`), so `agy agents` lists them and `dispatch --tool antigravity --role <name>` can select one. Then, in each project, run the standards setup in [`orchestration/standards.md`](orchestration/standards.md); `install` prints this pointer too, and writes this clone's path into the rulebook as the setup checkout. The rest: [Install and Quick Start](https://github.com/Co0pDawg/Orc-istration/wiki/Install-And-Quick-Start).
 
 ## Shared state (~/.orc)
 
@@ -224,7 +224,7 @@ Every key and rule: [docs/cli.md](docs/cli.md#shared-state-orc).
 
 ## Limits
 
-- The full loop runs day to day only on Claude Code (on the files generated from this repo since 2026-11-18). The [Codex trials](docs/example-prompts.md#native-windows-execution-checks) cover named-role dispatch and workspace-write with MXC on native Windows. The bundled and legacy sandbox configurations tested on that host failed at shell startup. Antigravity CLI has no live run of a generated agent that counts: the 2026-11-15 headless scout run predates `mainAgent: true`, and older agy ran its default agent when `--agent` matched no main agent.
+- The full loop runs day to day only on Claude Code (on the files generated from this repo since 2026-11-18). The [Codex trials](docs/example-prompts.md#native-windows-execution-checks) cover named-role dispatch and workspace-write with MXC on native Windows. The bundled and legacy sandbox configurations tested on that host failed at shell startup. Antigravity CLI has had one headless run of the generated builder (agy 1.5.16, 2026-11-24): it fixed a small function against failing tests and returned its report. An earlier scout run (2026-11-15) does not count: the roles were then generated with `mainAgent: false`, which `agy --agent` cannot select, and agy at that version most likely ran the default agent without saying so. `dispatch` needs agy 1.5.16 or later, which exits 1 for an unknown `--agent`; after updating this repo, re-run `install --tool antigravity --apply` so the installed roles carry the new flag.
 - Slash commands, skills and review metrics are Claude Code only; other tools follow `review/PROCEDURE.md`, `workflows/*.md` and the `orchestration/` procedures by hand. `dispatch` runs headlessly on Antigravity, Claude Code and Codex only (Codex as `codex exec` with `--sandbox read-only` for `scout` and `researcher`, which must report inline because that sandbox cannot write a scratch file, and `workspace-write` for every other role: the refuter runs tests and builds a throwaway worktree and the `review-*` roles write at most an overflow scratch report, so their no-edit rule rests on the role body; on Windows, orc selects the MXC sandbox (`-c windows.sandbox=mxc`) for every role, and a headless Codex run has no web tool).
 - On Antigravity, a chat message sent to the orchestrator while subagents or background commands run force-cancels all of them: wait for the agents to finish, or orchestrate from another tool.
 - Gemini CLI, Cursor, Copilot and OpenCode are verified by tests against documented formats only.
@@ -250,7 +250,7 @@ Every command is `node tools/orc.mjs <command>`. Options: `node tools/orc.mjs he
 | `install` | Install one tool's files (or, with `--all`, every active tool's) into a home folder (dry run without `--apply`); `--sprint-kit` adds the sprint skill, the git guard hook and a stack permission preset for Claude Code |
 | `uninstall` | Delete the files an install recorded (dry run without `--apply`); for a sprint kit, also remove its `settings.json` entries and restore what it replaced |
 | `status` | Compare an installed copy (or, with `--all`, every active tool's) with the current build (a sprint kit's `settings.json` entries included) |
-| `models` | Turn `agy models` output into a `models.local.json` fragment |
+| `models` | Turn `agy models` output into a `models.local.json` fragment (Flash slugs without `--family`, or `--family <name>`) |
 | `brief` | Print or lint a marching-orders brief |
 | `review-tier` | Say whether a branch diff is Light-eligible or Full (prompt files, including `review/`, `workflows/` and `commands/`, count as product) |
 | `costlog` | Draft a cost log from the board |
@@ -341,8 +341,10 @@ cd ~/.claude
 git init -b main
 git remote add origin https://github.com/Co0pDawg/Orc-istration.git
 git fetch origin
-git checkout -f main        # overwrites tracked files only; ignored files stay
+git checkout -f main        # overwrites tracked files only; ignored files stay, except one that a newer commit now tracks
 ```
+
+The cost-log template `orchestration/log/TEMPLATE.md` is tracked from this version on. If your checkout holds your own edited copy (it was ignored before), copy it aside before you pull or check out: git replaces a previously ignored file with the tracked one without asking.
 
 If git reports "dubious ownership", run `git config --global --add safe.directory C:/Users/<user>/.claude` once. Do not copy `settings.example.json` over `settings.json`: run `node tools/orc.mjs hooks --home <your home>` to see the hook entries it would add, then add `--apply` (it backs up `settings.json` and adds only missing hooks, with `<you>` replaced). Use `--node` for the board reminder and the git guard on Node, without PowerShell. The example's other keys (`model`, `permissions`, `statusLine`, `enabledPlugins`, `extraKnownMarketplaces`, `effortLevel`, `env`, `modelSettings`, `autoUpdatesChannel`, `theme`, `agentPushNotifEnabled`) are optional preferences: copy any you want by hand. Clone the board repo into `orchestration/board`, and put the board address in `~/.claude/board.local.md`.
 
