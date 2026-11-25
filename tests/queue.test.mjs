@@ -816,7 +816,8 @@ test('a missing <state>/wt is re-added without pruning the developer\'s other wo
   const r = queue(s, ['run', '--apply']);
   assert.strictEqual(r.code, 0, r.err);
   assert.deepStrictEqual(r.claude.map((c) => c.branch), ['queue/issue-2']);
-  assert.ok(slash(git(s.dev, 'worktree', 'list', '--porcelain')).toLowerCase().includes(slash(mine).toLowerCase()), 'the developer\'s missing worktree is still registered');
+  // By folder name: git prints the long path, and a Windows temp folder may be given in its short (8.3) form.
+  assert.match(slash(git(s.dev, 'worktree', 'list', '--porcelain')), /^worktree .*\/my-other-worktree$/m, 'the developer\'s missing worktree is still registered');
 });
 
 test('--issue reruns a failed issue (deleting its leftover branch) but never a handled one, and still checks the author', () => {
