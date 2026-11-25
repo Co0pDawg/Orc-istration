@@ -49,7 +49,8 @@ const isLocalBoard = (url) => /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?(?:\
 
 async function boardHealth(url, ms) {
   try {
-    const res = await fetch(new URL('/api/health', url), { signal: AbortSignal.timeout(ms) });
+    const res = await fetch(new URL('/api/health', url), { signal: AbortSignal.timeout(ms), redirect: 'manual' });
+    if (res.status >= 300 && res.status < 400) return `/api/health answered ${res.status} (a redirect; not followed)`;
     return res.ok ? null : `/api/health answered ${res.status}`;
   } catch (e) {
     return `unreachable (${e instanceof Error && e.name === 'TimeoutError' ? `no answer within ${seconds(ms)}` : 'no connection'})`;
