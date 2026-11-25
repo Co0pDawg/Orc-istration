@@ -33,9 +33,10 @@ export const HELP = {
   install: {
     repo: true,
     summary: 'Install one tool\'s generated files (for claude-code also its hook scripts) into a home folder (dry run without --apply); the rulebook names this checkout as the setup checkout',
-    synopsis: 'install --tool <id> [--home <dir>] [--apply] [--force] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board] [--sprint-kit [--stack dotnet|node|python]]',
+    synopsis: 'install (--tool <id> | --all) [--home <dir>] [--apply] [--force] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board] [--sprint-kit [--stack dotnet|node|python]]',
     options: {
-      '--tool <id>': 'the adapter to install (required; not all)',
+      '--tool <id>': 'the adapter to install (this or --all; not all)',
+      '--all': 'every tool in activeTools of ~/.orc/config.json, in order; every refusal is checked for every tool before any is written; the board defaults from board in config.json',
       '--home <dir>': 'home folder (default your home; required for claude-code)',
       '--apply': 'write the files (backs up each replaced file)',
       '--force': 'replace hand-written or edited files, with a backup',
@@ -62,9 +63,10 @@ export const HELP = {
   status: {
     repo: true,
     summary: 'Compare an installed copy with what would be generated now, without writing',
-    synopsis: 'status --tool <id> [--home <dir>] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board] [--sprint-kit]',
+    synopsis: 'status (--tool <id> | --all) [--home <dir>] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board] [--sprint-kit]',
     options: {
-      '--tool <id>': 'the adapter to compare (required; not all)',
+      '--tool <id>': 'the adapter to compare (this or --all; not all)',
+      '--all': 'every tool in activeTools of ~/.orc/config.json, in order (exit code: the worst); the board defaults from board in config.json',
       '--sprint-kit': 'compare with a sprint kit (default: when the manifest records one), settings.json entries included',
       '--home <dir>': 'home folder (default your home)',
       '--profile <name>': 'compare with these profiles appended (default: the ones recorded at install)',
@@ -151,15 +153,26 @@ export const HELP = {
   },
   dispatch: {
     repo: true,
-    summary: 'Run one role headlessly at its tier (Antigravity, Claude Code and Codex)',
-    synopsis: 'dispatch --tool <id> --role <name> --brief <file> [--dry-run] [--timeout <seconds>] [--no-lint]',
+    summary: 'Run one role headlessly at its tier (Antigravity, Claude Code and Codex), on --tool or routed by ~/.orc/config.json',
+    synopsis: 'dispatch [--tool <id> | --prefer <id>] --role <name> --brief <file> [--model <slug>] [--dry-run] [--timeout <seconds>] [--no-lint]',
     options: {
-      '--tool <id>': 'the tool to run (required)',
+      '--tool <id>': 'the tool to run, with no fallback (default: the role\'s routing entry, then fallback, in ~/.orc/config.json; the first available tool runs)',
+      '--prefer <id>': 'try this tool first, then the role\'s routing entry and fallback (e.g. a second reviewer on another tool); not with --tool',
+      '--model <slug>': 'the model to pass to the tool instead of the tier\'s (effort unchanged); dropped when routing falls back to another tool',
       '--role <name>': 'the role to run (required)',
       '--brief <file>': 'the brief (required; linted first)',
       '--dry-run': 'print the command and exit',
       '--timeout <seconds>': 'kill the process tree after this many seconds (1 to 86400; exit 124)',
       '--no-lint': 'skip the brief lint',
+    },
+  },
+  doctor: {
+    repo: true,
+    summary: 'Check ~/.orc/config.json and models.json, each active tool (binary, --version, install state, headless models), the routing table and the board, without writing',
+    synopsis: 'doctor [--home <dir>] [--json]',
+    options: {
+      '--home <dir>': 'the home folder the tools install into (default your home)',
+      '--json': 'print one JSON object {ok, checks: [{level, check, detail, tool?}]}',
     },
   },
   hooks: {

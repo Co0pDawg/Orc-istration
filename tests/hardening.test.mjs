@@ -12,6 +12,8 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORC = path.join(REPO, 'tools', 'orc.mjs');
 const read = (f) => normalizeEol(fs.readFileSync(f, 'utf8'));
 const tempDir = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `orc-${name}-`));
+// No test reads this machine's ~/.orc: the shared state home is an empty scratch folder, which children inherit.
+process.env.ORC_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'orc-data-'));
 
 async function run(argv, stdin = '', extra = {}) {
   const out = [];

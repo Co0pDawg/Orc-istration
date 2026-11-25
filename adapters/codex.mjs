@@ -45,6 +45,8 @@ export default {
     ];
     return { command: 'codex', args, stdin: `${role.body}\n\n---\n\n${briefText}` };
   },
+  // `orc doctor`: a non-interactive command that exits 0 when signed in (its output is never printed).
+  authProbe: { args: ['login', 'status'] },
   renderRulebook(agentsMd, notesMd) {
     return [{ path: '.codex/AGENTS.md', content: `${generatedMarker('codex')}\n${agentsMd}\n${notesMd}` }];
   },

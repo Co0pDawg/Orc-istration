@@ -17,6 +17,8 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORC = path.join(REPO, 'tools', 'orc.mjs');
 const AGENTS = fs.readFileSync(path.join(REPO, 'AGENTS.md'), 'utf8').replace(/\r\n/g, '\n');
 const tempDir = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `orc-${name}-`));
+// No test reads this machine's ~/.orc: the shared state home is an empty scratch folder, which children inherit.
+process.env.ORC_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'orc-data-'));
 
 async function run(argv) {
   const out = [];
@@ -25,10 +27,27 @@ async function run(argv) {
   return { code, out: out.join('\n'), err: err.join('\n') };
 }
 
-// A child CLI with HOME and USERPROFILE on an empty scratch dir that must stay empty.
+// An environment in which dispatch can never start a real claude, agy or codex: PATH holds no agent CLI (System32
+// stays for taskkill), the Antigravity install folder (%LOCALAPPDATA%/agy/bin) is scratch, and no ORC_TOOL_BIN_* is
+// inherited; the stubs come in through `extra`.
+function agentFree(env, extra = {}) {
+  const out = { ...env };
+  const set = (key, value) => {
+    for (const k of Object.keys(out)) if (k.toLowerCase() === key.toLowerCase()) delete out[k];
+    out[key] = value;
+  };
+  for (const k of Object.keys(out)) if (k.startsWith('ORC_TOOL_BIN_')) delete out[k];
+  set('PATH', [tempDir('nopath'), ...(process.platform === 'win32' ? [path.join(process.env.SystemRoot ?? 'C:/Windows', 'System32')] : [])].join(path.delimiter));
+  set('LOCALAPPDATA', tempDir('localappdata'));
+  for (const [k, v] of Object.entries(extra)) set(k, v);
+  return out;
+}
+
+// A child CLI with HOME and USERPROFILE on an empty scratch dir that must stay empty. A dispatch runs agent-free.
 function isolated(argv, extraEnv = {}) {
   const fakeHome = tempDir('fakehome');
-  const env = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome, ...extraEnv };
+  const base = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome };
+  const env = argv[0] === 'dispatch' ? agentFree(base, extraEnv) : { ...base, ...extraEnv };
   const r = spawnSync(process.execPath, [ORC, ...argv], { env, encoding: 'utf8', timeout: 60000 });
   assert.deepEqual(fs.readdirSync(fakeHome), [], 'scratch home stays empty');
   return { code: r.status, out: r.stdout, err: r.stderr };
@@ -924,7 +943,7 @@ test('R3: a signal to orc kills the dispatched tree', { skip: NO_SIGNALS }, asyn
   for (const [sig, code] of [['SIGTERM', 143], ['SIGINT', 130]]) {
     const dir = tempDir('stub');
     const child = spawn(process.execPath, [ORC, 'dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile()], {
-      env: { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome, ORC_TOOL_BIN_ANTIGRAVITY: stub(dir), STUB_SLEEP: '1' },
+      env: agentFree({ ...process.env, HOME: fakeHome, USERPROFILE: fakeHome }, { ORC_TOOL_BIN_ANTIGRAVITY: stub(dir), STUB_SLEEP: '1' }),
       stdio: 'ignore',
     });
     const until = Date.now() + 15000;

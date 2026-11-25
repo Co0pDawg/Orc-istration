@@ -162,6 +162,29 @@ agy models | node tools/orc.mjs models --tool antigravity --from-stdin --family 
 
 Save the last command's output as `models.local.json`; `--family <name>` (default `flash`) picks the family whose `-low`, `-medium` and `-high` slugs fill the Low, Mid and High headless tiers, and any other slug goes into `models.local.json` by hand. The generated roles are main agents as well as subagents (`mainAgent: true`), so `agy agents` lists them and `dispatch --tool antigravity --role <name>` can select one. Then, in each project, run the standards setup in [`orchestration/standards.md`](orchestration/standards.md); `install` prints this pointer too, and writes this clone's path into the rulebook as the setup checkout. The rest: [Install and Quick Start](https://github.com/Co0pDawg/Orc-istration/wiki/Install-And-Quick-Start).
 
+## Shared state (~/.orc)
+
+One folder, `~/.orc/` (or `ORC_DATA_DIR`), holds this machine's settings for every tool. Both files are optional; orc reads them and never creates them, and without them every command works as before. `build`, `check`, `sync` and `golden` never read them.
+
+- **`config.json`**: `version` (required, `1`), `activeTools` (the tools `--all` and `doctor` work through, in order), `setupCheckout` (this checkout's path), `board` (`url`, and `repo` for a local board: the board default for `--all`; `install --all --apply` saves it in each tool's manifest, so a later change here reaches an installed tool only with `--board`/`--board-repo` or `--no-board`), `binaries` (tool id to the executable's absolute path, after `ORC_TOOL_BIN_<TOOL>` and before PATH), `fallback` (a tool id) and `routing` (role name to a tool id or a list of them). An invalid file is an error naming every problem.
+- **`models.json`**: the `models.json` format, layered after the checkout's `models.json` and before `models.local.json`.
+- **Routing.** `dispatch --role <name> --brief <file>` without `--tool` runs the first available tool in the role's `routing` entry, then `fallback` (available: a headless recipe, a model for the tier, and an executable that resolves). Each tool skipped gets a `falling back to` line on stderr; with none available it exits 1 and starts nothing. The choice is made before anything starts, so a tool that fails after starting is never retried on another. `--tool` stays explicit, with no fallback. `--prefer <tool>` tries that tool first, then the rest of the chain. `--model <slug>` replaces the first tool's model and is dropped on a fallback. A `routing` list is a fallback chain, never "run both": for a second reviewer on another tool, dispatch again with `--prefer` (`dispatch --role refuter --brief b.md` runs the routed tool; `dispatch --role refuter --brief b.md --prefer codex` runs Codex, falling back to the chain).
+- **`doctor`** prints `OK`, `WARN` or `FAIL` per check: the two files, the setup checkout, each active tool's binary, `--version`, sign-in (exit code only), install state and headless models, the routing table, and the board's `/api/health` for a local address. It exits 1 on any FAIL; `--json` prints one object.
+- **`install --all` and `status --all`** run once per active tool with a `== <tool> ==` header, checking every refusal for every tool before anything is written.
+
+```json
+{
+  "version": 1,
+  "activeTools": ["claude-code", "antigravity", "codex"],
+  "board": { "url": "http://localhost:8377", "repo": "C:/Users/<you>/Orc-Dashboard" },
+  "binaries": { "codex": "C:/path/to/vendor/.../bin/codex.exe" },
+  "fallback": "claude-code",
+  "routing": { "builder": ["antigravity", "claude-code"], "refuter": ["claude-code", "codex"] }
+}
+```
+
+Every key and rule: [docs/cli.md](docs/cli.md#shared-state-orc).
+
 ## Repository layout
 
 | Path | What it is |
@@ -175,9 +198,9 @@ Save the last command's output as `models.local.json`; `--family <name>` (defaul
 | `templates/AGENTS.md` | Starting rulebook for a repo you work on, with its Project settings block (`docs/adopt-a-repo.md`) |
 | `tools/tracker/` | `ado.ps1`, the Azure DevOps tracker helper (`docs/tracker-contract.md`), and its offline self-check |
 | `profiles/*.md` | Optional rulebook additions (`--profile <name>`); `dotnet-azure-devops` holds the long rulebook's stack rules and general lessons |
-| `models.json` | Tier to model, per tool; `models.local.json` (untracked) overrides |
+| `models.json` | Tier to model, per tool; `~/.orc/models.json`, then `models.local.json` (untracked), override it for install, status, dispatch and doctor |
 | `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
-| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `hooks`, `standards`; review panel: `calibration`, `corpus`, `metrics`; `help` |
+| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `doctor`, `hooks`, `standards`; review panel: `calibration`, `corpus`, `metrics`; `help` |
 | `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them), install, check, tooling, standards and review-panel tool tests, and the sprint tests (theme tokens and contrast, the theme picker, `make-story.mjs` and the story page) |
 | `CONTRIBUTING.md` | How to change this repo: sources vs generated files, the edit loop, traps |
 | `LICENSE` | MIT |
@@ -224,9 +247,9 @@ Every command is `node tools/orc.mjs <command>`. Options: `node tools/orc.mjs he
 | `check` | Check caps and `models.json`, and that `CLAUDE.md` and `agents/*.md` match the build |
 | `sync` | Regenerate the checked-in `CLAUDE.md` and `agents/*.md` |
 | `golden` | Regenerate `tests/golden/<tool>/` |
-| `install` | Install one tool's files into a home folder (dry run without `--apply`); `--sprint-kit` adds the sprint skill, the git guard hook and a stack permission preset for Claude Code |
+| `install` | Install one tool's files (or, with `--all`, every active tool's) into a home folder (dry run without `--apply`); `--sprint-kit` adds the sprint skill, the git guard hook and a stack permission preset for Claude Code |
 | `uninstall` | Delete the files an install recorded (dry run without `--apply`); for a sprint kit, also remove its `settings.json` entries and restore what it replaced |
-| `status` | Compare an installed copy with the current build (a sprint kit's `settings.json` entries included) |
+| `status` | Compare an installed copy (or, with `--all`, every active tool's) with the current build (a sprint kit's `settings.json` entries included) |
 | `models` | Turn `agy models` output into a `models.local.json` fragment |
 | `brief` | Print or lint a marching-orders brief |
 | `review-tier` | Say whether a branch diff is Light-eligible or Full (prompt files, including `review/`, `workflows/` and `commands/`, count as product) |
@@ -234,7 +257,8 @@ Every command is `node tools/orc.mjs <command>`. Options: `node tools/orc.mjs he
 | `calibration` | Per-lane precision and recall of the review panel from its run logs |
 | `corpus` | List the review regression corpus, or score a panel report against one case |
 | `metrics` | Capture or report per-run review metrics from Claude Code transcripts |
-| `dispatch` | Run one role headlessly at its tier (Antigravity, Claude Code and Codex) |
+| `dispatch` | Run one role headlessly at its tier (Antigravity, Claude Code and Codex), on `--tool` or routed by `~/.orc/config.json` with fallback (`--prefer` puts a tool first); `--model` overrides the model |
+| `doctor` | Check `~/.orc`, each active tool (binary, `--version`, install state, headless models), the routing table and the board, without writing (`--json`) |
 | `hooks` | Merge the example hooks into `settings.json` (dry run without `--apply`) |
 | `standards` | List, show or detect archive coding standards, or compose a project's `STANDARDS.md` (dry run without `--apply`) |
 | `help` | List the commands, or one command's options |

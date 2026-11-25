@@ -24,6 +24,8 @@ async function run(argv, stdin = '') {
 function tempDir(name) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `orc-${name}-`));
 }
+// No test reads this machine's ~/.orc: the shared state home is an empty scratch folder, which children inherit.
+process.env.ORC_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'orc-data-'));
 
 async function buildRepo() {
   const roles = loadRoles(REPO);

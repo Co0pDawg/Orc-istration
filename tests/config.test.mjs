@@ -1,0 +1,575 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import http from 'node:http';
+import { fileURLToPath } from 'node:url';
+import { spawn, spawnSync } from 'node:child_process';
+import { main, loadModels, loadRoles, loadAdapters, buildGolden } from '../tools/orc.mjs';
+import { runDoctor } from '../tools/lib/doctor.mjs';
+import { orcHome, loadConfig, routeChain } from '../tools/lib/config.mjs';
+import { knownTools } from '../tools/lib/models.mjs';
+import { parseMarchingOrders } from '../tools/lib/brief.mjs';
+
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ORC = path.join(REPO, 'tools', 'orc.mjs');
+const AGENTS = fs.readFileSync(path.join(REPO, 'AGENTS.md'), 'utf8').replace(/\r\n/g, '\n');
+const tempDir = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `orc-${name}-`));
+// No test reads this machine's ~/.orc: the shared state home is an empty scratch folder, which children inherit.
+process.env.ORC_DATA_DIR = tempDir('data');
+// No test can start a real claude, agy or codex: PATH holds no agent CLI (System32 stays for taskkill), the Antigravity
+// install folder (%LOCALAPPDATA%/agy/bin) points at scratch, and no ORC_TOOL_BIN_* is inherited.
+const SAFE_PATH = [tempDir('nopath'), ...(process.platform === 'win32' ? [path.join(process.env.SystemRoot ?? 'C:/Windows', 'System32')] : [])].join(path.delimiter);
+function setEnv(env, key, value) {
+  for (const k of Object.keys(env)) if (k.toLowerCase() === key.toLowerCase()) delete env[k];
+  if (value !== undefined) env[key] = value;
+}
+setEnv(process.env, 'PATH', SAFE_PATH);
+setEnv(process.env, 'LOCALAPPDATA', tempDir('localappdata'));
+for (const k of Object.keys(process.env)) if (k.startsWith('ORC_TOOL_BIN_')) delete process.env[k];
+
+const TOOLS = knownTools(REPO);
+const ROLES = loadRoles(REPO).map((r) => r.name);
+
+// A state home holding config.json (and models.json when given).
+function dataDir(config, models) {
+  const dir = tempDir('orcdata');
+  if (config !== undefined) fs.writeFileSync(path.join(dir, 'config.json'), typeof config === 'string' ? config : JSON.stringify(config));
+  if (models !== undefined) fs.writeFileSync(path.join(dir, 'models.json'), typeof models === 'string' ? models : JSON.stringify(models));
+  return dir;
+}
+
+// The CLI in a child with an empty scratch HOME (which must stay empty) and the given state home.
+function cli(argv, data, extraEnv = {}) {
+  const fakeHome = tempDir('fakehome');
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) if (k.startsWith('ORC_TOOL_BIN_')) delete env[k];
+  for (const [k, v] of Object.entries({ PATH: SAFE_PATH, HOME: fakeHome, USERPROFILE: fakeHome, ORC_DATA_DIR: data, ...extraEnv })) setEnv(env, k, v);
+  const r = spawnSync(process.execPath, [ORC, ...argv], { env, encoding: 'utf8', timeout: 60000 });
+  assert.deepEqual(fs.readdirSync(fakeHome), [], 'scratch home stays empty');
+  return { code: r.status, out: r.stdout, err: r.stderr };
+}
+
+async function run(argv, data) {
+  const before = process.env.ORC_DATA_DIR;
+  process.env.ORC_DATA_DIR = data;
+  const out = [];
+  const err = [];
+  try {
+    const code = await main(argv, { out: (s) => out.push(s), err: (s) => err.push(s), stdin: () => '' });
+    return { code, out: out.join('\n'), err: err.join('\n') };
+  } finally {
+    process.env.ORC_DATA_DIR = before;
+  }
+}
+
+// A brief that passes lint for any role: every rulebook item, filled.
+function briefFile() {
+  const fill = {
+    1: 'Find where the session doc is written.',
+    2: 'tools/orc.mjs',
+    3: 'May change nothing; must not change anything.',
+    4: 'Run `npm test`.',
+    5: 'Do not edit files.',
+    6: 'Paths only, cap 20 lines.',
+    7: 'The board CLI is local/board.js.',
+    8: 'scratch/scout-board.md',
+    9: 'none: a tooling change with no ticket.',
+    10: 'The real sessions collection.',
+    11: 'BOARD: http://localhost:8377 card cards/c1 stage Build',
+  };
+  const text = parseMarchingOrders(AGENTS).map((it, i) => `${i + 1}. ${it.text}\n   ${fill[i + 1]}`).join('\n');
+  const f = path.join(tempDir('brief'), 'brief.md');
+  fs.writeFileSync(f, text);
+  return f;
+}
+
+// A stub tool: records each start in starts.txt, answers --version, answers an auth status call with `auth` (printing
+// an account line), exits with STUB_EXIT. With `hang` it answers nothing and never exits.
+function stub(dir, { auth = 0, hang = false, name = 'stub.mjs' } = {}) {
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, `import fs from 'node:fs';
+if (${hang}) setInterval(() => {}, 1000);
+else if (process.argv[2] === '--version') { console.log('stub-tool 9.9.9'); process.exit(0); }
+else if (['auth', 'login'].includes(process.argv[2]) && process.argv[3] === 'status') { console.log('Logged in as someone@example.com'); process.exit(${auth}); }
+else {
+fs.appendFileSync(${JSON.stringify(path.join(dir, 'starts.txt'))}, JSON.stringify(process.argv.slice(2)) + '\\n');
+process.exit(Number(process.env.STUB_EXIT ?? 0));
+}
+`);
+  return file;
+}
+const starts = (dir) => (fs.existsSync(path.join(dir, 'starts.txt')) ? fs.readFileSync(path.join(dir, 'starts.txt'), 'utf8').trim().split('\n') : []);
+const missingPath = () => path.join(tempDir('gone'), 'not-here.exe');
+
+// ---------- config.json ----------
+
+test('orcHome is ORC_DATA_DIR, else ~/.orc; an absent config is no config and creates nothing', () => {
+  assert.equal(orcHome({ ORC_DATA_DIR: '/x/y' }), '/x/y');
+  assert.equal(orcHome({}), path.join(os.homedir(), '.orc'));
+  // Empty or whitespace-only is deliberately the same as unset.
+  for (const blank of ['', '   ', '\t']) assert.equal(orcHome({ ORC_DATA_DIR: blank }), path.join(os.homedir(), '.orc'));
+  const dir = tempDir('empty');
+  const r = loadConfig({ tools: TOOLS, roles: ROLES, env: { ORC_DATA_DIR: dir } });
+  assert.deepEqual(r, { file: path.join(dir, 'config.json'), config: null });
+  assert.deepEqual(fs.readdirSync(dir), []);
+  const nowhere = path.join(tempDir('parent'), 'orc');
+  assert.equal(loadConfig({ tools: TOOLS, roles: ROLES, env: { ORC_DATA_DIR: nowhere } }).config, null);
+  assert.equal(fs.existsSync(nowhere), false, 'reading never creates the state home');
+});
+
+test('config.json: every key loads; an invalid file names the file and every problem, never a value', () => {
+  const abs = path.resolve(tempDir('bin'), 'codex.exe');
+  const good = {
+    version: 1,
+    activeTools: ['claude-code', 'codex'],
+    setupCheckout: REPO,
+    board: { url: 'http://localhost:8377', repo: REPO },
+    binaries: { codex: abs },
+    fallback: 'claude-code',
+    routing: { builder: ['antigravity', 'claude-code'], scout: 'claude-code' },
+  };
+  const dir = dataDir(good);
+  assert.deepEqual(loadConfig({ tools: TOOLS, roles: ROLES, env: { ORC_DATA_DIR: dir } }).config, good);
+  assert.deepEqual(routeChain(good, 'builder'), ['antigravity', 'claude-code']);
+  assert.deepEqual(routeChain(good, 'scout'), ['claude-code']);
+  assert.deepEqual(routeChain(good, 'refuter'), ['claude-code']);
+  assert.deepEqual(routeChain({ version: 1 }, 'refuter'), []);
+
+  const bad = dataDir({
+    activeTools: [],
+    extra: 1,
+    board: { url: 'http://localhost:1', token: 'SECRET-1' },
+    binaries: { codex: 'relative/codex.exe', nope: '/x' },
+    fallback: 'SECRET-2',
+    routing: { builder: [], nobody: 'claude-code', scout: ['SECRET-3'] },
+  });
+  const file = path.join(bad, 'config.json');
+  assert.throws(() => loadConfig({ tools: TOOLS, roles: ROLES, env: { ORC_DATA_DIR: bad } }), (e) => {
+    assert.ok(e.message.startsWith(`${file}: `), e.message);
+    for (const p of ['unknown key "extra"', 'version is required', 'activeTools: must be a non-empty array', 'board: unknown key "token"', 'binaries.codex: must be an absolute path', 'binaries: not a known tool id', 'fallback: not a known tool id', 'routing.builder: must not be an empty list', 'routing: unknown role "nobody"', 'routing.scout[0]: not a known tool id']) {
+      assert.ok(e.message.includes(p), `${p} in ${e.message}`);
+    }
+    assert.doesNotMatch(e.message, /SECRET/);
+    return true;
+  });
+  assert.throws(() => loadConfig({ tools: TOOLS, roles: ROLES, env: { ORC_DATA_DIR: dataDir({ version: 2 }) } }), /version must be 1/);
+  const broken = dataDir('{ "version": 1, "fallback": "SECRET-4" ');
+  assert.throws(() => loadConfig({ tools: TOOLS, roles: ROLES, env: { ORC_DATA_DIR: broken } }), (e) => e.message.startsWith(path.join(broken, 'config.json')) && /not valid JSON/.test(e.message) && !/SECRET/.test(e.message));
+});
+
+// ---------- ~/.orc/models.json ----------
+
+test('~/.orc/models.json layers between models.json and models.local.json, only for the commands that pass shared', async () => {
+  const repo = tempDir('repo');
+  for (const p of ['AGENTS.md', 'models.json', 'roles', 'adapters', 'tools/lib']) fs.cpSync(path.join(REPO, p), path.join(repo, p), { recursive: true });
+  const data = dataDir(undefined, { codex: { high: { model: 'shared-high' }, headless: { low: 'shared-low' } } });
+  const env = { ORC_DATA_DIR: data };
+  const m = loadModels(repo, { shared: true, env });
+  assert.equal(m.codex.high.model, 'shared-high');
+  assert.equal(m.codex.high.effort, 'high', 'two-level merge keeps the base effort');
+  assert.equal(m.codex.headless.low, 'shared-low');
+  assert.equal(loadModels(repo, { env }).codex.high.model, 'gpt-6-astra', 'not read without shared');
+  assert.equal(loadModels(repo, { local: false, shared: true, env }).codex.high.model, 'gpt-6-astra', 'not read with local: false');
+  fs.writeFileSync(path.join(repo, 'models.local.json'), JSON.stringify({ codex: { high: { model: 'local-high' } } }));
+  assert.equal(loadModels(repo, { shared: true, env }).codex.high.model, 'local-high', 'models.local.json wins');
+  const bad = dataDir(undefined, { codex: { huge: {} } });
+  assert.throws(() => loadModels(repo, { shared: true, env: { ORC_DATA_DIR: bad } }), (e) => e.message.startsWith(`${path.join(bad, 'models.json')}: `) && /unknown tier key "huge"/.test(e.message));
+});
+
+test('an invalid ~/.orc/models.json never reaches build, check or golden; install, status, dispatch and doctor name it', async () => {
+  const bad = dataDir(undefined, '{ not json');
+  const file = path.join(bad, 'models.json');
+  assert.equal(cli(['check'], bad).code, 0);
+  const out = tempDir('dist');
+  assert.equal(cli(['build', '--out', out], bad).code, 0);
+  process.env.ORC_DATA_DIR = bad;
+  try {
+    const results = await buildGolden(REPO);
+    assert.deepEqual(results.flatMap((r) => r.errors), []);
+  } finally {
+    process.env.ORC_DATA_DIR = tempDir('data');
+  }
+  const home = tempDir('home');
+  for (const argv of [['install', '--tool', 'antigravity', '--home', home], ['status', '--tool', 'antigravity', '--home', home], ['dispatch', '--tool', 'claude-code', '--role', 'scout', '--brief', briefFile(), '--dry-run']]) {
+    const r = cli(argv, bad);
+    assert.equal(r.code, 1, argv.join(' '));
+    assert.ok(r.err.includes(`${file}: not valid JSON`), r.err);
+  }
+  const d = cli(['doctor', '--home', home], bad);
+  assert.equal(d.code, 1);
+  assert.ok(d.out.includes(`FAIL models: ${file}: not valid JSON`), d.out);
+  assert.deepEqual(fs.readdirSync(home), []);
+});
+
+// ---------- dispatch routing ----------
+
+test('dispatch with no --tool and no route says what to add, naming config.json', () => {
+  const empty = dataDir();
+  const r = cli(['dispatch', '--role', 'builder', '--brief', briefFile(), '--dry-run'], empty);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /dispatch needs --tool, or a routing entry for builder \(or a fallback\) in /);
+  assert.ok(r.err.includes(path.join(empty, 'config.json')));
+  const routed = dataDir({ version: 1, routing: { scout: 'claude-code' } });
+  assert.match(cli(['dispatch', '--role', 'builder', '--brief', briefFile(), '--dry-run'], routed).err, /routing entry for builder/);
+});
+
+test('dispatch routes to the first available tool, falls back before starting, and never retries after a start', () => {
+  const dir = tempDir('stub');
+  const gone = missingPath();
+  const data = dataDir({ version: 1, binaries: { antigravity: gone, 'claude-code': stub(dir) }, routing: { builder: ['antigravity', 'claude-code'] } });
+  const file = path.join(data, 'config.json');
+  const dry = cli(['dispatch', '--role', 'builder', '--brief', briefFile(), '--dry-run'], data);
+  assert.equal(dry.code, 0, dry.err);
+  assert.equal(dry.err.trim(), `dispatch: antigravity unavailable (${gone} (binaries.antigravity in ${file}) does not exist); falling back to claude-code`);
+  assert.match(dry.out, /^command: .*node(\.exe)?"? .*stub\.mjs -p --agent builder --model opus$/m);
+  assert.deepEqual(starts(dir), [], 'a dry run starts nothing');
+
+  // The first member is used when available: no fallback line.
+  const first = dataDir({ version: 1, binaries: { antigravity: stub(dir) }, routing: { builder: ['antigravity', 'claude-code'] } });
+  const r1 = cli(['dispatch', '--role', 'builder', '--brief', briefFile(), '--dry-run'], first);
+  assert.equal(r1.err, '');
+  assert.match(r1.out, /stub\.mjs -p .* --agent builder --model gemini-3\.8-flash-high/);
+
+  // A tool that starts and exits non-zero is not retried on the next.
+  const both = tempDir('stub2');
+  const failing = dataDir({ version: 1, binaries: { antigravity: stub(both), 'claude-code': stub(both) }, routing: { builder: ['antigravity', 'claude-code'] } });
+  const real = cli(['dispatch', '--role', 'builder', '--brief', briefFile()], failing, { STUB_EXIT: '3' });
+  assert.equal(real.code, 3);
+  assert.equal(starts(both).length, 1, 'one start only');
+  assert.doesNotMatch(real.err, /falling back/);
+});
+
+test('dispatch: none available exits 1 listing each member, also under --dry-run; a .cmd binary and an absent override count as unavailable', () => {
+  const dir = tempDir('shim');
+  const shim = path.join(dir, 'claude.cmd');
+  fs.writeFileSync(shim, '@echo off\r\n');
+  const gone = missingPath();
+  const data = dataDir({ version: 1, binaries: { 'claude-code': shim }, fallback: 'claude-code', routing: { builder: ['cursor', 'antigravity'] } });
+  const r = cli(['dispatch', '--role', 'builder', '--brief', briefFile(), '--dry-run'], data, { ORC_TOOL_BIN_ANTIGRAVITY: gone });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /^dispatch: cursor unavailable \(no headless recipe for cursor\)$/m);
+  assert.ok(r.err.includes(`dispatch: antigravity unavailable (ORC_TOOL_BIN_ANTIGRAVITY names ${gone}, which does not exist)`), r.err);
+  assert.match(r.err, /dispatch: claude-code unavailable \(.*claude\.cmd \(binaries\.claude-code in .*\) is a \.cmd\/\.bat shim, which cannot be started without a shell\)/);
+  assert.match(r.err, /dispatch: no tool available for builder \(cursor, antigravity, claude-code\); nothing started$/m);
+  assert.equal(r.out, '');
+  assert.doesNotMatch(r.err, /falling back/);
+});
+
+test('dispatch --tool is explicit: no fallback, a configured binary that is gone fails naming the path and config.json', () => {
+  const gone = missingPath();
+  const dir = tempDir('stub');
+  const data = dataDir({ version: 1, binaries: { antigravity: gone, 'claude-code': stub(dir) }, fallback: 'claude-code' });
+  const file = path.join(data, 'config.json');
+  const dry = cli(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile(), '--dry-run'], data);
+  assert.equal(dry.code, 0);
+  assert.ok(dry.out.includes(`note: ${gone} (binaries.antigravity in ${file}) does not exist`), dry.out);
+  const real = cli(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile()], data);
+  assert.equal(real.code, 1);
+  assert.ok(real.err.includes(`cannot run antigravity: ${gone} (binaries.antigravity in ${file}) does not exist`), real.err);
+  assert.doesNotMatch(real.err, /falling back/);
+  assert.deepEqual(starts(dir), []);
+  // ORC_TOOL_BIN_<TOOL> wins over binaries; a .mjs binary runs under this Node.
+  const viaEnv = cli(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile()], data, { ORC_TOOL_BIN_ANTIGRAVITY: stub(dir) });
+  assert.equal(viaEnv.code, 0, viaEnv.err);
+  const viaConfig = cli(['dispatch', '--tool', 'claude-code', '--role', 'scout', '--brief', briefFile()], data);
+  assert.equal(viaConfig.code, 0, viaConfig.err);
+  assert.equal(starts(dir).length, 2);
+});
+
+test('dispatch --model replaces the first tool\'s model, keeps the effort, and is dropped on a fallback', () => {
+  const dir = tempDir('stub');
+  const data = dataDir({ version: 1, binaries: { codex: stub(dir), 'claude-code': stub(dir) }, routing: { builder: ['codex', 'claude-code'] } });
+  const r = cli(['dispatch', '--role', 'builder', '--brief', briefFile(), '--dry-run', '--model', 'gpt-6.2-astra'], data);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /exec --model gpt-6\.2-astra --sandbox workspace-write -c "model_reasoning_effort=\\"high\\"" -/);
+  const explicit = cli(['dispatch', '--tool', 'claude-code', '--role', 'scout', '--brief', briefFile(), '--dry-run', '--model', 'sonnet'], data);
+  assert.match(explicit.out, /--agent scout --model sonnet$/m);
+
+  const fallback = dataDir({ version: 1, binaries: { codex: missingPath(), 'claude-code': stub(dir) }, routing: { builder: ['codex', 'claude-code'] } });
+  const f = cli(['dispatch', '--role', 'builder', '--brief', briefFile(), '--dry-run', '--model', 'gpt-6.2-astra'], fallback);
+  assert.equal(f.code, 0, f.err);
+  assert.match(f.err, /^dispatch: --model gpt-6\.2-astra dropped \(it was for codex\); claude-code runs its high model$/m);
+  assert.match(f.out, /--agent builder --model opus$/m);
+  assert.match(cli(['status', '--tool', 'codex', '--model', 'x'], fallback).err, /--model applies to dispatch only/);
+});
+
+// ---------- doctor ----------
+
+test('doctor with no state home: exit 0, a WARN for config.json, and nothing created', () => {
+  const data = path.join(tempDir('parent'), 'orc');
+  const home = tempDir('home');
+  const r = cli(['doctor', '--home', home], data);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /^WARN config: no .*config\.json; write one/m);
+  assert.match(r.out, /^OK models: none/m);
+  assert.equal(fs.existsSync(data), false);
+  assert.deepEqual(fs.readdirSync(home), []);
+  const j = cli(['doctor', '--home', home, '--json'], data);
+  const parsed = JSON.parse(j.out);
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(parsed.checks.map((c) => `${c.level} ${c.check}`), ['WARN config', 'OK models']);
+});
+
+test('doctor checks each active tool, the routing table and the board; FAIL exits 1; --json is one object', async () => {
+  const dir = tempDir('stub');
+  const home = tempDir('home');
+  const gone = missingPath();
+  const server = http.createServer((req, res) => {
+    res.writeHead(req.url === '/api/health' ? 200 : 404, { 'content-type': 'application/json' });
+    res.end('{"ok":true}');
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const data = dataDir(
+    {
+      version: 1,
+      activeTools: ['antigravity', 'codex'],
+      setupCheckout: REPO,
+      board: { url, repo: REPO },
+      binaries: { antigravity: stub(dir), codex: gone },
+      routing: { builder: ['codex', 'antigravity'], refuter: 'codex' },
+    },
+    { codex: { headless: { low: 'luna-x' } } },
+  );
+  try {
+    assert.equal((await run(['install', '--tool', 'antigravity', '--home', home, '--apply', '--board', url, '--board-repo', REPO], data)).code, 0);
+    const r = await run(['doctor', '--home', home], data);
+    const lines = r.out.split('\n');
+    const has = (re) => assert.ok(lines.some((l) => re.test(l)), `${re} in\n${r.out}`);
+    has(/^OK config: .*config\.json$/);
+    has(/^OK models: .*models\.json$/);
+    has(/^OK setupCheckout: /);
+    has(/^OK antigravity headless: recipe present; a model for low, mid and high$/);
+    has(/^OK antigravity binary: .*stub\.mjs \(from binaries\.antigravity in .*config\.json\)$/);
+    has(/^OK antigravity version: stub-tool 9\.9\.9$/);
+    has(/^OK antigravity auth: not checked \(no status command\)$/);
+    has(/^OK antigravity install: clean in /);
+    has(/^FAIL codex binary: .*not-here\.exe \(binaries\.codex in .*\) does not exist$/);
+    has(/^WARN codex install: not installed in /);
+    has(/^OK routing: builder: codex > antigravity; runs antigravity; skips codex \(/);
+    has(/^FAIL routing: refuter: codex; none available: codex \(/);
+    has(/^WARN routing: scout: no route and no fallback; dispatch needs --tool$/);
+    has(new RegExp(`^OK board: ${url.replace(/[.]/g, '\\.')} \\(health ok\\)$`));
+    assert.equal(r.code, 1);
+    assert.equal(starts(dir).length, 0, 'doctor never starts a model run');
+
+    const j = await run(['doctor', '--home', home, '--json'], data);
+    const parsed = JSON.parse(j.out);
+    assert.equal(parsed.ok, false);
+    assert.deepEqual(parsed.checks.find((c) => c.check === 'version'), { level: 'OK', check: 'version', detail: 'stub-tool 9.9.9', tool: 'antigravity' });
+  } finally {
+    server.close();
+  }
+  // An edited install is drift; an unreachable local board is a WARN, never a FAIL.
+  fs.appendFileSync(path.join(home, '.gemini', 'AGENTS.md'), 'edited\n');
+  const closed = dataDir({ version: 1, activeTools: ['antigravity'], binaries: { antigravity: stub(dir) }, board: { url: 'http://localhost:9', repo: REPO } });
+  const r2 = await run(['doctor', '--home', home], closed);
+  assert.equal(r2.code, 0, r2.out);
+  assert.match(r2.out, /^WARN antigravity install: drift in /m);
+  assert.match(r2.out, /^WARN board: http:\/\/localhost:9 unreachable/m);
+  const remote = dataDir({ version: 1, board: { url: 'https://example.invalid/board' } });
+  assert.match((await run(['doctor', '--home', home], remote)).out, /^OK board: https:\/\/example\.invalid\/board \(not fetched\)$/m);
+  assert.match((await run(['doctor', '--home', home], dataDir('{"version":1,"nope":true}'))).out, /^FAIL config: .*unknown key "nope"/m);
+});
+
+test('doctor warns about a PATH that holds only a .cmd shim and names the fix', { skip: process.platform !== 'win32' && 'the .cmd shim rule is Windows only' }, () => {
+  const bin = tempDir('npmbin');
+  fs.writeFileSync(path.join(bin, 'codex.cmd'), '@echo off\r\n');
+  const data = dataDir({ version: 1, activeTools: ['codex'] });
+  const r = cli(['doctor', '--home', tempDir('home')], data, { PATH: bin });
+  assert.match(r.out, /^WARN codex binary: only a \.cmd\/\.bat shim at .*codex, which dispatch cannot start; set binaries\.codex in .*config\.json to the real executable$/m);
+});
+
+// ---------- --all ----------
+
+test('--all needs activeTools, excludes --tool, and applies to install and status only', () => {
+  const empty = dataDir();
+  const r = cli(['status', '--all', '--home', tempDir('home')], empty);
+  assert.equal(r.code, 1);
+  assert.ok(r.err.includes(`--all needs activeTools in ${path.join(empty, 'config.json')}`), r.err);
+  const data = dataDir({ version: 1, activeTools: ['antigravity'] });
+  assert.match(cli(['status', '--all', '--tool', 'antigravity'], data).err, /pass --all or --tool, not both/);
+  assert.match(cli(['uninstall', '--all'], data).err, /--all applies to install and status only/);
+});
+
+test('install --all and status --all run every active tool in order with a header; the board defaults from config.json', async () => {
+  const home = tempDir('home');
+  const data = dataDir({ version: 1, activeTools: ['codex', 'antigravity'], board: { url: 'http://localhost:8399', repo: REPO } });
+  const i = await run(['install', '--all', '--home', home, '--apply'], data);
+  assert.equal(i.code, 0, i.err);
+  const headers = i.out.split('\n').filter((l) => l.startsWith('== '));
+  assert.deepEqual(headers, ['== codex ==', '== antigravity ==']);
+  assert.match(i.out, /using the board from .*config\.json: http:\/\/localhost:8399/);
+  for (const f of ['.codex/AGENTS.md', '.gemini/AGENTS.md']) assert.match(fs.readFileSync(path.join(home, f), 'utf8'), /board address is `http:\/\/localhost:8399`/);
+  const s = await run(['status', '--all', '--home', home], data);
+  assert.equal(s.code, 0, s.out);
+  assert.match(s.out, /== codex ==[\s\S]*status codex: all same[\s\S]*== antigravity ==[\s\S]*status antigravity: all same/);
+  // The manifest's board wins over config.json; a flag wins over both.
+  const other = dataDir({ version: 1, activeTools: ['codex'], board: { url: 'http://localhost:8400', repo: REPO } });
+  assert.equal((await run(['status', '--all', '--home', home], other)).code, 0);
+  const flagged = await run(['status', '--all', '--home', home, '--board', 'http://localhost:8401', '--board-repo', REPO], other);
+  assert.equal(flagged.code, 1, 'a different board differs');
+  // One tool out of date: the rest still run, the exit code is the worst.
+  fs.appendFileSync(path.join(home, '.codex', 'AGENTS.md'), 'edited\n');
+  const worst = await run(['status', '--all', '--home', home], data);
+  assert.equal(worst.code, 1);
+  assert.match(worst.out, /status codex: out of date[\s\S]*status antigravity: all same/);
+});
+
+test('install --all checks every refusal for every tool before writing anything', async () => {
+  const withClaude = dataDir({ version: 1, activeTools: ['antigravity', 'claude-code'] });
+  // In a child with a scratch HOME (asserted empty), so a regression here cannot write the real home.
+  const noHome = cli(['install', '--all', '--apply'], withClaude);
+  assert.equal(noHome.code, 1);
+  assert.match(noHome.err, /refused: claude-code: refusing --tool claude-code without --home/);
+
+  const home = tempDir('home');
+  const artifact = dataDir({ version: 1, activeTools: ['claude-code', 'antigravity'], board: { url: 'https://claude.ai/artifact/abc' } });
+  const a = await run(['install', '--all', '--home', home, '--apply'], artifact);
+  assert.equal(a.code, 1);
+  assert.match(a.err, /refused: antigravity: the artifact board can be written only from Claude Code/);
+  assert.deepEqual(fs.readdirSync(home), [], 'claude-code, first in order, was not written');
+  assert.match((await run(['status', '--all', '--home', home], artifact)).err, /refused: antigravity: the artifact board/);
+
+  // A hand-written file in the way of the second tool stops the first one too.
+  fs.mkdirSync(path.join(home, '.codex'));
+  fs.writeFileSync(path.join(home, '.codex', 'AGENTS.md'), 'my own rules\n');
+  const blocked = dataDir({ version: 1, activeTools: ['antigravity', 'codex'] });
+  const b = await run(['install', '--all', '--home', home, '--apply'], blocked);
+  assert.equal(b.code, 1);
+  assert.match(b.err, /refused: codex: refused \(hand-written; pass --force to replace it, with a backup\): .*AGENTS\.md/);
+  assert.match(b.err, /nothing written: install --all refused for codex$/m);
+  assert.equal(fs.existsSync(path.join(home, '.gemini')), false);
+  assert.equal(fs.readFileSync(path.join(home, '.codex', 'AGENTS.md'), 'utf8'), 'my own rules\n');
+  const local = dataDir({ version: 1, activeTools: ['antigravity'], board: { url: 'http://localhost:1' } });
+  assert.match((await run(['status', '--all', '--home', home], local)).err, /board\.repo is needed with the local board address/);
+});
+
+// ---------- rework round 1 ----------
+
+test('binaries beats PATH: a claude.exe on PATH is passed over for the configured stub; doctor says where it came from', async () => {
+  const onPath = tempDir('pathbin');
+  const dummy = path.join(onPath, process.platform === 'win32' ? 'claude.exe' : 'claude');
+  fs.writeFileSync(dummy, '');
+  const pathEnv = { PATH: [onPath, SAFE_PATH].join(path.delimiter) };
+  // Without a binaries entry the dummy on PATH is what resolves (so the test below proves config wins over it).
+  const plain = cli(['dispatch', '--tool', 'claude-code', '--role', 'scout', '--brief', briefFile(), '--dry-run'], dataDir({ version: 1 }), pathEnv);
+  assert.ok(plain.out.startsWith(`command: ${dummy} -p`), plain.out);
+  const dir = tempDir('stub');
+  const data = dataDir({ version: 1, activeTools: ['claude-code'], binaries: { 'claude-code': stub(dir) } });
+  const r = cli(['dispatch', '--tool', 'claude-code', '--role', 'scout', '--brief', briefFile(), '--dry-run'], data, pathEnv);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /^command: .*node(\.exe)?"? .*stub\.mjs -p --agent scout/m);
+  assert.ok(!r.out.includes(dummy), r.out);
+  const d = cli(['doctor', '--home', tempDir('home')], data, pathEnv);
+  assert.match(d.out, /^OK claude-code binary: .*stub\.mjs \(from binaries\.claude-code in .*config\.json\)$/m);
+});
+
+test('dispatch: a tool with no model for the role\'s tier is unavailable, and routing falls back', () => {
+  const dir = tempDir('stub');
+  const data = dataDir({ version: 1, binaries: { codex: stub(dir), 'claude-code': stub(dir) }, routing: { builder: ['codex', 'claude-code'] } }, { codex: { high: { model: '' } } });
+  const r = cli(['dispatch', '--role', 'builder', '--brief', briefFile(), '--dry-run'], data);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.err.trim(), 'dispatch: codex unavailable (no high model for codex in the models files (models.json, ~/.orc/models.json, models.local.json)); falling back to claude-code');
+  assert.match(r.out, /--agent builder --model opus$/m);
+});
+
+test('dispatch --prefer puts a tool first and keeps the chain behind it; not with --tool; works with no config', () => {
+  const dir = tempDir('stub');
+  const data = dataDir({ version: 1, binaries: { codex: stub(dir), 'claude-code': stub(dir) }, fallback: 'claude-code', routing: { refuter: 'claude-code' } });
+  const routed = cli(['dispatch', '--role', 'refuter', '--brief', briefFile(), '--dry-run'], data);
+  assert.match(routed.out, /--agent refuter --model opus$/m, 'the routed reviewer runs Claude Code');
+  const second = cli(['dispatch', '--role', 'refuter', '--brief', briefFile(), '--dry-run', '--prefer', 'codex', '--model', 'gpt-6.2-astra'], data);
+  assert.equal(second.code, 0, second.err);
+  assert.equal(second.err, '');
+  assert.match(second.out, /stub\.mjs exec --model gpt-6\.2-astra --sandbox workspace-write/, 'the second reviewer runs Codex, --model on the first member');
+  // The preferred tool unavailable: the routing entry and fallback stay behind it, once each.
+  const gone = dataDir({ version: 1, binaries: { codex: missingPath(), 'claude-code': stub(dir) }, fallback: 'claude-code', routing: { refuter: ['claude-code', 'codex'] } });
+  const f = cli(['dispatch', '--role', 'refuter', '--brief', briefFile(), '--dry-run', '--prefer', 'codex'], gone);
+  assert.equal(f.code, 0, f.err);
+  assert.match(f.err, /^dispatch: codex unavailable \(.*does not exist\); falling back to claude-code$/m);
+  assert.equal(f.err.trim().split('\n').length, 1);
+  assert.match(f.out, /--agent refuter --model opus$/m);
+  // A preferred tool already in the chain is listed once, first.
+  const both = dataDir({ version: 1, binaries: { codex: missingPath(), 'claude-code': missingPath() }, fallback: 'claude-code', routing: { refuter: ['claude-code', 'codex'] } });
+  const dead = cli(['dispatch', '--role', 'refuter', '--brief', briefFile(), '--dry-run', '--prefer', 'codex'], both);
+  assert.equal(dead.code, 1);
+  assert.match(dead.err, /no tool available for refuter \(codex, claude-code\); nothing started/);
+  // No config: the chain is the preferred tool alone.
+  const none = dataDir();
+  const solo = cli(['dispatch', '--role', 'refuter', '--brief', briefFile(), '--dry-run', '--prefer', 'codex'], none, { ORC_TOOL_BIN_CODEX: stub(dir) });
+  assert.equal(solo.code, 0, solo.err);
+  assert.match(solo.out, /stub\.mjs exec --model/);
+  const soloGone = cli(['dispatch', '--role', 'refuter', '--brief', briefFile(), '--dry-run', '--prefer', 'codex'], none);
+  assert.equal(soloGone.code, 1);
+  assert.match(soloGone.err, /no tool available for refuter \(codex\); nothing started/);
+  assert.match(cli(['dispatch', '--tool', 'claude-code', '--prefer', 'codex', '--role', 'refuter', '--brief', briefFile(), '--dry-run'], data).err, /pass --tool or --prefer, not both/);
+  assert.match(cli(['dispatch', '--prefer', 'nope', '--role', 'refuter', '--brief', briefFile(), '--dry-run'], data).err, /unknown tool nope/);
+  assert.match(cli(['status', '--tool', 'codex', '--prefer', 'codex'], data).err, /--prefer applies to dispatch only/);
+  assert.deepEqual(starts(dir), []);
+});
+
+test('doctor auth: exit 0 is signed in, any other exit a WARN with the code, no probe is not checked; the output is never printed', async () => {
+  const dir = tempDir('stub');
+  const data = dataDir({ version: 1, activeTools: ['claude-code', 'codex', 'antigravity'], binaries: { 'claude-code': stub(dir, { name: 'claude.mjs' }), codex: stub(dir, { auth: 1, name: 'codex.mjs' }), antigravity: stub(dir, { name: 'agy.mjs' }) } });
+  const r = await run(['doctor', '--home', tempDir('home')], data);
+  assert.match(r.out, /^OK claude-code auth: signed in$/m);
+  assert.match(r.out, /^WARN codex auth: not signed in or the check failed \(exit 1\)$/m, 'exit 1, the usual not-signed-in code, is never read as signed in');
+  assert.match(r.out, /^OK antigravity auth: not checked \(no status command\)$/m);
+  assert.doesNotMatch(r.out, /example\.com|Logged in/);
+  const j = await run(['doctor', '--home', tempDir('home'), '--json'], data);
+  assert.doesNotMatch(j.out, /example\.com|Logged in/);
+  assert.deepEqual(JSON.parse(j.out).checks.filter((c) => c.check === 'auth').map((c) => `${c.tool} ${c.level}`), ['claude-code OK', 'codex WARN', 'antigravity OK']);
+  assert.deepEqual(starts(dir), [], 'no model run');
+});
+
+test('doctor: a probe that never answers is killed at the timeout (WARN), and so is a board that never answers', async () => {
+  const dir = tempDir('stub');
+  const server = http.createServer(() => {});
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const data = dataDir({ version: 1, activeTools: ['claude-code'], binaries: { 'claude-code': stub(dir, { hang: true }) }, board: { url, repo: REPO } });
+  const out = [];
+  const started = Date.now();
+  try {
+    const code = await runDoctor(
+      { repo: REPO, home: tempDir('home'), json: false, io: { out: (s) => out.push(s), err: () => {} }, env: { ...process.env, ORC_DATA_DIR: data }, timeouts: { probeMs: 300, boardMs: 300 } },
+      { loadAdapters, loadRoles, loadModels, compareInstall: async () => ({ clean: true, files: 1, missing: 0 }), isArtifactBoard: () => false },
+    );
+    assert.equal(code, 0);
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+  const text = out.join('\n');
+  assert.match(text, /^WARN claude-code version: --version: no answer within 0\.3 seconds$/m);
+  assert.match(text, /^WARN claude-code auth: not signed in or the check failed \(no answer within 0\.3 seconds\)$/m);
+  assert.match(text, /^WARN board: http:\/\/127\.0\.0\.1:\d+ unreachable \(no answer within 0\.3 seconds\)$/m);
+  assert.ok(Date.now() - started < 4000, 'the short timeouts were used');
+});
+
+test('an ORC_TOOL_BIN_* that names a .cmd/.bat shim is unavailable for routing; with --tool it fails naming the shim', () => {
+  const dir = tempDir('stub');
+  const shim = path.join(tempDir('envshim'), 'claude.cmd');
+  fs.writeFileSync(shim, '@echo off\r\n');
+  const data = dataDir({ version: 1, binaries: { codex: stub(dir) }, routing: { builder: ['claude-code', 'codex'] } });
+  const r = cli(['dispatch', '--role', 'builder', '--brief', briefFile(), '--dry-run'], data, { ORC_TOOL_BIN_CLAUDE_CODE: shim });
+  assert.equal(r.code, 0, r.err);
+  assert.ok(r.err.includes(`dispatch: claude-code unavailable (ORC_TOOL_BIN_CLAUDE_CODE names ${shim}, a .cmd/.bat shim, which cannot be started without a shell); falling back to codex`), r.err);
+  const explicit = cli(['dispatch', '--tool', 'claude-code', '--role', 'scout', '--brief', briefFile()], data, { ORC_TOOL_BIN_CLAUDE_CODE: shim });
+  assert.notEqual(explicit.code, 0);
+  assert.ok(explicit.err.includes(`${shim} is a .cmd/.bat shim, which cannot be started without a shell; set ORC_TOOL_BIN_CLAUDE_CODE to the real executable`), explicit.err);
+  assert.doesNotMatch(explicit.err, /falling back/);
+  const d = cli(['doctor', '--home', tempDir('home')], dataDir({ version: 1, activeTools: ['claude-code'] }), { ORC_TOOL_BIN_CLAUDE_CODE: shim });
+  assert.match(d.out, /^WARN claude-code binary: ORC_TOOL_BIN_CLAUDE_CODE names a \.cmd\/\.bat shim .*; point it at the real executable$/m);
+  const c = cli(['doctor', '--home', tempDir('home')], dataDir({ version: 1, activeTools: ['claude-code'], binaries: { 'claude-code': shim } }));
+  assert.match(c.out, /^WARN claude-code binary: binaries\.claude-code in .*config\.json names a \.cmd\/\.bat shim .*; point it at the real executable$/m);
+  assert.deepEqual(starts(dir), []);
+});
+
+test('config.json: an activeTools list naming a tool twice is refused', () => {
+  const dir = dataDir({ version: 1, activeTools: ['codex', 'antigravity', 'codex'] });
+  assert.throws(() => loadConfig({ tools: TOOLS, roles: ROLES, env: { ORC_DATA_DIR: dir } }), /activeTools: names a tool more than once/);
+});

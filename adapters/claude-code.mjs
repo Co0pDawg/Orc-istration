@@ -81,6 +81,8 @@ export default {
   headless(role, tierModel, briefText) {
     return { command: 'claude', args: ['-p', '--agent', role.name, '--model', tierModel.model], stdin: briefText };
   },
+  // `orc doctor`: a non-interactive command that exits 0 when signed in (its output is never printed).
+  authProbe: { args: ['auth', 'status'] },
   // The review panel's slash commands ride with the rulebook: thin wrappers over review/*.md in the checkout.
   renderRulebook(agentsMd, notesMd) {
     return [
