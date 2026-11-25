@@ -156,10 +156,11 @@ Optional, when you want them: the skills in `skills/` (copy into `~/.claude/skil
 node tools/orc.mjs check
 node tools/orc.mjs install --tool antigravity                 # dry run
 node tools/orc.mjs install --tool antigravity --apply --board http://localhost:8377/ --board-repo <path to Orc-Dashboard>
-agy models | node tools/orc.mjs models --tool antigravity --from-stdin
+agy models | node tools/orc.mjs models --tool antigravity --from-stdin           # Flash slugs
+agy models | node tools/orc.mjs models --tool antigravity --from-stdin --family neon
 ```
 
-Save the last command's output as `models.local.json`. It picks the Flash slugs only; to run a tier on another model `agy models` lists, write that slug into the file's `headless` block by hand (for example `"high": "gemini-4-neon-high"`). Then, in each project, run the standards setup in [`orchestration/standards.md`](orchestration/standards.md); `install` prints this pointer too, and writes this clone's path into the rulebook as the setup checkout. The rest: [Install and Quick Start](https://github.com/Co0pDawg/Orc-istration/wiki/Install-And-Quick-Start).
+Save the output as `models.local.json`. Without `--family`, it picks the first slugs whose name contains `flash` and ends in `-low`, `-medium` or `-high` (so a `flash-lite` slug matches); with `--family <name>`, it picks that family's first `-low`, `-medium` and `-high` slugs. A family listed in more than one generation is named with its version, for example `--family 4-neon`. To mix families across tiers or pick a model without all three tiers, edit the file's `headless` block by hand. Then, in each project, run the standards setup in [`orchestration/standards.md`](orchestration/standards.md); `install` prints this pointer too, and writes this clone's path into the rulebook as the setup checkout. The rest: [Install and Quick Start](https://github.com/Co0pDawg/Orc-istration/wiki/Install-And-Quick-Start).
 
 ## Repository layout
 
@@ -225,7 +226,7 @@ Every command is `node tools/orc.mjs <command>`. Options: `node tools/orc.mjs he
 | `install` | Install one tool's files into a home folder (dry run without `--apply`); `--sprint-kit` adds the sprint skill, the git guard hook and a stack permission preset for Claude Code |
 | `uninstall` | Delete the files an install recorded (dry run without `--apply`); for a sprint kit, also remove its `settings.json` entries and restore what it replaced |
 | `status` | Compare an installed copy with the current build (a sprint kit's `settings.json` entries included) |
-| `models` | Turn `agy models` output into a `models.local.json` fragment (Flash slugs only) |
+| `models` | Turn `agy models` output into a `models.local.json` fragment (Flash slugs without `--family`, or `--family <name>`) |
 | `brief` | Print or lint a marching-orders brief |
 | `review-tier` | Say whether a branch diff is Light-eligible or Full |
 | `costlog` | Draft a cost log from the board |
