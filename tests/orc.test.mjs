@@ -96,6 +96,11 @@ test('golden snapshots, tool allowlists, read-only roles', async () => {
         if (adapter.id === 'opencode') assert.deepEqual(data.permissions, [{ action: 'edit', resource: '*', effect: 'deny' }]);
       } else if (adapter.id === 'opencode') assert.equal(data.permissions, undefined);
       if (adapter.id === 'copilot') assert.ok(!tools.includes('agent'));
+      // `agy --agent <name>` (the headless recipe) selects only main agents; a role must stay a subagent too.
+      if (adapter.id === 'antigravity') {
+        assert.equal(data.mainAgent, true, `${f.path} mainAgent`);
+        assert.equal(data.subagent, true, `${f.path} subagent`);
+      }
     }
   }
 });
