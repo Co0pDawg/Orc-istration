@@ -2,10 +2,7 @@
 name: review-design-explorer
 description: Review panel only (review/PROCEDURE.md), large diffs. Runs the design lanes the code explorer hands off on a large diff - architecture-reviewer, type-design-analyzer, code-simplifier - so the code explorer can spend its pass on correctness and error handling. On a large diff it also runs the cross-file angles E, F and I. Read-only; reports findings, leads and questions per review/contract.md.
 tools:
-  - list_dir
-  - find_by_name
-  - grep_search
-  - view_file
+  - read_file
   - run_command
 subagent: true
 mainAgent: true

@@ -49,7 +49,7 @@ export function validateModels(models, tools, file) {
       for (const [k, v] of Object.entries(value)) {
         if (!TIER_KEYS.includes(k)) problems.push(`${tool}.${tier}: unknown key "${k}"`);
         else if (typeof v !== 'string') problems.push(`${tool}.${tier}.${k}: must be a string`);
-        else if (k === 'effort' && !EFFORTS.includes(v)) problems.push(`${tool}.${tier}.effort: "${v}" is not one of ${EFFORTS.join(', ')}`);
+        else if (k === 'effort' && !EFFORTS.includes(v)) problems.push(`${tool}.${tier}.effort: must be one of ${EFFORTS.join(', ')}`);
       }
     }
   }

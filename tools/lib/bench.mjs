@@ -109,7 +109,7 @@ export function benchPlan(adapter, role, models, briefText, { budgetUsd, env = p
     '--max-budget-usd', String(budgetUsd), '--no-session-persistence',
   ];
   const exe = resolveExecutable('claude', adapter.id, env);
-  const plan = { command: 'claude', args, stdin: briefText, toolId: adapter.id, exe, argv: [...exe.pre, ...args], model, effort: effort ?? null };
+  const plan = { command: 'claude', args, stdin: briefText, stdinHolds: 'the brief', toolId: adapter.id, exe, argv: [...exe.pre, ...args], model, effort: effort ?? null };
   const bytes = plan.argv.reduce((n, a) => n + Buffer.byteLength(a) + 1, Buffer.byteLength(exe.command));
   if (bytes > ARGV_LIMIT) return { error: `bench: the command line is ${bytes} bytes (the --agents definition is passed inline); the limit is about ${ARGV_LIMIT} on Windows` };
   return plan;

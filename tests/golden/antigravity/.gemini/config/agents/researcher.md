@@ -2,12 +2,8 @@
 name: researcher
 description: Reads docs, source, specs, or web pages and reports back facts. Every claim is either backed by a citation (path:line or URL) or marked UNVERIFIED. Use for "how does X work", "what does the doc say", library/API questions.
 tools:
-  - list_dir
-  - find_by_name
-  - grep_search
-  - view_file
+  - read_file
   - run_command
-  - read_url_content
   - search_web
 subagent: true
 mainAgent: true

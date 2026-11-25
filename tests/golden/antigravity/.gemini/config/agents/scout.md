@@ -2,10 +2,7 @@
 name: scout
 description: Cheap locator. Finds files, symbols, call sites, references, config keys. Returns locations (path:line + one-line context), never file bodies. Use before any read or edit so the expensive model opens only what matters.
 tools:
-  - list_dir
-  - find_by_name
-  - grep_search
-  - view_file
+  - read_file
   - run_command
 subagent: true
 mainAgent: true

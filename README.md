@@ -10,7 +10,7 @@
 
 It is not an autonomous swarm. A person stays in charge: a spec is written before any code, each built change gets an independent review, and nothing counts as done until the orchestrator has read the final diff.
 
-> **Status: developed and used on Claude Code; early on other tools.** The full loop runs day to day only on Claude Code, on the files generated from this repo since 2026-11-18. Codex CLI has completed a live builder, refuter, rework and accept loop, launched both generated roles by name, and passed a native Windows workspace-write probe with MXC. Antigravity CLI has had one live run of a generated agent, and the other four adapters are verified by tests against each tool's documented format. See [Limits](#limits).
+> **Status: developed and used on Claude Code; early on other tools.** The full loop runs day to day only on Claude Code, on the files generated from this repo since 2026-11-18. Codex CLI has completed a live builder, refuter, rework and accept loop, launched both generated roles by name, and passed a native Windows workspace-write probe with MXC. Antigravity CLI is verified by tests and its `agy --help`, with no live run of a generated agent that counts yet, and the other four adapters are verified by tests against each tool's documented format. See [Limits](#limits).
 
 Full documentation lives in the [wiki](https://github.com/Co0pDawg/Orc-istration/wiki).
 
@@ -156,10 +156,34 @@ Optional, when you want them: the skills in `skills/` (copy into `~/.claude/skil
 node tools/orc.mjs check
 node tools/orc.mjs install --tool antigravity                 # dry run
 node tools/orc.mjs install --tool antigravity --apply --board http://localhost:8377/ --board-repo <path to Orc-Dashboard>
-agy models | node tools/orc.mjs models --tool antigravity --from-stdin
+agy models | node tools/orc.mjs models --tool antigravity --from-stdin                  # Flash slugs
+agy models | node tools/orc.mjs models --tool antigravity --from-stdin --family neon    # or another family
 ```
 
-Save the last command's output as `models.local.json`. It picks the Flash slugs only; to run a tier on another model `agy models` lists, write that slug into the file's `headless` block by hand (for example `"high": "gemini-4-neon-high"`). Then, in each project, run the standards setup in [`orchestration/standards.md`](orchestration/standards.md); `install` prints this pointer too, and writes this clone's path into the rulebook as the setup checkout. The rest: [Install and Quick Start](https://github.com/Co0pDawg/Orc-istration/wiki/Install-And-Quick-Start).
+Save the output as `models.local.json`. Without `--family`, it picks the first slugs whose name contains `flash` and ends in `-low`, `-medium` or `-high` (so a `flash-lite` slug matches); with `--family <name>`, it picks that family's first `-low`, `-medium` and `-high` slugs. A family listed in more than one generation is named with its version, for example `--family 4-neon`. To mix families across tiers or pick a model without all three tiers, edit the file's `headless` block by hand. The generated roles are main agents as well as subagents (`mainAgent: true`), so `agy agents` lists them and `dispatch --tool antigravity --role <name>` can select one. Then, in each project, run the standards setup in [`orchestration/standards.md`](orchestration/standards.md); `install` prints this pointer too, and writes this clone's path into the rulebook as the setup checkout. The rest: [Install and Quick Start](https://github.com/Co0pDawg/Orc-istration/wiki/Install-And-Quick-Start).
+
+## Shared state (~/.orc)
+
+One folder, `~/.orc/` (or `ORC_DATA_DIR`), holds this machine's settings for every tool. Both files are optional; orc reads them and never creates them, and without them every command works from the checkout alone. `build`, `check`, `sync` and `golden` never read them.
+
+- **`config.json`**: `version` (required, `1`), `activeTools` (the tools `--all` and `doctor` work through, in order), `setupCheckout` (this checkout's path), `board` (`url`, and `repo` for a local board: the board default for `--all`; `install --all --apply` saves it in each tool's manifest, so a later change here reaches an installed tool only with `--board`/`--board-repo` or `--no-board`), `binaries` (tool id to the executable's absolute path, after `ORC_TOOL_BIN_<TOOL>` and before PATH), `fallback` (a tool id) and `routing` (role name to a tool id or a list of them). The folder is shared by every checkout, so an entry this checkout does not know (a key, a tool id, a role name) is skipped with a `WARN ... (ignored; this checkout does not know it)` line; any other problem is an error naming every problem (with `dispatch --tool`, a `WARN`, and the run goes on without `binaries`). `install --apply --no-board` records the clear, so `--all` does not add this board back. An artifact board address here cannot be used with `--all` while a tool other than `claude-code` is active.
+- **`models.json`**: the `models.json` format, layered after the checkout's `models.json` and before `models.local.json`; a tool id this checkout does not know is skipped with a `WARN`.
+- **Routing.** `dispatch --role <name> --brief <file>` without `--tool` runs the first available tool in the role's `routing` entry, then `fallback` (available: a headless recipe, a model for the tier, and an executable that resolves). Each tool skipped gets a `falling back to` line on stderr; with none available it exits 1 and starts nothing. The choice is made before anything starts, so a tool that fails after starting is never retried on another. `--tool` stays explicit, with no fallback. `--prefer <tool>` tries that tool first, then the rest of the chain. `--model <slug>` replaces the first tool's model and is dropped on a fallback. A `routing` list is a fallback chain, never "run both": for a second reviewer on another tool, dispatch again with `--prefer` (`dispatch --role refuter --brief b.md` runs the routed tool; `dispatch --role refuter --brief b.md --prefer codex` runs Codex, falling back to the chain).
+- **`doctor`** prints `OK`, `WARN` or `FAIL` per check: the two files, the setup checkout, each active tool's install state, and for each active tool with a headless recipe its headless models, binary, `--version` and sign-in (exit code only), then the routing table and the board (its `/api/health` for a local address). It exits 1 on any FAIL; `--json` prints one object.
+- **`install --all` and `status --all`** run once per active tool with a `== <tool> ==` header, checking every refusal for every tool before anything is written; after that one tool's failure does not stop the rest, and the last line names every tool that failed.
+
+```json
+{
+  "version": 1,
+  "activeTools": ["claude-code", "antigravity", "codex"],
+  "board": { "url": "http://localhost:8377", "repo": "C:/Users/<you>/Orc-Dashboard" },
+  "binaries": { "codex": "C:/path/to/vendor/.../bin/codex.exe" },
+  "fallback": "claude-code",
+  "routing": { "builder": ["antigravity", "claude-code"], "refuter": ["claude-code", "codex"] }
+}
+```
+
+Every key and rule: [docs/cli.md](docs/cli.md#shared-state-orc).
 
 ## Repository layout
 
@@ -174,9 +198,9 @@ Save the last command's output as `models.local.json`. It picks the Flash slugs 
 | `templates/AGENTS.md` | Starting rulebook for a repo you work on, with its Project settings block (`docs/adopt-a-repo.md`) |
 | `tools/tracker/` | `ado.ps1`, the Azure DevOps tracker helper (`docs/tracker-contract.md`), and its offline self-check |
 | `profiles/*.md` | Optional rulebook additions (`--profile <name>`); `dotnet-azure-devops` holds the long rulebook's stack rules and general lessons |
-| `models.json` | Tier to model, per tool; `models.local.json` (untracked) overrides |
+| `models.json` | Tier to model, per tool; `~/.orc/models.json` overrides it for install, status, dispatch and doctor, then `models.local.json` (untracked) for those and build |
 | `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
-| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `bench`, `hooks`, `standards`; review panel: `calibration`, `corpus`, `metrics`; `help` |
+| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `doctor`, `bench`, `hooks`, `standards`; review panel: `calibration`, `corpus`, `metrics`; `help` |
 | `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them), install, check, tooling, standards and review-panel tool tests, and the sprint tests (theme tokens and contrast, the theme picker, `make-story.mjs` and the story page) |
 | `CONTRIBUTING.md` | How to change this repo: sources vs generated files, the edit loop, traps |
 | `LICENSE` | MIT |
@@ -184,7 +208,7 @@ Save the last command's output as `models.local.json`. It picks the Flash slugs 
 | `CODEOWNERS` | Every change needs the owner's review |
 | `docs/cli.md` | The full command reference |
 | `docs/interview-machine.md`, `docs/example-prompts.md` | Installing and removing the sprint kit on a borrowed machine, and example prompts including its starter prompt and the Codex practice exercise |
-| `orchestration/README.md` | Cost-log format and review questions; the anomaly log and its promotion table |
+| `orchestration/README.md`, `orchestration/log/TEMPLATE.md` | Cost-log format and review questions; the anomaly log and its promotion table; the cost-log template (the logs themselves stay untracked) |
 | `standards/`, `orchestration/standards.md`, `skills/repo-standards/` | The coding-standards archive (format in `standards/README.md`), the tool-neutral setup procedure, and its Claude Code skill |
 | `orchestration/sprint.md`, `skills/sprint/` | Sprint mode: a timeboxed build (default 45 minutes) that waives the board, standards setup, review panel and cost log for one task, and its Claude Code skill, the story-page template with its `make-story.mjs` filler, and the shared theme |
 | `skills/board/`, `skills/brief/`, `skills/wrap-up/` | Claude Code skills for the routine steps of an orchestrated task: board writes, marching orders, and the finish |
@@ -201,7 +225,8 @@ Save the last command's output as `models.local.json`. It picks the Flash slugs 
 ## Limits
 
 - The full loop runs day to day only on Claude Code (on the files generated from this repo since 2026-11-18). The [Codex trials](docs/example-prompts.md#native-windows-execution-checks) cover named-role dispatch and workspace-write with MXC on native Windows. The bundled and legacy sandbox configurations tested on that host failed at shell startup. Antigravity CLI has had one headless run of the generated builder (agy 1.5.16, 2026-11-24): it fixed a small function against failing tests and returned its report. An earlier scout run (2026-11-15) does not count: the roles were then generated with `mainAgent: false`, which `agy --agent` cannot select, and agy at that version most likely ran the default agent without saying so. `dispatch` needs agy 1.5.16 or later, which exits 1 for an unknown `--agent`; after updating this repo, re-run `install --tool antigravity --apply` so the installed roles carry the new flag.
-- Slash commands, skills and review metrics are Claude Code only; other tools follow `review/PROCEDURE.md`, `workflows/*.md` and the `orchestration/` procedures by hand. `dispatch` runs headlessly on Antigravity and Claude Code only, and `bench` on Claude Code only.
+- Slash commands, skills and review metrics are Claude Code only; other tools follow `review/PROCEDURE.md`, `workflows/*.md` and the `orchestration/` procedures by hand. `dispatch` runs headlessly on Antigravity, Claude Code and Codex only (Codex as `codex exec` with `--sandbox read-only` for `scout` and `researcher`, which must report inline because that sandbox cannot write a scratch file, and `workspace-write` for every other role: the refuter runs tests and builds a throwaway worktree and the `review-*` roles write at most an overflow scratch report, so their no-edit rule rests on the role body; on Windows, orc selects the MXC sandbox (`-c windows.sandbox=mxc`) for every role, and a headless Codex run has no web tool). `bench` runs on Claude Code only.
+- On Antigravity, a chat message sent to the orchestrator while subagents or background commands run force-cancels all of them: wait for the agents to finish, or orchestrate from another tool.
 - Gemini CLI, Cursor, Copilot and OpenCode are verified by tests against documented formats only.
 - Cursor and Copilot need model ids set in `models.local.json`; until then they use `inherit` or the default model.
 - Hooks, the worklog and sound alerts are Claude Code extras. On other tools the board update after each report is a build-loop step.
@@ -222,17 +247,18 @@ Every command is `node tools/orc.mjs <command>`. Options: `node tools/orc.mjs he
 | `check` | Check caps and `models.json`, and that `CLAUDE.md` and `agents/*.md` match the build |
 | `sync` | Regenerate the checked-in `CLAUDE.md` and `agents/*.md` |
 | `golden` | Regenerate `tests/golden/<tool>/` |
-| `install` | Install one tool's files into a home folder (dry run without `--apply`); `--sprint-kit` adds the sprint skill, the git guard hook and a stack permission preset for Claude Code |
+| `install` | Install one tool's files (or, with `--all`, every active tool's) into a home folder (dry run without `--apply`); `--sprint-kit` adds the sprint skill, the git guard hook and a stack permission preset for Claude Code |
 | `uninstall` | Delete the files an install recorded (dry run without `--apply`); for a sprint kit, also remove its `settings.json` entries and restore what it replaced |
-| `status` | Compare an installed copy with the current build (a sprint kit's `settings.json` entries included) |
-| `models` | Turn `agy models` output into a `models.local.json` fragment (Flash slugs only) |
+| `status` | Compare an installed copy (or, with `--all`, every active tool's) with the current build (a sprint kit's `settings.json` entries included) |
+| `models` | Turn `agy models` output into a `models.local.json` fragment (Flash slugs without `--family`, or `--family <name>`) |
 | `brief` | Print or lint a marching-orders brief |
-| `review-tier` | Say whether a branch diff is Light-eligible or Full |
+| `review-tier` | Say whether a branch diff is Light-eligible or Full (prompt files, including `review/`, `workflows/` and `commands/`, count as product) |
 | `costlog` | Draft a cost log from the board |
 | `calibration` | Per-lane precision and recall of the review panel from its run logs |
 | `corpus` | List the review regression corpus, or score a panel report against one case |
 | `metrics` | Capture or report per-run review metrics from Claude Code transcripts |
-| `dispatch` | Run one role headlessly at its tier (Antigravity and Claude Code) |
+| `dispatch` | Run one role headlessly at its tier (Antigravity, Claude Code and Codex), on `--tool` or routed by `~/.orc/config.json` with fallback (`--prefer` puts a tool first); `--model` overrides the model |
+| `doctor` | Check `~/.orc`, each active tool (install state; for a tool with a headless recipe also its binary, `--version`, sign-in and headless models), the routing table and the board, without writing (`--json`) |
 | `bench` | Replay benchmark: run the builder and refuter on fixed cases (Claude Code), score them with tokens and cost, and compare variants |
 | `hooks` | Merge the example hooks into `settings.json` (dry run without `--apply`) |
 | `standards` | List, show or detect archive coding standards, or compose a project's `STANDARDS.md` (dry run without `--apply`) |
