@@ -1,4 +1,4 @@
-// Claude Code: generates the checked-in CLAUDE.md, agents/*.md and commands/*.md (the repo is rooted at ~/.claude).
+// Claude Code: generates <home>/.claude/CLAUDE.md, AGENTS.md, agents/*.md and the review panel's commands/*.md.
 import { serialize, generatedMarker } from '../tools/lib/frontmatter.mjs';
 import { ALL_CAPABILITIES } from '../tools/lib/roles.mjs';
 
@@ -58,8 +58,22 @@ export default {
   title: 'Claude Code',
   home: { root: '.claude', rulebook: '.claude/CLAUDE.md', agentsDir: '.claude/agents' },
   capabilityTools,
-  // Scripts the example hooks (settings.example.json, hooks.node.example.json) run; install copies them to <root>/tools/.
+  // Scripts the example hooks (adapters/claude-code/settings.example.json, hooks.node.example.json) run; install copies them to <root>/tools/.
   hookScripts: ['tools/guard.mjs', 'tools/guard.ps1', 'tools/board-reminder.ps1', 'tools/board-reminder.mjs'],
+  // Static Claude Code files copied beside the generated ones on a full install (not sprint-kit): `from` is
+  // repo-relative, `to` is under <root>/.
+  staticFiles: [
+    ...['create', 'draft-pr', 'fix-ci', 'grill', 'peer-review', 'start'].map((n) => ({
+      from: `adapters/claude-code/commands/${n}.md`,
+      to: `commands/${n}.md`,
+      kind: 'command',
+    })),
+    {
+      from: 'adapters/claude-code/skills/orc-permissions/SKILL.md',
+      to: 'skills/orc-permissions/SKILL.md',
+      kind: 'skill',
+    },
+  ],
   limits: {},
   gaps: [
     'A role with every capability gets no `tools:` line, so it keeps MCP tools such as ArtifactData; only those roles can write the artifact board.',

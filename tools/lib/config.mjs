@@ -1,5 +1,5 @@
-// The shared state home (~/.orc, or ORC_DATA_DIR): config.json and models.json, read by install, status, dispatch
-// and doctor, never by build, check, sync or golden. Reading never creates anything.
+// The shared state home (~/.orc, or ORC_DATA_DIR): config.json and models.json, read by install (and sync,
+// which is install --all), status, dispatch and doctor, never by build, check or golden. Reading never creates anything.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -152,8 +152,8 @@ export function loadConfig({ tools, roles, env = process.env }) {
   return { file, ...validateConfig(config, { tools, roles, file }) };
 }
 
-// The board default config.json gives `--all` and doctor: null with no board, {error} for a local address with no
-// repo, else {board, boardRepo, file}. `isArtifactBoard` is install's own test for an artifact address.
+// The board default config.json gives install, status, sync and doctor: null with no board, {error} for a local
+// address with no repo, else {board, boardRepo, file}. `isArtifactBoard` is install's own test for an artifact address.
 export function boardDefault(config, file, isArtifactBoard) {
   const b = config?.board;
   if (!b) return null;

@@ -39,33 +39,62 @@ export function writeSettings(target, content, backup = null) {
   }
 }
 
-// The example files write the home as `C:\Users\<you>` (settings.example.json) or `<home>` (hooks.node.example.json).
-export function fillHome(command, home) {
-  return command.replaceAll('C:\\Users\\<you>', home).replaceAll('<home>', home.replace(/\\/g, '/'));
+// The example files write the home as `C:\Users\<you>` (adapters/claude-code/settings.example.json) or `<home>`
+// (adapters/claude-code/hooks.node.example.json), and the setup checkout as `<setup>`.
+export function fillHome(command, home, setup = '') {
+  let out = command.replaceAll('C:\\Users\\<you>', home).replaceAll('<home>', home.replace(/\\/g, '/'));
+  if (setup) out = out.replaceAll('<setup>', setup.replace(/\\/g, '/'));
+  return out;
 }
 
-// Returns {merged, added: [{event, matcher, command, otherMatchers}]}. `settings` is the parsed target (or {}).
-export function mergeHooks(settings, example, home) {
+// Old worklog/peon paths (under .claude/tools/) vs the moved paths (under <setup>/extras/), keyed by area, script
+// name and trailing arguments so a stale entry matches only its replacement hook.
+const OLD_EXTRA = /[\\/]\.claude[\\/]tools[\\/](worklog|peon)[\\/]([^"'\\/\s]+\.ps1)(?:["']|\s|$)(.*)$/i;
+const NEW_EXTRA = /[\\/]extras[\\/](worklog|peon)[\\/]([^"\\/]+\.ps1)"(.*)$/i;
+const extraKey = (re, cmd) => {
+  const m = re.exec(cmd);
+  return m ? `${m[1].toLowerCase()}/${m[2].toLowerCase()}|${m[3].trim()}` : null;
+};
+
+// Returns {merged, added: [{event, matcher, command, otherMatchers}], stale: [{event, matcher, oldCommand, command}]}.
+// `settings` is the parsed target (or {}). A hook whose event already holds a stale .claude/tools/worklog or
+// .claude/tools/peon entry for the same script and arguments (under any matcher) is reported in `stale` with the
+// matcher it was found under and not duplicated.
+export function mergeHooks(settings, example, home, setup = '') {
   const merged = structuredClone(settings);
   const added = [];
+  const stale = [];
   const source = example.hooks ?? {};
   for (const [event, groups] of Object.entries(source)) {
     const key = (matcher, command) => JSON.stringify([matcher ?? '', command]);
     const have = new Set();
     const matchersOf = new Map();
+    const staleByKey = new Map();
     for (const g of Array.isArray(merged.hooks?.[event]) ? merged.hooks[event] : []) {
       for (const h of Array.isArray(g?.hooks) ? g.hooks : []) {
         if (typeof h?.command !== 'string') continue;
         have.add(key(g.matcher, h.command));
         if (!matchersOf.has(h.command)) matchersOf.set(h.command, []);
         matchersOf.get(h.command).push(g.matcher ?? '');
+        const ek = extraKey(OLD_EXTRA, h.command);
+        if (ek) {
+          if (!staleByKey.has(ek)) staleByKey.set(ek, []);
+          staleByKey.get(ek).push({ matcher: g.matcher, command: h.command });
+        }
       }
     }
     for (const group of groups) {
       const hooks = [];
       for (const h of group.hooks ?? []) {
-        const entry = { ...h, command: fillHome(h.command, home) };
+        const entry = { ...h, command: fillHome(h.command, home, setup) };
         if (have.has(key(group.matcher, entry.command))) continue;
+        const nk = extraKey(NEW_EXTRA, entry.command);
+        if (nk && staleByKey.has(nk)) {
+          for (const found of staleByKey.get(nk)) {
+            stale.push({ event, matcher: found.matcher, oldCommand: found.command, command: entry.command });
+          }
+          continue;
+        }
         have.add(key(group.matcher, entry.command));
         hooks.push(entry);
         const others = (matchersOf.get(entry.command) ?? []).filter((m) => m !== (group.matcher ?? ''));
@@ -78,7 +107,7 @@ export function mergeHooks(settings, example, home) {
       merged.hooks[event].push({ ...group, hooks });
     }
   }
-  return { merged, added };
+  return { merged, added, stale };
 }
 
 // Serializes like the input file: its indent, its line ending, its trailing newline.

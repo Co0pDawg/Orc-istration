@@ -59,7 +59,7 @@ That refuter pass cost about 91k tokens and 12 minutes. Without it, a test insta
 
 ## What is in the box
 
-**The roster** (`roles/*.md`):
+**The roster** (`core/roles/*.md`):
 
 | Role | Tier | What it does |
 |---|---|---|
@@ -91,13 +91,13 @@ Six more roles (`review-*`) make up the [review panel](#review-panel) the Full r
 
 ![The board in its Sleek skin: a session with its activity log on the left and task cards showing stages and progress lines, using demo data](https://raw.githubusercontent.com/Co0pDawg/Orc-Dashboard/main/docs/screenshots/board-sleek.png)
 
-**Repo standards.** `node tools/orc.mjs standards` (run from the setup checkout) sets up a project's coding standards: `STANDARDS.md` at its root, which builders follow and refuters check diffs against, section by section. It detects the project's stacks and composes the file from a cited archive (`standards/`: ASP.NET Core, C#, Go, Java, Playwright, PowerShell, Python, React, Rust, SQL, TypeScript), from the team's own files (`--from`), or both. Before the first build in a repo without one, the orchestrator runs the setup in [`orchestration/standards.md`](orchestration/standards.md): it detects the stacks, then asks you in one several-picks question which to adopt and whether you have your own standards to import, then applies. A re-apply never overwrites a file the team has edited, or drops a stack or import it was applied with, unless forced, and then keeps a backup. `install` writes the setup checkout's path into the installed rulebook ("Setup checkout (this machine)"), so any tool can find the procedure and the command. Claude Code also gets the procedure as the `repo-standards` skill where `~/.claude/skills` has it: there when `~/.claude` is the setup checkout, copied by hand from a separate clone.
+**Repo standards.** `node tools/orc.mjs standards` (run from the setup checkout) sets up a project's coding standards: `STANDARDS.md` at its root, which builders follow and refuters check diffs against, section by section. It detects the project's stacks and composes the file from a cited archive (`standards/`: ASP.NET Core, C#, Go, Java, Playwright, PowerShell, Python, React, Rust, SQL, TypeScript), from the team's own files (`--from`), or both. Before the first build in a repo without one, the orchestrator runs the setup in [`orchestration/standards.md`](orchestration/standards.md): it detects the stacks, then asks you in one several-picks question which to adopt and whether you have your own standards to import, then applies. A re-apply never overwrites a file the team has edited, or drops a stack or import it was applied with, unless forced, and then keeps a backup. `install` writes the setup checkout's path into the installed rulebook ("Setup checkout (this machine)"), so any tool can find the procedure and the command. Claude Code also gets the procedure as the `repo-standards` skill where `~/.claude/skills` has it (copied by hand from this checkout's `skills/`).
 
 **Sprint mode.** For a timeboxed build, such as a live AI-assisted interview exercise, ask for a sprint ("sprint mode", "a 45-minute sprint"). For that one task the orchestrator follows [`orchestration/sprint.md`](orchestration/sprint.md): a requirements phase that ends in an agreed `REQUIREMENTS.md` with numbered acceptance criteria (the client is the interviewer, or the AI plays one from a hidden brief), at most three runnable slices, a walking skeleton by about minute 20 (15 with a given brief), a feature freeze ten minutes before the deadline, a polish ladder (review fixes, edge-case tests, API docs, a small UI, README, a sprint report) for any time left after the slices, one builder resumed per slice, Mid-tier refuters reviewing each slice's commit while the next is built, and one rework round. An events file records decisions, reviews and self-corrections as they happen, and the sprint report turns it into a "How this was built" story page styled with a shared theme. It skips the board, the standards setup, the review panel and the cost log; it never skips the orchestrator's diff read, one real run of the app, or the PR and safety rules. A sprint as an iteration name ("put this in sprint 45") does not trigger it. Claude Code also gets it as the `sprint` skill where `~/.claude/skills` has it. `install --tool claude-code --sprint-kit` copies its `SKILL.md` there. For a machine you do not own, such as an interviewer's laptop, [`docs/interview-machine.md`](docs/interview-machine.md) installs a sprint kit in under 5 minutes and removes it afterwards; [`docs/example-prompts.md`](docs/example-prompts.md#starter-prompt-interview-machine) has the starter prompt.
 
-**Routine skills (Claude Code).** Three skills wrap the steps every orchestrated task repeats, each pointing at the rule it follows rather than restating it: `board` (open the session and cards, write at each dispatch, report and commit, mark it Done, on either backend), `brief` (fill the marching orders from `orc brief new` and lint them with `orc brief lint` before a dispatch) and `wrap-up` (full test projects once, the diff read, the pre-PR review tier, the cost log drafted with `orc costlog`, including from an artifact board, an anomaly-log line, the handoff note and the board marked Done). Like `sprint`, they are there where `~/.claude/skills` has them. Contributors also get `ship-prompts`, a project skill in `.claude/skills/` that loads only in this repo: sync, golden, tests, check, the tracked-path check, the README and wiki co-change, and the live install.
+**Routine skills (Claude Code).** Three skills wrap the steps every orchestrated task repeats, each pointing at the rule it follows rather than restating it: `board` (open the session and cards, write at each dispatch, report and commit, mark it Done, on either backend), `brief` (fill the marching orders from `orc brief new` and lint them with `orc brief lint` before a dispatch) and `wrap-up` (full test projects once, the diff read, the pre-PR review tier, the cost log drafted with `orc costlog`, including from an artifact board, an anomaly-log line, the handoff note and the board marked Done). Like `sprint` and `repo-standards`, they are copied into `~/.claude/skills/` by hand until skill generation lands. Contributors also get `ship-prompts`, a project skill in `.claude/skills/` and `.agents/skills/` that loads only in this repo: golden, tests, check, the README and wiki co-change, and the live install (`sync --apply`).
 
-**Fewer permission prompts (Claude Code).** The `orc-permissions` skill adds the allow rules an orchestrated task needs to `~/.claude/settings.json`, so builders and refuters stop pausing on routine commands: the orc CLI, the test runs, scratch-file helpers, and `git worktree add` and `list`. It asks which groups to add, backs the file up first and never removes or loosens a `deny` or `ask` rule. Two risky rules, `git worktree remove` and a blanket `rm -rf`, are opt-in, each behind its own question. A rule matches the command text, so a path in a rule is not a scope and a command that uses a shell variable for a path matches no path rule. Like the other skills, it is there where `~/.claude/skills` has it.
+**Fewer permission prompts (Claude Code).** The `orc-permissions` skill adds the allow rules an orchestrated task needs to `~/.claude/settings.json`, so builders and refuters stop pausing on routine commands: the orc CLI, the test runs, scratch-file helpers, and `git worktree add` and `list`. It asks which groups to add, backs the file up first and never removes or loosens a `deny` or `ask` rule. Two risky rules, `git worktree remove` and a blanket `rm -rf`, are opt-in, each behind its own question. A rule matches the command text, so a path in a rule is not a scope and a command that uses a shell variable for a path matches no path rule. `install --tool claude-code --apply` (and `sync --apply`) installs it into `~/.claude/skills/orc-permissions/`.
 
 **Unattended issue queue (Claude Code).** `node tools/orc.mjs queue run` works through GitHub issues while nobody is watching, for example overnight when the subscription is idle. It takes open issues with a label (default `orc-queue`) written by an allowed author (default: only you), runs one headless Claude Code session per issue in its own worktree, and when the session commits a change the script itself pushes `queue/issue-<n>` and opens a draft PR. The session is denied the push, `gh`, shell, web and MCP tools and runs with every plain git push route closed, but it is not a sandbox: it runs the repo's tests, so it runs code as you. The real backstops are the author allow-list, branch protection on the base branch that admins cannot bypass (the queue warns when it is missing or bypassable) and your review of every draft PR. It stops cleanly at a usage limit, the `--until` deadline or `--max` issues, writes a marker per issue so nothing runs twice, and is a dry run without `--apply`. Setup, guard rails and scheduling: [`orchestration/queue.md`](orchestration/queue.md).
 
@@ -125,7 +125,7 @@ Every change that goes through the build loop gets an independent adversarial re
 
 | Tool | What gets generated | Verified how | Main gap |
 |---|---|---|---|
-| Claude Code | `CLAUDE.md` + `agents/*.md` + the review panel's `commands/*.md` in `~/.claude` | Live: sessions run on the generated files since 2026-11-18 | Builder and debugger keep MCP tools (no allowlist) |
+| Claude Code | `CLAUDE.md` + `agents/*.md` + `commands/*.md` (3 generated review + 6 workflow) + `skills/orc-permissions/` + hook scripts in `~/.claude` | Live: sessions run on the generated files since 2026-11-18 | Builder and debugger keep MCP tools (no allowlist) |
 | Antigravity CLI | `~/.gemini/AGENTS.md` + `config/agents/` | One headless live builder run on a throwaway project (agy 1.5.16, 2026-11-24) | Models only `flash` or `pro`; no per-agent effort |
 | Gemini CLI | `~/.gemini/GEMINI.md` + `agents/` | Golden-file tests against documented formats | No nested or documented parallel subagents |
 | Codex CLI | `~/.codex/AGENTS.md` + `agents/*.toml` | Golden-file tests, a live practice build, and [named-role and MXC workspace-write trials](docs/example-prompts.md#native-windows-execution-checks) | No per-role tool allowlist. Windows results cover the MXC configuration tested. |
@@ -139,18 +139,18 @@ Details per tool: [Supported Tools](https://github.com/Co0pDawg/Orc-istration/wi
 
 Requires Node 22 or later. No dependencies.
 
-**Claude Code.** Clone the repo anywhere except `~/.claude`, then install from it:
+**Claude Code.** This repo is a standalone checkout that installs into each tool's home folder. Clone it anywhere (not inside `~/.claude`), then install from it:
 
 ```
 git clone https://github.com/Co0pDawg/Orc-istration.git
 cd Orc-istration
-node tools/orc.mjs install --tool claude-code --home "$HOME"           # dry run: lists what it would write
-node tools/orc.mjs install --tool claude-code --home "$HOME" --apply   # backs up anything it replaces
+node tools/orc.mjs install --tool claude-code           # dry run: lists what it would write
+node tools/orc.mjs install --tool claude-code --apply   # backs up anything it replaces
 ```
 
-That writes the rulebook (`~/.claude/CLAUDE.md` and `AGENTS.md`), the roster and review-panel agents, the review commands and the hook scripts. It warns that no board address is set; the loop runs without a board. `uninstall` with the same options takes out what it installed. Then open Claude Code in a project and give it a real task, such as a bug with a clear expected behaviour. The session becomes the orchestrator: it writes the marching orders, dispatches a builder, sends a refuter at the diff and reads the result itself before it reports done. Ask it to "use the build loop" if it starts to edit inline. The first build in a repo without a `STANDARDS.md` asks you which coding standards to adopt.
+That writes the rulebook (`~/.claude/CLAUDE.md` and `AGENTS.md`), the roster and review-panel agents, the three generated review commands and six workflow commands (`~/.claude/commands/`), the `orc-permissions` skill (`~/.claude/skills/orc-permissions/`) and the four hook scripts (`~/.claude/tools/`); `--home <dir>` overrides the target home. If `~/.orc/config.json` has no `board`, it warns that no board address is set; the loop runs without a board. `uninstall` with the same options takes out what it installed. Then open Claude Code in a project and give it a real task, such as a bug with a clear expected behaviour. The session becomes the orchestrator: it writes the marching orders, dispatches a builder, sends a refuter at the diff and reads the result itself before it reports done. Ask it to "use the build loop" if it starts to edit inline. The first build in a repo without a `STANDARDS.md` asks you which coding standards to adopt.
 
-Optional, when you want them: the skills in `skills/` (copy into `~/.claude/skills`), the hooks including the [git guard](#the-git-guard) (`node tools/orc.mjs hooks --home "$HOME"`), and a live board ([Orc-Dashboard](https://github.com/Co0pDawg/Orc-Dashboard)). For a timed build on a borrowed machine, install the sprint kit instead ([`docs/interview-machine.md`](docs/interview-machine.md)). To keep the whole setup under version control, check the repo out as `~/.claude` (see "Restore on a new machine").
+Optional, when you want them: the remaining tool-neutral skills in `skills/` (`board`, `brief`, `repo-standards`, `sprint`, `wrap-up` — still copied into `~/.claude/skills` by hand until skill generation lands), the hooks including the [git guard](#the-git-guard) (`node tools/orc.mjs hooks --home "$HOME"`), and a live board ([Orc-Dashboard](https://github.com/Co0pDawg/Orc-Dashboard)). For a timed build on a borrowed machine, install the sprint kit instead ([`docs/interview-machine.md`](docs/interview-machine.md)). To keep several tools updated in one command, list them in `~/.orc/config.json` `activeTools` and run `node tools/orc.mjs sync --apply` (see [Shared state](#shared-state-orc)).
 
 **Antigravity CLI.** From a clone of this repo:
 
@@ -166,19 +166,19 @@ Save the output as `models.local.json`. Without `--family`, it picks the first s
 
 ## Shared state (~/.orc)
 
-One folder, `~/.orc/` (or `ORC_DATA_DIR`), holds this machine's settings for every tool. Both files are optional; orc reads them and never creates them, and without them every command works from the checkout alone. `build`, `check`, `sync` and `golden` never read them.
+One folder, `~/.orc/` (or `ORC_DATA_DIR`), holds this machine's settings and local data for every tool: `config.json`, `models.json`, cost logs and `anomalies.md` under `log/`, and (suggested) the board clone at `board/`. Both config files are optional; orc reads them and never creates them, and without them every command works from the checkout alone. `build`, `check` and `golden` never read them.
 
-- **`config.json`**: `version` (required, `1`), `activeTools` (the tools `--all` and `doctor` work through, in order), `setupCheckout` (this checkout's path), `board` (`url`, and `repo` for a local board: the board default for `--all`; `install --all --apply` saves it in each tool's manifest, so a later change here reaches an installed tool only with `--board`/`--board-repo` or `--no-board`), `binaries` (tool id to the executable's absolute path, after `ORC_TOOL_BIN_<TOOL>` and before PATH), `fallback` (a tool id) and `routing` (role name to a tool id or a list of them). The folder is shared by every checkout, so an entry this checkout does not know (a key, a tool id, a role name) is skipped with a `WARN ... (ignored; this checkout does not know it)` line; any other problem is an error naming every problem (with `dispatch --tool`, a `WARN`, and the run goes on without `binaries`). `install --apply --no-board` records the clear, so `--all` does not add this board back. An artifact board address here cannot be used with `--all` while a tool other than `claude-code` is active.
+- **`config.json`**: `version` (required, `1`), `activeTools` (the tools `sync`, `--all` and `doctor` work through, in order), `setupCheckout` (this checkout's path; default-home `install`, `uninstall` and `sync` warn on a dry run and refuse `--apply` unless `--force` when run from another checkout, and `hooks` warns), `board` (`url`, and `repo` for a local board: the board default for `install`, `status` and `sync` — one tool or all — after flags, manifest and `--no-board`; `install --apply` saves it in each tool's manifest, so a later change here reaches an installed tool only with `--board`/`--board-repo` or `--no-board`), `binaries` (tool id to the executable's absolute path, after `ORC_TOOL_BIN_<TOOL>` and before PATH), `fallback` (a tool id) and `routing` (role name to a tool id or a list of them). The folder is shared by every checkout, so an entry this checkout does not know (a key, a tool id, a role name) is skipped with a `WARN ... (ignored; this checkout does not know it)` line; any other problem is an error naming every problem (with `dispatch --tool`, or a single-tool `install`/`status` that does not fall back to `config.json`'s board, a `WARN`, and the run goes on without it). `install --apply --no-board` records the clear, so the config board does not come back. An artifact board address in `config.json` applies to `claude-code` only: every other tool gets no Board line and one notice saying so (passing an artifact `--board` flag to another tool is still refused). The old `~/.claude/board.local.md` file is retired: put its address in `~/.orc/config.json` under `board.url` (with `board.repo` for a local board), delete any unrecorded hand-copied `~/.claude/tools/board-reminder.*` if `doctor` flags it and run `install --tool claude-code --apply` (or `sync --apply`), then delete `~/.claude/board.local.md`. When `board.local.md` and `config.json` name different boards, Claude Code follows `config.json` from then on.
 - **`models.json`**: the `models.json` format, layered after the checkout's `models.json` and before `models.local.json`; a tool id this checkout does not know is skipped with a `WARN`.
 - **Routing.** `dispatch --role <name> --brief <file>` without `--tool` runs the first available tool in the role's `routing` entry, then `fallback` (available: a headless recipe, a model for the tier, and an executable that resolves). Each tool skipped gets a `falling back to` line on stderr; with none available it exits 1 and starts nothing. The choice is made before anything starts, so a tool that fails after starting is never retried on another. `--tool` stays explicit, with no fallback. `--prefer <tool>` tries that tool first, then the rest of the chain. `--model <slug>` replaces the first tool's model and is dropped on a fallback. A `routing` list is a fallback chain, never "run both": for a second reviewer on another tool, dispatch again with `--prefer` (`dispatch --role refuter --brief b.md` runs the routed tool; `dispatch --role refuter --brief b.md --prefer codex` runs Codex, falling back to the chain).
-- **`doctor`** prints `OK`, `WARN` or `FAIL` per check: the two files, the setup checkout, each active tool's install state, and for each active tool with a headless recipe its headless models, binary, `--version` and sign-in (exit code only), then the routing table and the board (its `/api/health` for a local address). It exits 1 on any FAIL; `--json` prints one object.
-- **`install --all` and `status --all`** run once per active tool with a `== <tool> ==` header, checking every refusal for every tool before anything is written; after that one tool's failure does not stop the rest, and the last line names every tool that failed.
+- **`doctor`** prints `OK`, `WARN` or `FAIL` per check: the two files, the setup checkout, each active tool's install state, and for each active tool with a headless recipe its headless models, binary, `--version` and sign-in (exit code only), then the routing table and the board (its `/api/health` for a local address, plus a WARN if retired `~/.claude/board.local.md` still exists or an unrecorded hand-copied `board-reminder` hook script differs from this checkout). It exits 1 on any FAIL; `--json` prints one object.
+- **`sync`, `install --all` and `status --all`** run once per active tool with a `== <tool> ==` header, checking every refusal for every tool before anything is written; after that one tool's failure does not stop the rest, and the last line names every tool that failed. `sync` is shorthand for `install --all` (dry run without `--apply`; writes nothing into this checkout).
 
 ```json
 {
   "version": 1,
   "activeTools": ["claude-code", "antigravity", "codex"],
-  "board": { "url": "http://localhost:8377", "repo": "C:/Users/<you>/Orc-Dashboard" },
+  "board": { "url": "http://localhost:8377", "repo": "C:/Users/<you>/.orc/board" },
   "binaries": { "codex": "C:/path/to/vendor/.../bin/codex.exe" },
   "fallback": "claude-code",
   "routing": { "builder": ["antigravity", "claude-code"], "refuter": ["claude-code", "codex"] }
@@ -191,19 +191,19 @@ Every key and rule: [docs/cli.md](docs/cli.md#shared-state-orc).
 
 | Path | What it is |
 |---|---|
-| `AGENTS.md` | The tool-neutral rulebook (the source) |
-| `CLAUDE.md`, `agents/*.md` | Generated Claude Code files (`node tools/orc.mjs sync`) |
-| `roles/*.md` | The agent roles (the five above and the six `review-*` panel roles): tier, access, capabilities, body |
+| `AGENTS.md`, `CLAUDE.md` | Short contributor rules for developing this repo (`CLAUDE.md` imports `AGENTS.md`); not the product rulebook |
+| `core/AGENTS.md` | The tool-neutral product rulebook (the source) |
+| `core/roles/*.md` | The agent roles (the five above and the six `review-*` panel roles): tier, access, capabilities, body |
 | `review/` | The review panel: `PROCEDURE.md`, the explorer contract, shared rules, lane selection, `lanes/*.md`, calibration, metrics and the regression corpus |
-| `commands/*.md` | Claude Code slash commands: the review panel's three are generated (`node tools/orc.mjs sync`); the six workflow wrappers are hand-written |
 | `workflows/` | Tool-neutral workflows around the build loop: `start`, `grill`, `draft-pr`, `peer-review`, `create`, `fix-ci` |
 | `templates/AGENTS.md` | Starting rulebook for a repo you work on, with its Project settings block (`docs/adopt-a-repo.md`) |
 | `tools/tracker/` | `ado.ps1`, the Azure DevOps tracker helper (`docs/tracker-contract.md`), and its offline self-check |
 | `profiles/*.md` | Optional rulebook additions (`--profile <name>`); `dotnet-azure-devops` holds the long rulebook's stack rules and general lessons |
-| `models.json` | Tier to model, per tool; `~/.orc/models.json` overrides it for install, status, dispatch and doctor, then `models.local.json` (untracked) for those and build |
+| `models.json` | Tier to model, per tool; `~/.orc/models.json` overrides it for install, sync, status, dispatch and doctor, then `models.local.json` (untracked) for those and build |
 | `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
+| `adapters/claude-code/` | Claude-only static assets: the six workflow `commands/*.md` and `skills/orc-permissions/` (installed by `install --tool claude-code` and `sync`), plus `settings.example.json` (hooks, status line, plugins and `permissions.deny`) and `hooks.node.example.json` (`hooks --node`) |
 | `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `costlog`, `dispatch`, `doctor`, `bench`, `queue`, `hooks`, `standards`; review panel: `calibration`, `corpus`, `metrics`; `help` |
-| `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them), install, check, tooling, standards and review-panel tool tests, the `bench` tests (`tests/bench.test.mjs`, over the replay cases in `tests/fixtures/bench/`) and the `queue` tests (`tests/queue.test.mjs`), and the sprint tests (theme tokens and contrast, the theme picker, `make-story.mjs` and the story page) |
+| `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them; `check` compares against them), install, check, tooling, standards and review-panel tool tests, the `bench` tests (`tests/bench.test.mjs`, over the replay cases in `tests/fixtures/bench/`) and the `queue` tests (`tests/queue.test.mjs`), and the sprint tests (theme tokens and contrast, the theme picker, `make-story.mjs` and the story page) |
 | `CONTRIBUTING.md` | How to change this repo: sources vs generated files, the edit loop, traps |
 | `LICENSE` | MIT |
 | `STANDARDS.md` | This repo's own coding standards (TypeScript/JavaScript and PowerShell), composed by `standards apply` |
@@ -213,15 +213,13 @@ Every key and rule: [docs/cli.md](docs/cli.md#shared-state-orc).
 | `orchestration/README.md`, `orchestration/log/TEMPLATE.md` | Cost-log format and review questions; the anomaly log and its promotion table; the cost-log template (the logs themselves stay untracked) |
 | `standards/`, `orchestration/standards.md`, `skills/repo-standards/` | The coding-standards archive (format in `standards/README.md`), the tool-neutral setup procedure, and its Claude Code skill |
 | `orchestration/sprint.md`, `skills/sprint/` | Sprint mode: a timeboxed build (default 45 minutes) that waives the board, standards setup, review panel and cost log for one task, and its Claude Code skill, the story-page template with its `make-story.mjs` filler, and the shared theme |
-| `skills/board/`, `skills/brief/`, `skills/wrap-up/` | Claude Code skills for the routine steps of an orchestrated task: board writes, marching orders, and the finish |
-| `.claude/skills/ship-prompts/` | Project skill for contributors: regenerate, test and ship a change to this repo |
-| `skills/orc-permissions/` | Claude Code skill that adds the allow rules an orchestrated task needs (the orc CLI, tests, scratch files, worktrees) to `~/.claude/settings.json`, so agents stop pausing on routine commands; the two risky rules (worktree removal and a blanket `rm -rf`) are opt-in, each behind its own question |
+| `skills/board/`, `skills/brief/`, `skills/wrap-up/` | Tool-neutral skills for the routine steps of an orchestrated task: board writes, marching orders, and the finish (still copied into `~/.claude/skills` by hand until skill generation lands) |
+| `.claude/skills/ship-prompts/`, `.agents/skills/ship-prompts/` | Project skill for contributors (Claude Code and Antigravity): regenerate, test and ship a change to this repo |
 | `docs/` | Rulebook incident notes; the tracker contract and how to adopt a repo; outlines for unattended runs and project memory |
-| `settings.example.json` | Claude Code hooks, status line and plugins, and a `permissions.deny` block for secret files |
-| `hooks.node.example.json` | The board-reminder and git-guard hooks on Node (`hooks --node`) |
-| `tools/board-reminder.ps1`, `tools/board-reminder.mjs`, `tools/peon/` | Claude Code hooks: board reminder (PowerShell or Node), sound alert while input is pending and when a turn finishes |
-| `tools/guard.ps1`, `tools/guard.mjs` | Claude Code hook: the git guard (PowerShell or Node; see "The git guard") |
-| `tools/worklog/` | A Windows-only example of time tracking on the hooks (one ticket format, Azure DevOps); not part of the method |
+| `tools/board-reminder.ps1`, `tools/board-reminder.mjs` | Claude Code hook: board reminder (PowerShell or Node, installed to `~/.claude/tools/`); on only when the installed `~/.claude/CLAUDE.md` has a Board line, so it never disagrees with the rulebook |
+| `tools/guard.ps1`, `tools/guard.mjs` | Claude Code hook: the git guard (PowerShell or Node, installed to `~/.claude/tools/`; see "The git guard") |
+| `extras/peon/` | Optional Windows-only Claude Code hook: sound alert while input is pending and when a turn finishes (runs from this checkout) |
+| `extras/worklog/` | A Windows-only example of time tracking on the hooks (one ticket format, Azure DevOps; runs from this checkout); not part of the method |
 | `.github/workflows/`, `.github/pull_request_template.md` | CI: tests and `check` on Ubuntu and Windows; the PR template with its Docs checklist |
 
 ## Limits
@@ -237,7 +235,7 @@ Every key and rule: [docs/cli.md](docs/cli.md#shared-state-orc).
 
 ## Which Claude do I need?
 
-The full setup runs in Claude Code (terminal, IDE extension, or the desktop app's Code tab), which reads `~/.claude`. The claude.ai chat app can only view a board someone shared. To use the planning discipline there, paste the "Marching orders" and "Build loop" sections of `AGENTS.md` into a Project's instructions.
+The full setup runs in Claude Code (terminal, IDE extension, or the desktop app's Code tab), which reads `~/.claude`. The claude.ai chat app can only view a board someone shared. To use the planning discipline there, paste the "Marching orders" and "Build loop" sections of `core/AGENTS.md` into a Project's instructions.
 
 ## Command reference
 
@@ -246,15 +244,15 @@ Every command is `node tools/orc.mjs <command>`. Options: `node tools/orc.mjs he
 | Command | Purpose |
 |---|---|
 | `build` | Write every tool's generated files to `dist/<tool>/` (untracked), with sizes and gaps |
-| `check` | Check caps and `models.json`, and that `CLAUDE.md` and `agents/*.md` match the build |
-| `sync` | Regenerate the checked-in `CLAUDE.md` and `agents/*.md` |
+| `check` | Check caps, `models.json`, the standards archive, and that every tool's build matches `tests/golden/<tool>/` |
+| `sync` | Rebuild and install every tool in `~/.orc/config.json` `activeTools` (same as `install --all`; dry run without `--apply`) |
 | `golden` | Regenerate `tests/golden/<tool>/` |
 | `install` | Install one tool's files (or, with `--all`, every active tool's) into a home folder (dry run without `--apply`); `--sprint-kit` adds the sprint skill, the git guard hook and a stack permission preset for Claude Code |
 | `uninstall` | Delete the files an install recorded (dry run without `--apply`); for a sprint kit, also remove its `settings.json` entries and restore what it replaced |
 | `status` | Compare an installed copy (or, with `--all`, every active tool's) with the current build (a sprint kit's `settings.json` entries included) |
 | `models` | Turn `agy models` output into a `models.local.json` fragment (Flash slugs without `--family`, or `--family <name>`) |
 | `brief` | Print or lint a marching-orders brief |
-| `review-tier` | Say whether a branch diff is Light-eligible or Full (prompt files, including `review/`, `workflows/` and `commands/`, count as product) |
+| `review-tier` | Say whether a branch diff is Light-eligible or Full (prompt files, including `core/`, `adapters/<tool>/`, `.agents/`, `review/` and `workflows/`, count as product) |
 | `costlog` | Draft a cost log from the board |
 | `calibration` | Per-lane precision and recall of the review panel from its run logs |
 | `corpus` | List the review regression corpus, or score a panel report against one case |
@@ -277,7 +275,7 @@ Stack-specific checks (tenant scoping, CSRF, migration co-change, UI test hooks,
 
 Each verdict in a run log may end `(developer)` or `(agent)`; `calibration` computes precision from the developer's verdicts only and counts agent verdicts apart (`(agent)` anywhere in the cell marks one). Defects a review missed are appended to its log as escaped defects, which give each lane a recall figure; a row `calibration` cannot read is listed under Parser warnings rather than counted as no escape. `metrics capture` counts the verifier's lead verdicts and its finding-verification verdicts apart and reads the run log's `Verification:` line. Before a change to a lane, a role or `models.json` is kept, the affected lanes run on the regression corpus (`tests/fixtures/corpus/`, `review/corpus.md`) and `corpus score` checks that nothing expected was missed. A change to the builder or refuter role, or to their tiers, runs the replay benchmark instead (`bench run`, `orchestration/bench.md`): the roles on fixed cases, with the false-ACCEPT rate and the cost per pass for each variant.
 
-In Claude Code, `/pre-pr-review [branch] [base] [scope keywords] [lite|full]`, `/review-verdict` and `/calibration-report` are generated into `commands/`. They find this checkout through the `ORC_HOME` environment variable, else the rulebook's "Setup checkout (this machine)" line, else `~/.claude`. Other tools follow `review/PROCEDURE.md` by hand.
+In Claude Code, `/pre-pr-review [branch] [base] [scope keywords] [lite|full]`, `/review-verdict` and `/calibration-report` are generated into `~/.claude/commands/` by `install` or `sync`. They find this checkout through the `ORC_HOME` environment variable, else the rulebook's "Setup checkout (this machine)" line, else `~/.claude`. Other tools follow `review/PROCEDURE.md` by hand.
 
 ## Workflows
 
@@ -307,7 +305,7 @@ It asks you first (the reason shows in the prompt): any force-push (`--force`, `
 
 Protected branches are `main`, `develop` and `master`; set `ORC_PROTECTED_BRANCHES` to a comma list (such as `main,release`) to replace them. The hook is installed for the user, so it applies in every repository: in one where you do commit on `main`, set `ORC_PROTECTED_BRANCHES` under `env` in that project's `.claude/settings.json` to a name no branch has (such as `none`); an empty value keeps the defaults. The guard fails open: bad input, a missing field, a folder it cannot find or a git that does not answer (or answers with an error, such as a repository it calls dubious) lets the command run, with one `guard:` line on stderr. One case fails closed: when git cannot list the local branches, `git push --all` is denied as if every protected branch existed, with a `guard:` line naming the failure. Every Bash or PowerShell call pays the hook's start-up: about half a second for the PowerShell variant and about a tenth of a second for the Node variant (averaged over ten runs on one Windows machine), so `--node` is the lighter choice.
 
-`settings.example.json` runs `guard.ps1` with `-ExecutionPolicy Bypass`: under a Restricted or AllSigned policy the script would not start, Claude Code treats that as a non-blocking hook error, and every command would run unguarded. A `settings.json` that already holds the earlier guard line (without the flag) gets the new line beside it from `hooks --apply`; delete the old one. `install --tool claude-code` copies the hook scripts (`guard.ps1`, `guard.mjs`, `board-reminder.ps1`, `board-reminder.mjs`) into `<home>/.claude/tools/`, where the example hooks look for them, and `status` compares them like the generated files; a differing copy made by hand before is kept (`--force` replaces it, with a backup), and an identical copy already there and in no manifest stays yours: install does not record it and `uninstall` leaves it. `hooks` prints a `WARN hook script not found` line for each script it wires that is not there. `uninstall` deletes the scripts but leaves their entries in `settings.json`; remove those hook entries too, or every Bash and PowerShell call reports a failing hook. The exception is a sprint kit (`install --sprint-kit`): it wires the Node guard itself, copies only `guard.mjs`, and its `uninstall` removes the entry it added.
+`adapters/claude-code/settings.example.json` runs `guard.ps1` with `-ExecutionPolicy Bypass`: under a Restricted or AllSigned policy the script would not start, Claude Code treats that as a non-blocking hook error, and every command would run unguarded. A `settings.json` that already holds the earlier guard line (without the flag) gets the new line beside it from `hooks --apply`; delete the old one. `install --tool claude-code` copies the hook scripts (`guard.ps1`, `guard.mjs`, `board-reminder.ps1`, `board-reminder.mjs`) into `<home>/.claude/tools/`, where the example hooks look for them, and `status` compares them like the generated files; a differing copy made by hand before is kept (`--force` replaces it, with a backup), and an identical copy already there and in no manifest stays yours: install does not record it and `uninstall` leaves it. `hooks` prints a `WARN hook script not found` line for each script it wires that is not there. `uninstall` deletes the scripts but leaves their entries in `settings.json`; remove those hook entries too, or every Bash and PowerShell call reports a failing hook. The exception is a sprint kit (`install --sprint-kit`): it wires the Node guard itself, copies only `guard.mjs`, and its `uninstall` removes the entry it added.
 
 It is a seat belt, not a sandbox. Its command parser is a best-effort reading of shell syntax, so an unusual quoting form can still slip past it or be blocked in error; the push rule is the backstop. It cannot catch:
 
@@ -324,50 +322,55 @@ It is a seat belt, not a sandbox. Its command parser is a best-effort reading of
 
 For the commit cases above, the push rule is the backstop: such a commit still cannot be pushed to the protected branch by name, by `HEAD` or by a push with no refspec while on it.
 
-`settings.example.json` also carries a `permissions.deny` block: `Read(.env)`, `Read(.env.*)` and `Read(**/.credentials.json)` (any depth under the session's folder) and `Read(~/.claude/.credentials.json)`. Claude Code applies them to its file tools and to shell commands that name the file (`cat .env`, a redirect), but not to a command that reads without naming it (`grep -r key .`) or a script that opens the file itself.
+`adapters/claude-code/settings.example.json` also carries a `permissions.deny` block: `Read(.env)`, `Read(.env.*)` and `Read(**/.credentials.json)` (any depth under the session's folder) and `Read(~/.claude/.credentials.json)`. Claude Code applies them to its file tools and to shell commands that name the file (`cat .env`, a redirect), but not to a command that reads without naming it (`grep -r key .`) or a script that opens the file itself.
 
 ## How the .gitignore works
 
-It is an allow-list: `/*` ignores everything in `~/.claude`, then `!` lines re-include named files and folders. Transcripts, credentials, caches, plugins, memory and logs never get staged.
+It is a standard deny-list: `node_modules/`, `dist/`, `models.local.json`, `/board.local.md`, `CLAUDE.local.md`, `.env`, `.env.*`, `.orc/`, `orchestration/board/`, `orchestration/log/*` (except `orchestration/log/TEMPLATE.md`), `.claude/*` (except `.claude/skills/ship-prompts/`), `.agents/*` (except `.agents/skills/ship-prompts/`) and editor/OS noise stay ignored so build output, local overrides, secrets and private logs never get staged.
 
-To track a new file:
+## Moving off a `~/.claude` checkout
 
-1. Add `!/path` for it. For a file inside an ignored folder, un-ignore the folder (`!/dir/`), re-ignore its contents (`/dir/*`), then add `!/dir/file` (see the `agents/` block).
-2. Check with `git check-ignore <path>` (no output means it can be tracked; `-v` also prints the `!` rule that re-includes it), then `git status`.
-3. Never allow-list credentials, `settings.local.json`, `projects/` or `history.jsonl`.
+Earlier versions of this repo were designed to be checked out as `~/.claude` itself. If yours is, do not `git pull` there: the pull would replace `CLAUDE.md` with a one-line import of the contributor `AGENTS.md`, delete `agents/*.md` and the review-panel commands, and swap the allow-list `.gitignore` for one that no longer hides your credentials, history, projects and settings from `git status`. Move in this order instead:
+
+1. Clone this repo somewhere else (outside `~/.claude`).
+2. Put this machine's board address in `~/.orc/config.json` under `board.url` (plus `board.repo` for a local board, as an absolute path: `~` is not expanded; suggested clone location: `.orc/board` under your home folder), and set `setupCheckout` there to the clone's path, or `install` refuses to write your home from it).
+3. In `~/.claude`, copy aside anything you edited by hand first, then delete the files the old checkout tracked that `install` now writes and would otherwise refuse or keep: `CLAUDE.md`, `AGENTS.md`, `agents/*.md`, `commands/{pre-pr-review,review-verdict,calibration-report,start,grill,draft-pr,peer-review,create,fix-ci}.md`, `skills/orc-permissions/`, `tools/guard.*`, `tools/board-reminder.*`.
+4. From the clone, run `node tools/orc.mjs install --tool claude-code` and read the dry run, then add `--apply`. Note: `--force` replaces every hand-written or hand-copied file with a backup and records it in the manifest, so a later `uninstall` removes it.
+5. Run `node tools/orc.mjs hooks --home <your home>`, replace the stale `.claude/tools/worklog` and `.claude/tools/peon` entries it reports, and re-register the timeline task from `<clone>/extras/worklog/` if one was registered.
+6. Move existing cost logs and `anomalies.md` from `~/.claude/orchestration/log/` to `~/.orc/log/`, and delete `~/.claude/.git`, `~/.claude/.gitignore`, `~/.claude/.gitattributes` and `~/.claude/board.local.md`. `~/.claude` is then a plain folder that the clone installs into.
+7. Run `node tools/orc.mjs doctor` to verify the setup.
 
 ## Restore on a new machine
 
-`~/.claude` usually exists already (Claude Code creates it), so do not `git clone` into it. Back up any existing `CLAUDE.md` first, because `checkout -f` replaces it.
+Clone this repo as a standalone checkout (anywhere outside `~/.claude`), optionally clone the board repo to `~/.orc/board` and put its address in `~/.orc/config.json` under `board.url` (with `board.repo` for a local board), then install into each tool's home folder:
 
 ```
-cd ~/.claude
-git init -b main
-git remote add origin https://github.com/Co0pDawg/Orc-istration.git
-git fetch origin
-git checkout -f main        # overwrites tracked files only; ignored files stay, except one that a newer commit now tracks
+git clone https://github.com/Co0pDawg/Orc-istration.git
+cd Orc-istration
+git clone https://github.com/Co0pDawg/Orc-Dashboard.git ~/.orc/board   # optional: local board
+# write ~/.orc/config.json with board.url (and board.repo for a local board), activeTools and setupCheckout
+node tools/orc.mjs install --tool claude-code --apply    # or: node tools/orc.mjs sync --apply
 ```
 
-The cost-log template `orchestration/log/TEMPLATE.md` is tracked from this version on. If your checkout holds your own edited copy (it was ignored before), copy it aside before you pull or check out: git replaces a previously ignored file with the tracked one without asking.
-
-If git reports "dubious ownership", run `git config --global --add safe.directory C:/Users/<user>/.claude` once. Do not copy `settings.example.json` over `settings.json`: run `node tools/orc.mjs hooks --home <your home>` to see the hook entries it would add, then add `--apply` (it backs up `settings.json` and adds only missing hooks, with `<you>` replaced). Use `--node` for the board reminder and the git guard on Node, without PowerShell. The example's other keys (`model`, `permissions`, `statusLine`, `enabledPlugins`, `extraKnownMarketplaces`, `effortLevel`, `env`, `modelSettings`, `autoUpdatesChannel`, `theme`, `agentPushNotifEnabled`) are optional preferences: copy any you want by hand. Clone the board repo into `orchestration/board`, and put the board address in `~/.claude/board.local.md`.
+Do not copy `adapters/claude-code/settings.example.json` over `~/.claude/settings.json`: run `node tools/orc.mjs hooks --home <your home>` to see the hook entries it would add, then add `--apply` (it backs up `settings.json`, replaces `<you>` with your home and `<setup>` with this checkout, adds only missing hooks, and reports any stale `.claude\tools\worklog` or `.claude\tools\peon` entries under the same event to replace without duplicating them). Use `--node` for the board reminder and the git guard on Node, without PowerShell. The example's other keys (`model`, `permissions`, `statusLine`, `enabledPlugins`, `extraKnownMarketplaces`, `effortLevel`, `env`, `modelSettings`, `autoUpdatesChannel`, `theme`, `agentPushNotifEnabled`) are optional preferences: copy any you want by hand. Copy any remaining `skills/*` folders you want into `~/.claude/skills/` (still copied by hand until skill generation lands; `orc-permissions` is installed by `install` / `sync`).
 
 ## Not in the repo (reinstall or recreate)
 
-- Plugins and marketplaces named in `settings.example.json` (`enabledPlugins`, `extraKnownMarketplaces`): install them with `/plugin`. The status line points into the ponytail plugin's cache, so it works only after that plugin is installed.
-- peon-ping (sound alerts): install it into `hooks/peon-ping/` and keep only the `tools/peon/peon-hook.ps1` entries on PermissionRequest, Notification and Stop; delete the entries its installer adds. Turn every category off except `input.required` (a question or approval is waiting) and `task.complete` (the turn finished). Without peon-ping the wrapper does nothing.
+- Plugins and marketplaces named in `adapters/claude-code/settings.example.json` (`enabledPlugins`, `extraKnownMarketplaces`): install them with `/plugin`. The status line points into the ponytail plugin's cache, so it works only after that plugin is installed.
+- peon-ping (sound alerts): install it into `hooks/peon-ping/` and keep only the `extras/peon/peon-hook.ps1` entries on PermissionRequest, Notification and Stop; delete the entries its installer adds. Turn every category off except `input.required` (a question or approval is waiting) and `task.complete` (the turn finished). Without peon-ping the wrapper does nothing.
 - Credentials: log in again (`/login`, and `gh auth login` if used).
 - Project memory (`projects/<project>/memory/`): see `docs/project-memory.md`.
 - Scheduled tasks and their scripts: see `docs/ops-automation.md`; recreate Task Scheduler entries by hand.
-- The worklog's 15-minute sync task: run `pwsh -NoProfile -File ~/.claude/tools/worklog/register-timeline-task.ps1` once, and set `ORC_ADO_SCRIPT` or `WORKLOG_ADO` to `tools/tracker/ado.ps1` (`tools/worklog/README.md`).
+- The worklog's 15-minute sync task: run `pwsh -NoProfile -File <setup>/extras/worklog/register-timeline-task.ps1` once, and set `ORC_ADO_SCRIPT` or `WORKLOG_ADO` to `tools/tracker/ado.ps1` (`extras/worklog/README.md`).
 
 ## Contributing
 
-Agents and people changing this repo: start with [CONTRIBUTING.md](CONTRIBUTING.md). After editing `AGENTS.md`, `roles/` or `adapters/`:
+Agents and people changing this repo: start with [CONTRIBUTING.md](CONTRIBUTING.md). After editing `core/AGENTS.md`, `core/roles/` or `adapters/`:
 
 ```
-node tools/orc.mjs sync      # regenerates CLAUDE.md, agents/*.md and the generated commands/*.md
-npm test                     # golden files, install tests, and check
+node tools/orc.mjs golden    # regenerates tests/golden/<tool>/
+npm test                     # golden files, install tests, and tooling tests
+node tools/orc.mjs check     # caps, models, archive and golden parity
 ```
 
 Push a branch and open a pull request against `main`. Report bugs and ideas in [Issues](https://github.com/Co0pDawg/Orc-istration/issues).

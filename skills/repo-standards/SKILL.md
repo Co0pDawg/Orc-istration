@@ -5,7 +5,7 @@ description: Set up or refresh a repo's coding standards (STANDARDS.md at the pr
 
 # Repo standards
 
-This skill exists only where `~/.claude` is the setup checkout, because Claude Code loads skills from `~/.claude/skills`. Elsewhere, follow the procedure directly.
+This skill exists only where `~/.claude/skills` holds a copy of it. Elsewhere, follow the procedure directly.
 
 Follow `<setup>/orchestration/standards.md` step by step. Resolve `<setup>` as that file says: the `ORC_HOME` environment variable, the "Setup checkout (this machine)" line in the rulebook's tool notes, `~/.claude` when it has `tools/orc.mjs`, else ask the user. Commands run as `node "<setup>/tools/orc.mjs" standards ...` (quoted, for paths with spaces) with `--repo <project>`; do not hard-code `~/.claude`.
 

@@ -3,7 +3,8 @@
 // refuter or debugger finishes. `mark` (SubagentStop) only leaves a marker, because SubagentStop output goes to the
 // finishing agent; `relay` (PostToolUse, UserPromptSubmit) turns the session's markers into context on the main
 // session's next dispatch, board write or prompt. It writes nothing to the board.
-// Silent without ~/.claude/board.local.md. Any failure exits 0. BOARD_REMINDER_ROOT overrides ~/.claude.
+// Silent unless <root>/CLAUDE.md has the Board line install writes ("- **Board:** this machine's board address is...").
+// Any failure exits 0. BOARD_REMINDER_ROOT overrides ~/.claude for CLAUDE.md and markers.
 // Usage: node board-reminder.mjs mark|relay  (hook JSON on stdin)
 import fs from 'node:fs';
 import os from 'node:os';
@@ -11,15 +12,27 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const WEEK = 7 * 24 * 3600 * 1000;
+const BOARD_LINE = "- **Board:** this machine's board address is";
 const clean = (s) => String(s ?? '').replace(/[^\w-]/g, '');
 
+// On when <root>/CLAUDE.md has a line starting with the Board line install writes (the sprint kit's `- **Board:** none`
+// line means off); a missing or unreadable rulebook means off, silently.
+function hasBoardRulebook(root) {
+  try {
+    const text = fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf8').replace(/^\uFEFF/, '');
+    return text.split(/\r?\n/).some((line) => line.startsWith(BOARD_LINE));
+  } catch {
+    return false;
+  }
+}
+
 export function run(mode, stdinText, root, now = Date.now()) {
-  if (!fs.existsSync(path.join(root, 'board.local.md'))) return '';
   const dir = path.join(root, 'board-reminders');
   const any = () => fs.existsSync(dir) && fs.readdirSync(dir).length > 0;
-  // The relay runs on every prompt, so the common case of no markers stops here.
+  // The relay runs on every prompt, so the common case of no markers stops here before reading CLAUDE.md.
   if (mode === 'relay' && !any()) return '';
-  const hook = JSON.parse(stdinText.replace(/^﻿/, ''));
+  if (!hasBoardRulebook(root)) return '';
+  const hook = JSON.parse(stdinText.replace(/^\uFEFF/, ''));
   const session = clean(hook.session_id);
   if (!session) return '';
 

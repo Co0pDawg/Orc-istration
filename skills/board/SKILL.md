@@ -7,7 +7,7 @@ description: Write an orchestrated task to the live board (open the session and 
 
 This skill exists only where `~/.claude/skills` holds a copy of it. Elsewhere, follow the protocol directly.
 
-The protocol is the "Writing protocol" section of the board's `README.md`: read it at the start of each orchestrated task, and follow it over anything here. The board is its own repo (Orc-Dashboard). Find its README at `<setup>/orchestration/board/README.md`, else `~/.claude/orchestration/board/README.md`. Resolve `<setup>` in this order: the `ORC_HOME` environment variable, the "Setup checkout (this machine)" line in the rulebook's tool notes, `~/.claude` when it has `tools/orc.mjs`. The board address is in `board.local.md` beside the rulebook, or the Board line of the tool notes. No address: skip the board and say so once.
+The protocol is the "Writing protocol" section of the board's `README.md`: read it at the start of each orchestrated task, and follow it over anything here. The board is its own repo (Orc-Dashboard). Find its README at `<board repo>/README.md`, where `<board repo>` is `board.repo` in `~/.orc/config.json` (suggested: `~/.orc/board`), else `~/.orc/board/README.md`. The board address is in the Board line of the tool notes (added at install from `~/.orc/config.json`). No address: skip the board and say so once.
 
 ## Backend
 

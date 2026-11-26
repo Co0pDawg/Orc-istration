@@ -1,6 +1,6 @@
 ---
 name: ship-prompts
-description: Regenerate, test and ship a change to Orc-istration's own sources (AGENTS.md, roles, adapters, profiles, skills, workflows, standards, tools) through sync, golden, tests, check, the README and wiki, and the live install. Use only in the Orc-istration repo after editing one of those sources.
+description: Regenerate, test and ship a change to Orc-istration's own sources (core/AGENTS.md, core/roles, adapters, profiles, skills, workflows, standards, tools) through golden, tests, check, the README and wiki, and the live install (sync --apply). Use only in the Orc-istration repo after editing one of those sources.
 ---
 
 # Ship prompts
@@ -9,16 +9,15 @@ A project skill: it loads only in a session opened in this repo. `CONTRIBUTING.m
 
 Show this as a visible checklist.
 
-1. **Generated files.** Never hand-edit `CLAUDE.md`, `agents/*.md`, the generated `commands/*.md` or `tests/golden/**`. Run:
+1. **Generated files.** Never hand-edit `tests/golden/**`. Run:
    ```
-   node tools/orc.mjs sync
    node tools/orc.mjs golden
    git diff tests/golden
    ```
    Read the golden diff: every change must be one you meant.
-2. **Tests and caps.** Run `npm test`, then `node tools/orc.mjs check`. Report the antigravity headroom line; the rulebook built from `AGENTS.md` must stay under its byte cap.
-3. **Tracked paths.** `.gitignore` is an allow-list. For each new top-level path, skill folder or command, run `git check-ignore <path>`: no output means it is tracked. Add a `!/` line when it is not. Then `git status --porcelain` shows only the files you meant.
-4. **Review tier.** `node tools/orc.mjs review-tier` says `Full` for any prompt source (`AGENTS.md`, `roles/`, adapter notes, profiles, `review/`, `workflows/`, `commands/`, any `SKILL.md`, standards, `orchestration/standards.md`, `orchestration/sprint.md`). Prompts are product, not docs.
+2. **Tests and caps.** Run `npm test`, then `node tools/orc.mjs check`. Report the antigravity headroom line; the rulebook built from `core/AGENTS.md` must stay under its byte cap.
+3. **Tracked paths.** `.gitignore` is a standard deny-list (cost logs, `orchestration/board/`, `.orc/`, `models.local.json`, `dist/`, `.claude/*` except `.claude/skills/ship-prompts/`, and `.agents/*` except `.agents/skills/ship-prompts/` stay ignored). Run `git status --porcelain` so only the files you meant are staged.
+4. **Review tier.** `node tools/orc.mjs review-tier` says `Full` for any prompt source (`core/AGENTS.md`, `core/roles/`, `adapters/*.notes.md`, `adapters/<tool>/`, `profiles/`, `.claude/`, `.agents/`, any `SKILL.md`, `standards/`, `review/`, `workflows/`, `orchestration/standards.md`, `orchestration/sprint.md`). Prompts are product, not docs.
 5. **README and wiki.** A change to a command, flag, role, workflow, skill, mode, install step, supported tool or limit updates `README.md` (and `docs/cli.md` for commands and flags) in the same change. For the wiki:
    - Clone `https://github.com/Co0pDawg/Orc-istration.wiki.git` into the scratchpad.
    - Before any commit, copy this repo's local identity into the clone: set its `user.name` and `user.email` to the values `git config --local user.name` and `git config --local user.email` print here. The global identity must never reach this public wiki; if this repo has no local identity, stop and ask.
@@ -27,6 +26,6 @@ Show this as a visible checklist.
 6. **Public repo.** No private project names, tickets, customer names or people's names from cost logs or other projects. Anonymise the evidence.
 7. **PR.** Branch off `main` in a worktree, and open a draft PR against `main`. Fill in the template's Docs checklist, and end the description with the PR footer from the tool notes.
 8. **Live install.** After the merge, and with the user's OK because it writes the live setup:
-   - Run `node tools/orc.mjs status --tool claude-code --home <home>`, then `install --tool claude-code --home <home>` as a dry run, then with `--apply`.
-   - Copy changed `skills/*` folders into `~/.claude/skills` by hand.
+   - Run `node tools/orc.mjs status --all` (or `status --tool claude-code`), then `node tools/orc.mjs sync` as a dry run, then `node tools/orc.mjs sync --apply` (or `install --tool <id> --apply` for one tool). That installs the generated files, hook scripts, Claude Code workflow commands and `orc-permissions` skill (no hand-copying of installed commands or `orc-permissions`).
+   - Copy changed `skills/*` folders (the remaining tool-neutral skills) into `~/.claude/skills` by hand until skill generation lands.
    - Live-test a changed agent definition from a fresh session whose project has no agents of the same names.

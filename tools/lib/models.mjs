@@ -13,7 +13,7 @@ const TIER_KEYS = ['model', 'effort'];
 export function knownTools(repo) {
   let dir = path.join(repo, 'adapters');
   if (!fs.existsSync(dir)) dir = path.join(OWN_REPO, 'adapters');
-  return fs.readdirSync(dir).filter((f) => f.endsWith('.mjs')).map((f) => f.slice(0, -4)).sort();
+  return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isFile() && e.name.endsWith('.mjs')).map((e) => e.name.slice(0, -4)).sort();
 }
 
 // Throws one error naming every problem in `models` (parsed from `file`).

@@ -1,12 +1,17 @@
 import { test } from 'node:test';
+import { isolateHome } from './helpers.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { main } from '../tools/orc.mjs';
 import { presetRules, detectStacks, removeKitSettings, planKitSettings, kitHookExample, hasGuard, guardStatus, KIT_NOTES, KNOWN_STACKS as KNOWN } from '../tools/lib/sprintkit.mjs';
 import { normalizeEol } from '../tools/lib/frontmatter.mjs';
+
+// No test in this file can reach the real home folder: commands that default --home use this scratch one.
+isolateHome();
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tempDir = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `orc-${name}-`));
@@ -49,7 +54,7 @@ function populatedHome({ guard = true } = {}) {
   const home = tempDir('kit-populated');
   const claude = path.join(home, '.claude');
   fs.mkdirSync(claude);
-  const settings = JSON.parse(fs.readFileSync(path.join(REPO, 'settings.example.json'), 'utf8'));
+  const settings = JSON.parse(fs.readFileSync(path.join(REPO, 'adapters', 'claude-code', 'settings.example.json'), 'utf8'));
   settings.permissions.allow = ['Read(./docs/**)', 'Bash(dotnet build *)'];
   const isGuard = (g) => g.hooks.some((h) => /guard\.ps1/.test(h.command));
   if (!guard) settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter((g) => !isGuard(g));
@@ -82,6 +87,7 @@ test('sprint kit: a home with no .claude gets the roster, the skill, the guard a
   const files = tree(path.join(home, '.claude'));
   for (const f of ['CLAUDE.md', 'AGENTS.md', 'agents/builder.md', 'agents/refuter.md', 'agents/scout.md', 'skills/sprint/SKILL.md', 'tools/guard.mjs', 'settings.json']) assert.ok(files.includes(f), f);
   assert.deepEqual(files.filter((f) => f.includes('board-reminder')), [], 'no board reminder on the machine');
+  assert.ok(!files.includes('commands/start.md') && !files.includes('skills/orc-permissions/SKILL.md'), 'sprint kit leaves out personal workflow commands and orc-permissions');
   assert.equal(fs.readFileSync(path.join(home, '.claude', 'skills', 'sprint', 'SKILL.md'), 'utf8'), fs.readFileSync(path.join(REPO, 'skills', 'sprint', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n'));
   const rulebook = fs.readFileSync(path.join(home, '.claude', 'CLAUDE.md'), 'utf8');
   for (const line of KIT_NOTES) assert.ok(rulebook.includes(`${line}\n`), line);
@@ -227,7 +233,6 @@ test('sprint kit: option gates', async () => {
     [['install', '--tool', 'claude-code', '--home', home, '--sprint-kit', '--board', 'https://claude.ai/artifact/x'], /the sprint kit installs no board/],
     [['install', '--tool', 'claude-code', '--home', home, '--sprint-kit', '--stack', 'cobol'], /unknown stack\(s\) cobol for the sprint kit; known: dotnet, node, python/],
     [['uninstall', '--tool', 'claude-code', '--home', home, '--sprint-kit'], /--sprint-kit applies to install and status only/],
-    [['install', '--tool', 'claude-code', '--sprint-kit'], /refusing --tool claude-code without --home/],
   ];
   for (const [argv, msg] of cases) {
     const r = await run(argv);
@@ -235,6 +240,15 @@ test('sprint kit: option gates', async () => {
     assert.match(r.err, msg, argv.join(' '));
   }
   assert.deepEqual(fs.readdirSync(home), []);
+  // With no --home the kit targets the home folder, like a full install: a dry run in a child whose HOME and
+  // USERPROFILE are a scratch folder (never the real home), which stays empty.
+  const fakeHome = tempDir('kit-defaulthome');
+  const env = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome };
+  const dry = spawnSync(process.execPath, [path.join(REPO, 'tools', 'orc.mjs'), 'install', '--tool', 'claude-code', '--sprint-kit', '--stack', 'node'], { env, encoding: 'utf8', cwd: tempDir('kit-cwd') });
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.doesNotMatch(dry.stderr, /refusing/);
+  assert.ok(dry.stdout.includes(path.join(fakeHome, '.claude', 'CLAUDE.md')), dry.stdout);
+  assert.deepEqual(fs.readdirSync(fakeHome), [], 'the dry run writes nothing');
 });
 
 test('sprint kit: refused over a full install (dry run too), home byte-identical; a plain install over a kit stays a kit', async () => {
@@ -376,7 +390,7 @@ test('sprint kit: a plain install\'s rulebook is unchanged (the golden file plus
   assert.equal((await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board'])).code, 0);
   const installed = fs.readFileSync(path.join(home, '.claude', 'CLAUDE.md'), 'utf8');
   const golden = normalizeEol(fs.readFileSync(path.join(REPO, 'tests', 'golden', 'claude-code', '.claude', 'CLAUDE.md'), 'utf8'));
-  assert.match(installed, /@board\.local\.md/);
+  assert.doesNotMatch(installed, /@board\.local\.md/);
   assert.equal(installed.replace(/^- Setup checkout \(this machine\): .*\n/m, ''), golden);
 });
 

@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { isolateHome } from './helpers.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -8,6 +9,9 @@ import { spawnSync } from 'node:child_process';
 import { main } from '../tools/orc.mjs';
 import { classify } from '../tools/lib/reviewtier.mjs';
 import { validateArchive, demoteHeadings, stripFrontmatter, detect, withRequires } from '../tools/lib/standards.mjs';
+
+// No test in this file can reach the real home folder: commands that default --home use this scratch one.
+isolateHome();
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tempDir = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `orc-${name}-`));
@@ -244,7 +248,7 @@ test('check validates the archive: a bad citation index and a missing checklist 
   const problems = validateArchive(dir);
   assert.deepEqual(problems, ['standards/go.md: citation(s) [99] out of range (12 source(s))', 'standards/rust.md: no "## Review checklist" section']);
   const copy = tempDir('checkrepo');
-  for (const p of ['AGENTS.md', 'CLAUDE.md', 'models.json', 'roles', 'adapters', 'agents', 'tools/lib']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
+  for (const p of ['core', 'models.json', 'adapters', 'tools/lib', 'tests/golden']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
   fs.cpSync(dir, path.join(copy, 'standards'), { recursive: true });
   const c = await run(['check', '--repo', copy]);
   assert.equal(c.code, 1);
@@ -334,7 +338,7 @@ test('standards apply: an --out through a case-different repo name does not hang
 
 test('golden renames a golden that differs only by case instead of deleting it (A2)', { skip: caseInsensitive ? false : 'case-sensitive file system' }, async () => {
   const copy = tempDir('goldcase');
-  for (const p of ['AGENTS.md', 'models.json', 'roles', 'adapters', 'tools/lib', 'tests/golden/codex']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
+  for (const p of ['core', 'models.json', 'adapters', 'tools/lib', 'tests/golden/codex']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
   const dir = path.join(copy, 'tests', 'golden', 'codex', '.codex');
   fs.renameSync(path.join(dir, 'AGENTS.md'), path.join(dir, 'Agents.md'));
   const r = await run(['golden', '--tool', 'codex', '--repo', copy]);
@@ -486,7 +490,7 @@ test('install writes the Setup checkout line, status matches it, build and golde
 
 test('golden refuses a golden folder that differs only by case, writing nothing (A2)', { skip: caseInsensitive ? false : 'case-sensitive file system' }, async () => {
   const copy = tempDir('golddir');
-  for (const p of ['AGENTS.md', 'models.json', 'roles', 'adapters', 'tools/lib', 'tests/golden/codex']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
+  for (const p of ['core', 'models.json', 'adapters', 'tools/lib', 'tests/golden/codex']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
   const gold = path.join(copy, 'tests', 'golden', 'codex');
   fs.renameSync(path.join(gold, '.codex'), path.join(gold, '.Codex'));
   fs.writeFileSync(path.join(gold, '.Codex', 'AGENTS.md'), 'stale\n');

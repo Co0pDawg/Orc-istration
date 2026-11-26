@@ -115,7 +115,7 @@ export function benchPlan(adapter, role, models, briefText, { budgetUsd, env = p
   return plan;
 }
 
-// The verdict line of the refuter's report format (roles/refuter.md: `VERDICT: ACCEPT | REWORK`), bold or code
+// The verdict line of the refuter's report format (core/roles/refuter.md: `VERDICT: ACCEPT | REWORK`), bold or code
 // decoration allowed; the last one wins. The template line itself (`ACCEPT | REWORK`) is not a verdict.
 const VERDICT_LINE = /^[\s>*`_#-]*VERDICT:[\s*`_]*(ACCEPT|REWORK)\b(?![\s*`_]*\|)/;
 export function parseVerdict(text) {
@@ -403,7 +403,7 @@ export async function runBench({ repo, root, adapter, roles, models, opt, cwd },
   const plans = new Map();
   for (const c of cases) {
     const role = roles.find((r) => r.name === ROLE_OF[c.kind]);
-    if (!role) throw new Error(`bench: no ${ROLE_OF[c.kind]} role in roles/`);
+    if (!role) throw new Error(`bench: no ${ROLE_OF[c.kind]} role in core/roles/`);
     const plan = benchPlan(adapter, role, models, readText(path.join(c.dir, 'brief.md')), { budgetUsd: o.budgetUsd });
     if (plan.error) throw new Error(plan.error);
     plans.set(c.id, plan);

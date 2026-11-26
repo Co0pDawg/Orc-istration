@@ -4,7 +4,7 @@ Scope: one record per orchestrated task (a session where the orchestrator dispat
 
 ## Where
 
-`~/.claude/orchestration/log/<date>-<project>-<slug>.md`, from `orchestration/log/TEMPLATE.md`. User-level, not in any repo — the roster applies to every project. `node tools/orc.mjs costlog --session <id>` drafts a record from the board (`docs/cli.md`).
+`~/.orc/log/<date>-<project>-<slug>.md` (`ORC_DATA_DIR` when set), from `orchestration/log/TEMPLATE.md` in the setup checkout. User-level, not in any repo — the roster applies to every project. `node tools/orc.mjs costlog --session <id>` drafts a record from the board (`docs/cli.md`).
 
 The cost log records live tasks. To measure a change to the builder or refuter role, a rule or a model tier before keeping it, run the replay benchmark on fixed cases: `bench.md`. Unattended runs of labelled GitHub issues, outside any orchestrated task and the board, are `queue.md`.
 
@@ -31,7 +31,7 @@ Below the table:
 - **Totals** — tokens and wall clock across dispatches, plus a `Orchestrator context: <start>k → <end>k` line read from the status line or `/context` at task start and when the record is written. Thirteen records in the first week all said `unmeasured`, which left the main question (did the orchestrator's share drop?) unanswerable; the line is mandatory from 2026-09-15.
 - **Loop signal** — what the builder→refuter loop actually caught: spec defects found by the builder, refuter must-fixes confirmed vs. rejected, SPEC VS INTENT entries, REWORK rounds. This is the precision/recall analog.
   - **Escaped defects** — one line per defect found after the loop accepted: what it was, who caught it (review panel, teammate, live run, owner), and why the loop missed it. Write `none` when there were none.
-- **Spec misses** — anything the orchestrator's marching orders got wrong that cost a dispatch or a rework round. These are the source material for tightening the marching orders in the rulebook (`AGENTS.md`).
+- **Spec misses** — anything the orchestrator's marching orders got wrong that cost a dispatch or a rework round. These are the source material for tightening the marching orders in the rulebook (`core/AGENTS.md`).
 
 ## First review (2026-09-15, 13 records)
 
@@ -62,7 +62,7 @@ After roughly five records, read the `Value` column per agent type and the Spec 
 
 Scope: something that went wrong or behaved oddly and that no existing rule covers, in any session (orchestrated, inline or sprint). The cost log takes only orchestrated tasks, the review calibration log takes only review-panel findings, and `docs/rulebook-notes.md` takes an incident only once it has a rule. Without a holding place, an oddity is either lost or turned into a rule on one sighting.
 
-`anomalies.md` in the folder that holds the cost logs (`~/.claude/orchestration/log/` in Claude Code): one append-only file, local and untracked. One line per entry:
+`anomalies.md` in the folder that holds the cost logs (`~/.orc/log/`, or `$ORC_DATA_DIR/log/`): one append-only file, local and untracked. One line per entry:
 
 `<date> | <project> | <what happened> | <what was expected> | <how it was caught> | <status>`
 

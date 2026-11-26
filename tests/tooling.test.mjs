@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { isolateHome } from './helpers.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -15,9 +16,12 @@ import { killTree, runDispatch } from '../tools/lib/dispatch.mjs';
 import { run as reminder } from '../tools/board-reminder.mjs';
 import { q } from './helpers.mjs';
 
+// No test in this file can reach the real home folder: commands that default --home use this scratch one.
+isolateHome();
+
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORC = path.join(REPO, 'tools', 'orc.mjs');
-const AGENTS = fs.readFileSync(path.join(REPO, 'AGENTS.md'), 'utf8').replace(/\r\n/g, '\n');
+const AGENTS = fs.readFileSync(path.join(REPO, 'core', 'AGENTS.md'), 'utf8').replace(/\r\n/g, '\n');
 const tempDir = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `orc-${name}-`));
 // No test reads this machine's ~/.orc: the shared state home is an empty scratch folder, which children inherit.
 process.env.ORC_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'orc-data-'));
@@ -78,7 +82,7 @@ function goodBrief(extra = {}) {
 
 // ---------- brief ----------
 
-test('brief new follows the AGENTS.md list, also after the list changes', async () => {
+test('brief new follows the core/AGENTS.md list, also after the list changes', async () => {
   const items = parseMarchingOrders(AGENTS);
   assert.equal(items.length, 11);
   const r = await run(['brief', 'new', '--role', 'builder']);
@@ -94,8 +98,10 @@ test('brief new follows the AGENTS.md list, also after the list changes', async 
   assert.match(scout.out, /^8\. \*\*Scratch path\*\*/m);
 
   const copy = tempDir('brief');
-  fs.cpSync(path.join(REPO, 'roles'), path.join(copy, 'roles'), { recursive: true });
-  fs.writeFileSync(path.join(copy, 'AGENTS.md'), AGENTS.replace('5. **Do not**: known traps.', '5. **Do not**: known traps and the new rule.\n6. **Budget**: one line.').replace(/^6\. \*\*Output/m, '7. **Output'));
+  fs.cpSync(path.join(REPO, 'core', 'roles'), path.join(copy, 'core', 'roles'), { recursive: true });
+  // The root AGENTS.md is the contributor file with no "Marching orders": brief never reads it.
+  fs.writeFileSync(path.join(copy, 'AGENTS.md'), '# Contributing\n\nShort rules for this repo.\n');
+  fs.writeFileSync(path.join(copy, 'core', 'AGENTS.md'), AGENTS.replace('5. **Do not**: known traps.', '5. **Do not**: known traps and the new rule.\n6. **Budget**: one line.').replace(/^6\. \*\*Output/m, '7. **Output'));
   const mutated = await run(['brief', 'new', '--repo', copy]);
   assert.equal(mutated.code, 0, mutated.err);
   assert.match(mutated.out, /5\. \*\*Do not\*\*: known traps and the new rule\./);
@@ -336,7 +342,7 @@ test('the cost-log template follows the Record format in orchestration/README.md
   for (const h of ['- Date:', '- Project:', '- Branch:', '- Task:', '- Outcome:', '## Totals', 'Orchestrator context:', '## Loop signal', 'Escaped defects:', '## Spec misses']) assert.ok(template.includes(h), h);
 });
 
-test('.gitignore tracks the cost-log template and ignores the cost logs', () => {
+test('.gitignore: a standard deny-list; the cost-log template and every source stay tracked', () => {
   // --no-index judges the rules alone, whatever the index holds; exit 0 = ignored, 1 = not ignored.
   const ignored = (p) => {
     const r = spawnSync('git', ['check-ignore', '--no-index', '-q', p], { cwd: REPO, encoding: 'utf8' });
@@ -346,6 +352,18 @@ test('.gitignore tracks the cost-log template and ignores the cost logs', () => 
   assert.equal(ignored('orchestration/log/TEMPLATE.md'), false, 'the template is tracked');
   assert.equal(ignored('orchestration/log/2026-01-01-x.md'), true, 'a cost log stays local');
   assert.equal(ignored('orchestration/log/anomalies.md'), true, 'the anomaly log stays local');
+  for (const p of ['node_modules/x/index.js', 'tools/node_modules/x.js', 'dist/codex/.codex/AGENTS.md', 'models.local.json', 'board.local.md', 'CLAUDE.local.md', 'docs/CLAUDE.local.md', '.env', '.env.local', 'sub/.env.production', '.orc/reviews/run.md', 'orchestration/board/index.html',
+    '.claude/settings.local.json', '.claude/worktrees/a/x.md', '.claude/skills/mine/SKILL.md', '.agents/settings.json', '.agents/skills/mine/SKILL.md', '.vscode/settings.json', '.idea/x.xml', 'a.swp', 'notes.md~', '.DS_Store', 'docs/Thumbs.db', 'desktop.ini']) {
+    assert.equal(ignored(p), true, `${p} is ignored`);
+  }
+  for (const p of ['AGENTS.md', 'CLAUDE.md', 'core/AGENTS.md', 'core/roles/scout.md', '.claude/skills/ship-prompts/SKILL.md', '.agents/skills/ship-prompts/SKILL.md', 'tests/golden/claude-code/.claude/CLAUDE.md',
+    'tests/golden/claude-code/.claude/agents/scout.md', 'adapters/claude-code/commands/start.md', 'adapters/claude-code/skills/orc-permissions/SKILL.md', 'extras/worklog/worklog.ps1', 'skills/brief/SKILL.md', 'tools/orc.mjs', 'orchestration/README.md', 'docs/board.local.md', 'new-top-level-file.md']) {
+    assert.equal(ignored(p), false, `${p} can be tracked`);
+  }
+  // No tracked file is matched by an ignore rule.
+  const tracked = spawnSync('git', ['ls-files', '-ci', '--exclude-standard'], { cwd: REPO, encoding: 'utf8' });
+  assert.equal(tracked.status, 0, tracked.stderr);
+  assert.equal(tracked.stdout, '');
 });
 
 test('costlog --board reads through the board CLI export', async () => {
@@ -631,10 +649,10 @@ test('runDispatch: an error after the timeout kill began is a failed kill, and t
 
 // ---------- hooks ----------
 
-const EXAMPLE = JSON.parse(fs.readFileSync(path.join(REPO, 'settings.example.json'), 'utf8'));
+const EXAMPLE = JSON.parse(fs.readFileSync(path.join(REPO, 'adapters', 'claude-code', 'settings.example.json'), 'utf8'));
 const exampleCommands = Object.values(EXAMPLE.hooks).flatMap((gs) => gs.flatMap((g) => g.hooks.map((h) => h.command)));
 
-test('hooks: empty home gets every example hook with the real home; dry run writes nothing', () => {
+test('hooks: empty home gets every example hook with the real home and setup checkout; dry run writes nothing', () => {
   const home = tempDir('hookhome');
   const dry = isolated(['hooks', '--home', home]);
   assert.equal(dry.code, 0, dry.err);
@@ -645,10 +663,151 @@ test('hooks: empty home gets every example hook with the real home; dry run writ
   const settings = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
   assert.deepEqual(Object.keys(settings), ['hooks'], 'only the hooks block is merged');
   const text = JSON.stringify(settings);
-  assert.ok(!text.includes('<you>'), 'placeholder replaced');
+  const setup = fs.realpathSync.native(REPO).replace(/\\/g, '/');
+  assert.ok(!text.includes('<you>'), 'home placeholder replaced');
+  assert.ok(!text.includes('<setup>'), 'setup placeholder replaced');
   assert.ok(text.includes(JSON.stringify(home).slice(1, -1)), 'real home in the commands');
+  assert.ok(text.includes(`${setup}/extras/worklog/log-event.ps1`), 'setup checkout path in worklog commands');
+  assert.ok(text.includes(`${setup}/extras/peon/peon-hook.ps1`), 'setup checkout path in peon commands');
+  // Every worklog and peon script wired from <setup>/extras/ exists on disk.
+  const extrasPaths = Object.values(settings.hooks)
+    .flatMap((gs) => gs.flatMap((g) => g.hooks.map((h) => /"([^"]+\/extras\/[^"]+\.ps1)"/.exec(h.command)?.[1])))
+    .filter(Boolean);
+  assert.ok(extrasPaths.length >= 11, `expected worklog and peon hooks, got ${extrasPaths.length}`);
+  for (const p of extrasPaths) assert.ok(fs.existsSync(p), `extras script exists: ${p}`);
   assert.match(isolated(['hooks', '--home', home]).out, /nothing to add/);
   assert.match(isolated(['hooks']).err, /hooks needs --home/);
+});
+
+test('hooks: stale .claude/tools/worklog and .claude/tools/peon entries are reported to replace and never duplicated', () => {
+  const home = tempDir('hookstale');
+  const file = path.join(home, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  // Simulate a live home whose settings.json still points at the old .claude\tools\worklog and .claude\tools\peon paths.
+  const oldSettings = {
+    hooks: {
+      Stop: [
+        { matcher: '', hooks: [{ type: 'command', command: `powershell -NoProfile -NonInteractive -File "${home}\\.claude\\tools\\worklog\\log-event.ps1" -Kind stop`, timeout: 10, async: true }] },
+        { matcher: '', hooks: [{ type: 'command', command: `powershell -NoProfile -NonInteractive -File "${home}\\.claude\\tools\\peon\\peon-hook.ps1"`, timeout: 10, async: true }] },
+      ],
+      PostToolUse: [
+        { matcher: 'ArtifactData', hooks: [{ type: 'command', command: `powershell -NoProfile -NonInteractive -File "${home}\\.claude\\tools\\worklog\\board-title.ps1"`, timeout: 10 }] },
+      ],
+    },
+  };
+  fs.writeFileSync(file, `${JSON.stringify(oldSettings, null, 2)}\n`);
+  const dry = isolated(['hooks', '--home', home]);
+  assert.equal(dry.code, 0, dry.err);
+  assert.equal(dry.out.match(/^stale /gm).length, 3, dry.out);
+  assert.match(dry.out, /stale Stop \(replace by hand; not duplicated\): .*tools\\worklog\\log-event\.ps1" -Kind stop/);
+  assert.match(dry.out, /-> .*\/extras\/worklog\/log-event\.ps1" -Kind stop/);
+  assert.match(dry.out, /stale PostToolUse \[ArtifactData\] \(replace by hand; not duplicated\): .*tools\\worklog\\board-title\.ps1/);
+  assert.equal(dry.out.match(/^would add /gm).length, exampleCommands.length - 3, 'stale entries are not added beside the old ones');
+  const applied = isolated(['hooks', '--home', home, '--apply']);
+  assert.equal(applied.code, 0, applied.err);
+  assert.equal(applied.out.match(/^stale /gm).length, 3, applied.out);
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const stopCmds = after.hooks.Stop.flatMap((g) => g.hooks.map((h) => h.command));
+  assert.equal(stopCmds.filter((c) => /log-event\.ps1/.test(c)).length, 1, 'worklog Stop hook not duplicated');
+  assert.equal(stopCmds.filter((c) => /peon-hook\.ps1/.test(c)).length, 1, 'peon Stop hook not duplicated');
+  assert.equal(stopCmds.filter((c) => /peon-nag\.ps1/.test(c)).length, 1, 'missing peon-nag hook was added');
+  const ptuCmds = after.hooks.PostToolUse.flatMap((g) => g.hooks.map((h) => h.command));
+  assert.equal(ptuCmds.filter((c) => /board-title\.ps1/.test(c)).length, 1, 'board-title hook not duplicated');
+  // Second run reports the 3 stale hooks and adds nothing.
+  const again = isolated(['hooks', '--home', home, '--apply']);
+  assert.equal(again.code, 0, again.err);
+  assert.equal(again.out.match(/^stale /gm).length, 3);
+  assert.match(again.out, /nothing added: 3 stale hook\(s\) still point at \.claude\/tools\/worklog or \.claude\/tools\/peon/);
+});
+
+test('hooks: stale pattern also matches unquoted .claude/tools/worklog and .claude/tools/peon paths', () => {
+  const home = tempDir('hookstale-unquoted');
+  const file = path.join(home, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const oldSettings = {
+    hooks: {
+      Stop: [
+        { matcher: '', hooks: [{ type: 'command', command: 'powershell -NoProfile -NonInteractive -File ~/.claude/tools/worklog/log-event.ps1 -Kind stop', timeout: 10, async: true }] },
+        { matcher: '', hooks: [{ type: 'command', command: `powershell -NoProfile -NonInteractive -File ${home}\\.claude\\tools\\peon\\peon-hook.ps1`, timeout: 10, async: true }] },
+      ],
+      PostToolUse: [
+        { matcher: 'ArtifactData', hooks: [{ type: 'command', command: 'powershell -NoProfile -NonInteractive -File ~/.claude/tools/worklog/board-title.ps1', timeout: 10 }] },
+      ],
+    },
+  };
+  fs.writeFileSync(file, `${JSON.stringify(oldSettings, null, 2)}\n`);
+  const dry = isolated(['hooks', '--home', home]);
+  assert.equal(dry.code, 0, dry.err);
+  assert.equal(dry.out.match(/^stale /gm)?.length, 3, dry.out);
+  assert.match(dry.out, /stale Stop \(replace by hand; not duplicated\): .*~\/\.claude\/tools\/worklog\/log-event\.ps1 -Kind stop/);
+  assert.match(dry.out, /-> .*\/extras\/worklog\/log-event\.ps1" -Kind stop/);
+  assert.equal(dry.out.match(/^would add /gm)?.length, exampleCommands.length - 3, 'unquoted stale entries are not duplicated');
+  const applied = isolated(['hooks', '--home', home, '--apply']);
+  assert.equal(applied.code, 0, applied.err);
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const stopCmds = after.hooks.Stop.flatMap((g) => g.hooks.map((h) => h.command));
+  assert.equal(stopCmds.filter((c) => /log-event\.ps1/.test(c)).length, 1, 'unquoted worklog Stop hook not duplicated');
+  assert.equal(stopCmds.filter((c) => /peon-hook\.ps1/.test(c)).length, 1, 'unquoted peon Stop hook not duplicated');
+  const ptuCmds = after.hooks.PostToolUse.flatMap((g) => g.hooks.map((h) => h.command));
+  assert.equal(ptuCmds.filter((c) => /board-title\.ps1/.test(c)).length, 1, 'unquoted board-title hook not duplicated');
+});
+
+test('D7: hooks treats a stale .claude/tools/{worklog,peon} entry under another matcher in the same event as stale and never duplicates it', () => {
+  const home = tempDir('hookstale-matcher');
+  const file = path.join(home, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const oldSettings = {
+    hooks: {
+      PostToolUse: [
+        { matcher: 'Bash', hooks: [{ type: 'command', command: `powershell -NoProfile -NonInteractive -File "${home}\\.claude\\tools\\worklog\\log-event.ps1" -Kind tool`, timeout: 10, async: true }] },
+        { matcher: 'mcp__claude-artifacts__db_write', hooks: [{ type: 'command', command: `powershell -NoProfile -NonInteractive -File "${home}\\.claude\\tools\\worklog\\board-title.ps1"`, timeout: 10 }] },
+      ],
+    },
+  };
+  fs.writeFileSync(file, `${JSON.stringify(oldSettings, null, 2)}\n`);
+  const dry = isolated(['hooks', '--home', home]);
+  assert.equal(dry.code, 0, dry.err);
+  assert.equal(dry.out.match(/^stale /gm)?.length, 2, dry.out);
+  assert.match(dry.out, /stale PostToolUse \[Bash\] \(replace by hand; not duplicated\): .*tools\\worklog\\log-event\.ps1" -Kind tool/);
+  assert.match(dry.out, /-> .*\/extras\/worklog\/log-event\.ps1" -Kind tool/);
+  assert.match(dry.out, /stale PostToolUse \[mcp__claude-artifacts__db_write\] \(replace by hand; not duplicated\): .*tools\\worklog\\board-title\.ps1/);
+  assert.equal(dry.out.match(/^would add /gm)?.length, exampleCommands.length - 2, 'stale entries under different matchers are not added beside the old ones');
+  const applied = isolated(['hooks', '--home', home, '--apply']);
+  assert.equal(applied.code, 0, applied.err);
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const ptuCmds = after.hooks.PostToolUse.flatMap((g) => g.hooks.map((h) => h.command));
+  assert.equal(ptuCmds.filter((c) => /log-event\.ps1/.test(c)).length, 1, 'worklog PostToolUse hook not duplicated');
+  assert.equal(ptuCmds.filter((c) => /board-title\.ps1/.test(c)).length, 1, 'board-title PostToolUse hook not duplicated');
+  // Same script under a different event does not suppress PostToolUse.
+  const otherEvent = tempDir('hookstale-event');
+  const otherFile = path.join(otherEvent, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(otherFile), { recursive: true });
+  fs.writeFileSync(otherFile, JSON.stringify({
+    hooks: {
+      PreToolUse: [
+        { matcher: 'Bash', hooks: [{ type: 'command', command: `powershell -NoProfile -NonInteractive -File "${otherEvent}\\.claude\\tools\\worklog\\log-event.ps1" -Kind tool`, timeout: 10 }] },
+      ],
+    },
+  }, null, 2));
+  const diffEv = isolated(['hooks', '--home', otherEvent]);
+  assert.equal(diffEv.code, 0, diffEv.err);
+  assert.doesNotMatch(diffEv.out, /^stale /m);
+  assert.equal(diffEv.out.match(/^would add /gm)?.length, exampleCommands.length);
+});
+
+test('hooks fills <setup> with the running checkout, not --repo', () => {
+  const otherRepo = tempDir('hooks-other-repo');
+  const destDir = path.join(otherRepo, 'adapters', 'claude-code');
+  fs.mkdirSync(destDir, { recursive: true });
+  fs.copyFileSync(path.join(REPO, 'adapters', 'claude-code', 'settings.example.json'), path.join(destDir, 'settings.example.json'));
+  const home = tempDir('hooks-setup-home');
+  const r = isolated(['hooks', '--repo', otherRepo, '--home', home, '--apply']);
+  assert.equal(r.code, 0, r.err);
+  const text = fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8');
+  const runningSetup = fs.realpathSync.native(REPO).replace(/\\/g, '/');
+  const otherSetup = fs.realpathSync.native(otherRepo).replace(/\\/g, '/');
+  assert.ok(text.includes(`${runningSetup}/extras/worklog/log-event.ps1`), text);
+  assert.ok(!text.includes(otherSetup), `expected running checkout, not --repo: ${text}`);
 });
 
 test('hooks: existing settings keep every key and hook byte-for-byte; second run is idempotent', () => {
@@ -729,31 +888,60 @@ test('mergeHooks rejects a non-array event and leaves the input untouched', () =
 
 // ---------- board-reminder.mjs ----------
 
-test('board-reminder.mjs: mark, relay, silence and subagent calls', () => {
+const BOARD_RULEBOOK = "# Orchestration\n\n- **Board:** this machine's board address is `http://localhost:8377`; write it with `node \"C:/b/local/board.js\"`.\n";
+const KIT_RULEBOOK = '# Orchestration\n\n- **Board:** none on this machine (sprint kit). Skip every board write.\n';
+
+test('board-reminder.mjs: mark, relay, silence and subagent calls (keyed on CLAUDE.md Board line)', (t) => {
   const root = tempDir('reminder');
   const hook = (o) => JSON.stringify({ session_id: 's-1', hook_event_name: 'PostToolUse', ...o });
-  // No board.local.md: silent, writes nothing.
-  assert.equal(reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root), '');
-  assert.deepEqual(fs.readdirSync(root), []);
+  // No CLAUDE.md (even with retired board.local.md present): silent, writes nothing.
   fs.writeFileSync(path.join(root, 'board.local.md'), 'http://localhost:8377\n');
-  // Relay with no markers: silent without reading stdin.
-  assert.equal(reminder('relay', 'not json', root), '');
-  // Mark: only builder, refuter, debugger.
-  assert.equal(reminder('mark', hook({ agent_type: 'scout', agent_id: 'a0' }), root), '');
+  assert.equal(reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root, Date.now()), '');
   assert.ok(!fs.existsSync(path.join(root, 'board-reminders')));
-  reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root);
-  reminder('mark', hook({ agent_type: 'refuter', agent_id: 'a/2' }), root);
-  reminder('mark', JSON.stringify({ session_id: 'other', agent_type: 'debugger', agent_id: 'x' }), root);
+  // CLAUDE.md without the Board line, and sprint kit's `- **Board:** none` line: silent, writes nothing.
+  for (const content of ['# Orchestration\n\nNo board here.\n', KIT_RULEBOOK, '']) {
+    fs.writeFileSync(path.join(root, 'CLAUDE.md'), content);
+    assert.equal(reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root, Date.now()), '', content);
+    assert.ok(!fs.existsSync(path.join(root, 'board-reminders')), content);
+  }
+  // Unreadable CLAUDE.md (a directory): off silently.
+  fs.rmSync(path.join(root, 'CLAUDE.md'));
+  fs.mkdirSync(path.join(root, 'CLAUDE.md'));
+  assert.equal(reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root, Date.now()), '');
+  assert.ok(!fs.existsSync(path.join(root, 'board-reminders')));
+  fs.rmSync(path.join(root, 'CLAUDE.md'), { recursive: true });
+
+  // UTF-8 BOM right before the Board line on line 1 is stripped and recognised.
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), `\uFEFF- **Board:** this machine's board address is \`https://claude.ai/artifact/x\`.\n`);
+  // Relay with no markers stops before reading CLAUDE.md or stdin.
+  const reads = [];
+  const origRead = fs.readFileSync;
+  const spy = t.mock.method(fs, 'readFileSync', (...a) => {
+    reads.push(String(a[0]));
+    return origRead(...a);
+  });
+  assert.equal(reminder('relay', 'not json', root, Date.now()), '');
+  assert.deepEqual(reads, [], 'relay with no markers must not read CLAUDE.md');
+  spy.mock.restore();
+
+  // Mark: only builder, refuter, debugger.
+  assert.equal(reminder('mark', hook({ agent_type: 'scout', agent_id: 'a0' }), root, Date.now()), '');
+  assert.ok(!fs.existsSync(path.join(root, 'board-reminders')));
+  reminder('mark', hook({ agent_type: 'builder', agent_id: 'a1' }), root, Date.now());
+  // Also works with a multi-line CLAUDE.md without BOM.
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), BOARD_RULEBOOK);
+  reminder('mark', hook({ agent_type: 'refuter', agent_id: 'a/2' }), root, Date.now());
+  reminder('mark', JSON.stringify({ session_id: 'other', agent_type: 'debugger', agent_id: 'x' }), root, Date.now());
   const dir = path.join(root, 'board-reminders');
   assert.deepEqual(fs.readdirSync(dir).sort(), ['other.x', 's-1.a1', 's-1.a2']);
   // A relay inside a subagent is ignored.
-  assert.equal(reminder('relay', hook({ agent_id: 'a1' }), root), '');
+  assert.equal(reminder('relay', hook({ agent_id: 'a1' }), root, Date.now()), '');
   // An empty marker (killed mid-write) is cleared without naming an agent.
   fs.writeFileSync(path.join(dir, 's-2.e'), '');
-  const empty = JSON.parse(reminder('relay', JSON.stringify({ session_id: 's-2', hook_event_name: 'UserPromptSubmit' }), root));
+  const empty = JSON.parse(reminder('relay', JSON.stringify({ session_id: 's-2', hook_event_name: 'UserPromptSubmit' }), root, Date.now()));
   assert.match(empty.hookSpecificOutput.additionalContext, /^Board: An agent finished\./);
   // Relay names the session's agents, clears its markers and keeps others.
-  const out = JSON.parse(reminder('relay', hook({}), root));
+  const out = JSON.parse(reminder('relay', hook({}), root, Date.now()));
   assert.equal(out.hookSpecificOutput.hookEventName, 'PostToolUse');
   assert.match(out.hookSpecificOutput.additionalContext, /^Board: builder, refuter finished\. Update this session's now and events/);
   assert.deepEqual(fs.readdirSync(dir), ['other.x']);
@@ -761,13 +949,13 @@ test('board-reminder.mjs: mark, relay, silence and subagent calls', () => {
   const old = path.join(dir, 'other.x');
   const past = new Date(Date.now() - 8 * 24 * 3600 * 1000);
   fs.utimesSync(old, past, past);
-  reminder('mark', hook({ agent_type: 'debugger', agent_id: 'd' }), root);
+  reminder('mark', hook({ agent_type: 'debugger', agent_id: 'd' }), root, Date.now());
   assert.deepEqual(fs.readdirSync(dir), ['s-1.d']);
 });
 
 test('board-reminder.mjs as a hook process: stdin JSON in, context out, exit 0 on bad input', () => {
   const root = tempDir('reminder');
-  fs.writeFileSync(path.join(root, 'board.local.md'), 'x\n');
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), BOARD_RULEBOOK);
   const script = path.join(REPO, 'tools', 'board-reminder.mjs');
   const env = { ...process.env, BOARD_REMINDER_ROOT: root };
   const mark = spawnSync(process.execPath, [script, 'mark'], { env, input: JSON.stringify({ session_id: 's', agent_type: 'builder', agent_id: 'b' }), encoding: 'utf8' });
@@ -783,11 +971,48 @@ test('board-reminder.mjs as a hook process: stdin JSON in, context out, exit 0 o
   assert.match(bad.stderr, /^board-reminder: /);
 });
 
+test('board-reminder.ps1 keys on CLAUDE.md Board line and stays silent without it, for sprint kit, or when missing', { skip: process.platform !== 'win32' && 'PowerShell board-reminder is Windows only' }, () => {
+  const root = tempDir('reminder-ps1');
+  const script = path.join(REPO, 'tools', 'board-reminder.ps1');
+  const runPs = (mode, input) => spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Mode', mode], {
+    env: { ...process.env, BOARD_REMINDER_ROOT: root },
+    input,
+    encoding: 'utf8',
+  });
+  const markIn = JSON.stringify({ session_id: 's', agent_type: 'builder', agent_id: 'b' });
+  // Absent CLAUDE.md, even with retired board.local.md: silent, writes no marker.
+  fs.writeFileSync(path.join(root, 'board.local.md'), 'http://localhost:8377\n');
+  const off = runPs('mark', markIn);
+  assert.equal(off.status, 0, off.stderr);
+  assert.equal(off.stdout, '');
+  assert.equal(off.stderr, '');
+  assert.ok(!fs.existsSync(path.join(root, 'board-reminders')));
+  // Relay with no markers and no CLAUDE.md: silent, exit 0.
+  const noMarkers = runPs('relay', '{not json');
+  assert.equal(noMarkers.status, 0, noMarkers.stderr);
+  assert.equal(noMarkers.stdout, '');
+  assert.equal(noMarkers.stderr, '');
+  // Plain CLAUDE.md without Board line, or sprint kit's `- **Board:** none` line: silent.
+  for (const raw of ['# Orchestration\n', KIT_RULEBOOK, '']) {
+    fs.writeFileSync(path.join(root, 'CLAUDE.md'), raw);
+    const r = runPs('mark', markIn);
+    assert.equal(r.status, 0, raw);
+    assert.equal(r.stderr, '', raw);
+    assert.ok(!fs.existsSync(path.join(root, 'board-reminders')), raw);
+  }
+  // Valid Board line (including with a UTF-8 BOM): mark + relay fire.
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), `\uFEFF${BOARD_RULEBOOK}`);
+  assert.equal(runPs('mark', markIn).status, 0);
+  const relay = runPs('relay', JSON.stringify({ session_id: 's', hook_event_name: 'UserPromptSubmit' }));
+  assert.equal(relay.status, 0, relay.stderr);
+  assert.match(JSON.parse(relay.stdout).hookSpecificOutput.additionalContext, /^Board: builder finished/);
+});
+
 // ---------- models validation ----------
 
 test('models validation rejects bad ids, tiers, efforts and values in both files; check reports it', async () => {
   const copy = tempDir('models');
-  for (const p of ['AGENTS.md', 'CLAUDE.md', 'models.json', 'roles', 'adapters', 'agents', 'tools/lib']) {
+  for (const p of ['core', 'models.json', 'adapters', 'tools/lib', 'tests/golden']) {
     fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
   }
   const base = JSON.parse(fs.readFileSync(path.join(REPO, 'models.json'), 'utf8'));
@@ -871,22 +1096,24 @@ test('a tool whose tiers share a model in models.json has a gap naming those tie
 });
 
 test('review-tier: prompts count as product; uncommitted changes warn', async () => {
-  for (const p of ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'roles/scout.md', 'agents/scout.md', '.claude/x.md', '.agents/x.md', '.codex/AGENTS.md',
-    '.cursor/agents/a.md', '.gemini/GEMINI.md', 'profiles/p.md', 'adapters/codex.notes.md', 'skills/x/SKILL.md', 'a/b.agent.md',
-    'review/PROCEDURE.md', 'review/lanes/code-reviewer.md', 'workflows/start.md', 'commands/pre-pr-review.md', 'commands/start.md']) {
+  for (const p of ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'core/AGENTS.md', 'core/roles/scout.md', '.claude/x.md', '.agents/x.md', '.agents/skills/ship-prompts/SKILL.md', '.codex/AGENTS.md',
+    '.cursor/agents/a.md', '.gemini/GEMINI.md', 'profiles/p.md', 'adapters/codex.notes.md', 'adapters/claude-code/commands/start.md', 'adapters/claude-code/skills/orc-permissions/SKILL.md',
+    'skills/x/SKILL.md', 'a/b.agent.md', 'review/PROCEDURE.md', 'review/lanes/code-reviewer.md', 'workflows/start.md']) {
     assert.equal(classify([p]).tier, 'Full', p);
   }
   assert.equal(classify(['README.md', 'docs/rulebook-notes.md', 'tests/a.test.mjs']).tier, 'Light-eligible');
+  // Root roles/, agents/ and commands/ Markdown count as product (other repos keep prompts there), alongside core/.
+  for (const p of ['roles/scout.md', 'agents/scout.md', 'commands/start.md']) assert.equal(classify([p]).tier, 'Full', p);
   // Only the top-level prompt folders: a docs page about them stays Light-eligible.
-  assert.equal(classify(['docs/review/notes.md', 'docs/workflows.md', 'docs/commands/x.md']).tier, 'Light-eligible');
-  for (const p of ['review/PROCEDURE.md', 'workflows/start.md', 'commands/start.md']) {
+  assert.equal(classify(['docs/review/notes.md', 'docs/workflows.md', 'docs/adapters/x.md', 'docs/roles/scout.md', 'docs/agents/scout.md', 'docs/commands/start.md']).tier, 'Light-eligible');
+  for (const p of ['review/PROCEDURE.md', 'workflows/start.md', 'adapters/claude-code/commands/start.md']) {
     const d = repoWith({ [p]: 'a\n', 'README.md': 'r\n' });
     commit(d, (dir) => fs.writeFileSync(path.join(dir, p), 'b\n'));
     assert.match((await run(['review-tier', '--base', 'base', '--repo-dir', d])).out, new RegExp(`^Full: .*${p.replace('.', '\\.')}`, 'm'), p);
   }
   // Every tracked file in the prompt folders counts as product, not only the samples above.
-  const tracked = spawnSync('git', ['ls-files', 'review', 'workflows', 'commands'], { cwd: REPO, encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
-  for (const dir of ['review/', 'workflows/', 'commands/']) assert.ok(tracked.some((p) => p.startsWith(dir)), `tracked files under ${dir}`);
+  const tracked = spawnSync('git', ['ls-files', 'review', 'workflows', 'adapters/claude-code/commands'], { cwd: REPO, encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
+  for (const dir of ['review/', 'workflows/', 'adapters/claude-code/commands/']) assert.ok(tracked.some((p) => p.startsWith(dir)), `tracked files under ${dir}`);
   for (const p of tracked) assert.equal(classify([p]).tier, 'Full', p);
   // The cost-log template the rulebook points at is tracked; the cost logs beside it stay ignored.
   const git = (...a) => spawnSync('git', a, { cwd: REPO, encoding: 'utf8' });
@@ -1055,7 +1282,7 @@ test('R2: board-reminder.mjs runs when started through a junction or symlink', (
     return;
   }
   const root = tempDir('reminder');
-  fs.writeFileSync(path.join(root, 'board.local.md'), 'x\n');
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), BOARD_RULEBOOK);
   fs.mkdirSync(path.join(root, 'board-reminders'));
   fs.writeFileSync(path.join(root, 'board-reminders', 's.a'), 'builder\n');
   const r = spawnSync(process.execPath, [path.join(link, 'board-reminder.mjs'), 'relay'], {
@@ -1173,7 +1400,7 @@ test('R6: install options are remembered; plain status and install reuse them; -
 // A temp copy of the repo with its goldens, for the golden command.
 function goldenRepo(name) {
   const copy = tempDir(name);
-  for (const p of ['AGENTS.md', 'CLAUDE.md', 'models.json', 'roles', 'adapters', 'agents', 'tools/lib', 'tests/golden']) {
+  for (const p of ['core', 'models.json', 'adapters', 'tools/lib', 'tests/golden']) {
     fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
   }
   return copy;
@@ -1191,7 +1418,7 @@ test('golden: an unchanged copy reports every file unchanged', async () => {
 
 test('golden: a role edit rewrites that role in every adapter; a stale golden is deleted', async () => {
   const copy = goldenRepo('golden-edit');
-  const role = path.join(copy, 'roles', 'scout.md');
+  const role = path.join(copy, 'core', 'roles', 'scout.md');
   fs.writeFileSync(role, `${fs.readFileSync(role, 'utf8').replace(/\r\n/g, '\n')}Extra golden line.\n`);
   const stale = path.join(copy, 'tests', 'golden', 'codex', '.codex', 'agents', 'gone.toml');
   fs.writeFileSync(stale, 'old\n');
@@ -1268,16 +1495,20 @@ test('generated marker: the old and new forms are recognised, including a Codex 
   assert.ok(!isGenerated('my own rules\n'));
 });
 
-test('check names the source to edit for CLAUDE.md and a missing agent', async () => {
+test('check names the source to edit for a golden rulebook, agent and command', async () => {
   const copy = goldenRepo('check-src');
-  fs.appendFileSync(path.join(copy, 'CLAUDE.md'), 'hand edit\n');
-  fs.rmSync(path.join(copy, 'agents', 'refuter.md'));
+  const gold = path.join(copy, 'tests', 'golden', 'claude-code', '.claude');
+  fs.appendFileSync(path.join(gold, 'CLAUDE.md'), 'hand edit\n');
+  fs.rmSync(path.join(gold, 'agents', 'refuter.md'));
+  fs.rmSync(path.join(gold, 'commands', 'pre-pr-review.md'));
   const r = await run(['check', '--repo', copy]);
   assert.equal(r.code, 1);
-  assert.match(r.err, /CLAUDE\.md: differs from generated at line \d+ \(generated from AGENTS\.md \/ adapters\/claude-code\.notes\.md \/ adapters\/claude-code\.mjs; edit those, then run node tools\/orc\.mjs sync\)/);
-  assert.match(r.err, /agents\/refuter\.md: missing \(generated from roles\/refuter\.md; run node tools\/orc\.mjs sync\)/);
-  // goldenRepo copies no commands/, so every generated command is missing and names its source.
-  assert.match(r.err, /commands\/pre-pr-review\.md: missing \(generated from adapters\/claude-code\.mjs; run node tools\/orc\.mjs sync\)/);
+  assert.match(r.err, /tests\/golden\/claude-code\/\.claude\/CLAUDE\.md: differs from the build at line \d+ \(generated from core\/AGENTS\.md \/ adapters\/claude-code\.notes\.md \/ adapters\/claude-code\.mjs; edit those, then run node tools\/orc\.mjs golden\)/);
+  assert.match(r.err, /tests\/golden\/claude-code\/\.claude\/agents\/refuter\.md: missing \(generated from core\/roles\/refuter\.md; run node tools\/orc\.mjs golden\)/);
+  assert.match(r.err, /tests\/golden\/claude-code\/\.claude\/commands\/pre-pr-review\.md: missing \(generated from adapters\/claude-code\.mjs; run node tools\/orc\.mjs golden\)/);
+  // golden repairs every one of them, and check passes again.
+  assert.equal((await run(['golden', '--repo', copy])).code, 0);
+  assert.equal((await run(['check', '--repo', copy])).code, 0);
 });
 
 const canLink = (() => {

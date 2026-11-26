@@ -65,4 +65,4 @@ The workflows in `workflows/` reach a work tracker, a code host and a CI system 
 
 A target repo's Project settings line for it: `Tracker helper: pwsh -NoProfile -File <checkout>/tools/tracker/ado.ps1`, with the three `ORC_ADO_*` variables set in the environment.
 
-The worklog (`tools/worklog/`) looks up an ADO helper through `WORKLOG_ADO`, else `ORC_ADO_SCRIPT`; point either at this script. The worklog also dot-sources it for `Invoke-Ado`, `$orgUrl`, `$api` and `$Repository`, so those names are part of this script's interface.
+The worklog (`extras/worklog/`) looks up an ADO helper through `WORKLOG_ADO`, else `ORC_ADO_SCRIPT`; point either at this script. The worklog also dot-sources it for `Invoke-Ado`, `$orgUrl`, `$api` and `$Repository`, so those names are part of this script's interface.

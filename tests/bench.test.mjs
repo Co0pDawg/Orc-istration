@@ -1,5 +1,5 @@
 // orc bench: the replay benchmark. Real runs go through a stub executable (ORC_TOOL_BIN_CLAUDE_CODE), never a model;
-// the cases are the real ones in tests/fixtures/bench and the agent definitions come from the real roles/.
+// the cases are the real ones in tests/fixtures/bench and the agent definitions come from the real core/roles/.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -11,6 +11,10 @@ import { main, loadRoles, loadModels, buildTool } from '../tools/orc.mjs';
 import { parse } from '../tools/lib/frontmatter.mjs';
 import { parseVerdict, benchReport, variantStats, rate, tokensOf, redact, listBenchCases, scoreDefects, makeScratchRepo } from '../tools/lib/bench.mjs';
 import { parseExpected } from '../tools/lib/corpus.mjs';
+import { isolateHome } from './helpers.mjs';
+
+// No test in this file can reach the real home folder: commands that default --home use this scratch one.
+isolateHome();
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORC = path.join(REPO, 'tools', 'orc.mjs');
@@ -121,7 +125,7 @@ test('bench list shows the 7 real cases with no warning', async () => {
 
 test('bench list warns about a malformed case, and run refuses it before starting anything', () => {
   const repo = tempDir('bench-repo');
-  fs.cpSync(path.join(REPO, 'roles'), path.join(repo, 'roles'), { recursive: true });
+  fs.cpSync(path.join(REPO, 'core'), path.join(repo, 'core'), { recursive: true });
   fs.cpSync(path.join(REPO, 'adapters'), path.join(repo, 'adapters'), { recursive: true });
   fs.cpSync(path.join(REPO, 'tools'), path.join(repo, 'tools'), { recursive: true });
   fs.copyFileSync(path.join(REPO, 'models.json'), path.join(repo, 'models.json'));
@@ -190,7 +194,7 @@ test('--models overrides the tier model and effort on the command line and in th
 
 test('the --agents definition is the checkout role build for builder and refuter', async () => {
   const adapter = (await import(pathToFileURL(path.join(REPO, 'adapters', 'claude-code.mjs')).href)).default;
-  const built = buildTool(adapter, loadRoles(REPO), loadModels(REPO, { local: false }), fs.readFileSync(path.join(REPO, 'AGENTS.md'), 'utf8'));
+  const built = buildTool(adapter, loadRoles(REPO), loadModels(REPO, { local: false }), fs.readFileSync(path.join(REPO, 'core', 'AGENTS.md'), 'utf8'));
   for (const [id, role] of [['csv-quoted-fields', 'builder'], ['test-asserts-nothing', 'refuter']]) {
     const r = bench(['run', '--case', id], { STUB_TEXT: 'VERDICT: REWORK' });
     assert.strictEqual(r.calls.length, 1, r.err);
@@ -350,7 +354,7 @@ test('scratch repos ignore a global hooks path, commit signing and init template
 
 test('an error that names a path is written with the path redacted', () => {
   const repo = tempDir('bench-redact');
-  for (const d of ['roles', 'adapters', 'tools']) fs.cpSync(path.join(REPO, d), path.join(repo, d), { recursive: true });
+  for (const d of ['core', 'adapters', 'tools']) fs.cpSync(path.join(REPO, d), path.join(repo, d), { recursive: true });
   fs.copyFileSync(path.join(REPO, 'models.json'), path.join(repo, 'models.json'));
   const caseDir = path.join(repo, 'tests', 'fixtures', 'bench', 'test-asserts-nothing');
   fs.cpSync(path.join(CASES, 'test-asserts-nothing'), caseDir, { recursive: true });

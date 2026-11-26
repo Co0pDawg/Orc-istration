@@ -7,18 +7,39 @@ A SubagentStop hook cannot reach the main session: its output goes to the finish
 -Mode mark (SubagentStop) only leaves a marker, and -Mode relay (PostToolUse, UserPromptSubmit) turns the session's
 markers into context on the main session's next dispatch, board write or prompt. It writes nothing to the board.
 
-Silent without ~/.claude/board.local.md, so a developer with no board sees nothing. Any failure exits 0: a reminder
-never blocks work. BOARD_REMINDER_ROOT overrides ~/.claude for a self-test.
+Silent unless <root>/CLAUDE.md has the Board line install writes ("- **Board:** this machine's board address is..."),
+so a developer with no board (or a sprint kit) sees nothing. Targets Windows PowerShell 5.1 and PowerShell 7+.
+Any failure exits 0: a reminder never blocks work. BOARD_REMINDER_ROOT overrides ~/.claude for CLAUDE.md and markers.
 #>
 param([ValidateSet('mark', 'relay')][string]$Mode = 'relay')
 
 $ErrorActionPreference = 'Stop'
 try {
-    $root = if ($env:BOARD_REMINDER_ROOT) { $env:BOARD_REMINDER_ROOT } else { Join-Path $HOME '.claude' }
-    if (-not (Test-Path (Join-Path $root 'board.local.md'))) { exit 0 }
-    $dir = Join-Path $root 'board-reminders'
-    # The relay runs on every prompt, so the common case of no markers stops here.
-    if ($Mode -eq 'relay' -and -not (Test-Path (Join-Path $dir '*'))) { exit 0 }
+    $root = if ($env:BOARD_REMINDER_ROOT) { $env:BOARD_REMINDER_ROOT } else { Join-Path -Path $HOME -ChildPath '.claude' }
+    $dir = Join-Path -Path $root -ChildPath 'board-reminders'
+    # The relay runs on every prompt, so the common case of no markers stops here before reading CLAUDE.md.
+    if ($Mode -eq 'relay' -and -not (Test-Path -Path (Join-Path -Path $dir -ChildPath '*'))) { exit 0 }
+
+    $rulebook = Join-Path -Path $root -ChildPath 'CLAUDE.md'
+    $prefix = "- **Board:** this machine's board address is"
+    $hasBoard = $false
+    if (Test-Path -LiteralPath $rulebook -PathType Leaf) {
+        try {
+            $raw = Get-Content -LiteralPath $rulebook -Raw -Encoding UTF8 -ErrorAction Stop
+            if ($null -ne $raw) {
+                $raw = $raw.TrimStart([char]0xFEFF)
+                foreach ($line in ($raw -split "`r?`n")) {
+                    if ($line.StartsWith($prefix, [System.StringComparison]::Ordinal)) {
+                        $hasBoard = $true
+                        break
+                    }
+                }
+            }
+        } catch {
+            $hasBoard = $false
+        }
+    }
+    if (-not $hasBoard) { exit 0 }
 
     $hook = [Console]::In.ReadToEnd() | ConvertFrom-Json
     $session = "$($hook.session_id)" -replace '[^\w-]', ''

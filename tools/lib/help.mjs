@@ -14,15 +14,24 @@ export const HELP = {
   },
   check: {
     repo: true,
-    summary: 'Build every tool, check the caps and models.json, and compare CLAUDE.md, agents/*.md and the generated commands/*.md with the build',
+    summary: 'Build every tool, check the caps, models.json and the standards archive, and compare every tool\'s build with tests/golden/<tool>/ (a missing, differing or stale golden file or unowned folder fails, naming the source to edit)',
     synopsis: 'check',
     options: {},
   },
   sync: {
     repo: true,
-    summary: 'Regenerate the checked-in CLAUDE.md, agents/*.md and the generated commands/*.md; delete generated agents with no role',
-    synopsis: 'sync',
-    options: {},
+    summary: 'Rebuild and install every tool in activeTools of ~/.orc/config.json, exactly as install --all does (dry run without --apply); writes nothing into this checkout',
+    synopsis: 'sync [--home <dir>] [--apply] [--force] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board]',
+    options: {
+      '--home <dir>': 'home folder (default your home)',
+      '--apply': 'write the files (backs up each replaced file)',
+      '--force': 'replace hand-written or edited files, with a backup',
+      '--profile <name>': 'append profiles/<name>.md (repeatable or comma-separated); recorded in each manifest',
+      '--no-profile': 'clear the profiles recorded at install',
+      '--board <address>': 'this machine\'s board address (with --board-repo); default: the one recorded at install, else board in ~/.orc/config.json (an artifact address there applies to claude-code only)',
+      '--board-repo <dir>': 'the Orc-Dashboard checkout (with --board)',
+      '--no-board': 'clear the board recorded at install',
+    },
   },
   golden: {
     repo: true,
@@ -32,21 +41,21 @@ export const HELP = {
   },
   install: {
     repo: true,
-    summary: 'Install one tool\'s generated files, or with --all every active tool\'s (for claude-code also its hook scripts), into a home folder (dry run without --apply); the rulebook names this checkout as the setup checkout',
+    summary: 'Install one tool\'s generated files, or with --all every active tool\'s (for claude-code also its hook scripts, six workflow commands and orc-permissions skill), into a home folder (dry run without --apply); the rulebook names this checkout as the setup checkout',
     synopsis: 'install (--tool <id> | --all) [--home <dir>] [--apply] [--force] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board] [--sprint-kit [--stack dotnet|node|python]]',
     options: {
       '--tool <id>': 'the adapter to install (this or --all; not all)',
-      '--all': 'every tool in activeTools of ~/.orc/config.json, in order; every refusal is checked for every tool before any is written; the board defaults from board in config.json; the last line names any tool that failed',
-      '--home <dir>': 'home folder (default your home; required for claude-code)',
+      '--all': 'every tool in activeTools of ~/.orc/config.json, in order; every refusal is checked for every tool before any is written; the last line names any tool that failed',
+      '--home <dir>': 'home folder (default your home)',
       '--apply': 'write the files (backs up each replaced file)',
       '--force': 'replace hand-written or edited files, with a backup',
       '--sprint-kit': 'claude-code only: also the sprint skill, the Node git guard hook and a stack permission preset in settings.json (merged, backed up), no board; uninstall removes it and restores what it replaced (docs/interview-machine.md)',
       '--stack <ids>': 'with --sprint-kit: dotnet, node and/or python (default: detected in the current folder)',
       '--profile <name>': 'append profiles/<name>.md (repeatable or comma-separated); recorded in the manifest',
       '--no-profile': 'clear the profiles recorded at install',
-      '--board <address>': 'this machine\'s board address, added to the rulebook (with --board-repo; an artifact address, Claude Code only, needs none)',
+      '--board <address>': 'this machine\'s board address, added to the rulebook (with --board-repo; default: manifest, else board in ~/.orc/config.json; an artifact address applies to claude-code only)',
       '--board-repo <dir>': 'the Orc-Dashboard checkout (with --board)',
-      '--no-board': 'clear the board recorded at install; the clear is recorded, so --all does not add the config.json board back (--board sets one)',
+      '--no-board': 'clear the board recorded at install; the clear is recorded, so the config.json board does not come back (--board sets one)',
     },
   },
   uninstall: {
@@ -55,7 +64,7 @@ export const HELP = {
     synopsis: 'uninstall --tool <id> [--home <dir>] [--apply] [--force]',
     options: {
       '--tool <id>': 'the adapter to uninstall (required; not all)',
-      '--home <dir>': 'home folder (default your home; required for claude-code)',
+      '--home <dir>': 'home folder (default your home)',
       '--apply': 'delete the files',
       '--force': 'also delete files edited since install, after a backup',
     },
@@ -66,12 +75,12 @@ export const HELP = {
     synopsis: 'status (--tool <id> | --all) [--home <dir>] [--profile <name>|--no-profile] [--board <address> --board-repo <dir>|--no-board] [--sprint-kit]',
     options: {
       '--tool <id>': 'the adapter to compare (this or --all; not all)',
-      '--all': 'every tool in activeTools of ~/.orc/config.json, in order (exit code: the worst); the board defaults from board in config.json',
+      '--all': 'every tool in activeTools of ~/.orc/config.json, in order (exit code: the worst)',
       '--sprint-kit': 'compare with a sprint kit (default: when the manifest records one), settings.json entries included',
       '--home <dir>': 'home folder (default your home)',
       '--profile <name>': 'compare with these profiles appended (default: the ones recorded at install)',
       '--no-profile': 'compare with no profiles',
-      '--board <address>': 'compare with this board address (with --board-repo; an artifact address, Claude Code only, needs none)',
+      '--board <address>': 'compare with this board address (with --board-repo; default: manifest, else board in ~/.orc/config.json; an artifact address applies to claude-code only)',
       '--board-repo <dir>': 'the Orc-Dashboard checkout (with --board)',
       '--no-board': 'compare with no board line',
     },
@@ -208,7 +217,7 @@ export const HELP = {
   },
   doctor: {
     repo: true,
-    summary: 'Check ~/.orc/config.json and models.json, each active tool (install state; for a tool with a headless recipe also its binary, --version, sign-in and headless models), the routing table and the board, without writing',
+    summary: 'Check ~/.orc/config.json and models.json, each active tool (install state; for a tool with a headless recipe also its binary, --version, sign-in and headless models), the routing table, the board and a retired ~/.claude/board.local.md, without writing',
     synopsis: 'doctor [--home <dir>] [--json]',
     options: {
       '--home <dir>': 'the home folder the tools install into (default your home)',
@@ -217,12 +226,12 @@ export const HELP = {
   },
   hooks: {
     repo: true,
-    summary: 'Merge the example hooks into <home>/.claude/settings.json (dry run without --apply)',
+    summary: 'Merge the example hooks from adapters/claude-code/ into <home>/.claude/settings.json (dry run without --apply); reports stale .claude/tools/{worklog,peon} entries under the same event without duplicating them. Run it from the checkout you keep: the worklog and peon hook commands point into it',
     synopsis: 'hooks --home <dir> [--apply] [--node]',
     options: {
       '--home <dir>': 'home folder (required; no default)',
       '--apply': 'write the file, after a backup',
-      '--node': 'use hooks.node.example.json (board reminder and git guard on Node, no PowerShell)',
+      '--node': 'use adapters/claude-code/hooks.node.example.json (board reminder and git guard on Node, no PowerShell)',
     },
   },
   standards: {

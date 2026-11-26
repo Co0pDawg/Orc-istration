@@ -21,8 +21,8 @@ Show this as a visible checklist and tick each step as it finishes.
 5. **Cost log.** Draft it with `costlog --session <session id>`:
    - Local board: add `--board <address> --board-repo <board repo>`.
    - Artifact board: read the session doc and every card whose `session` is this one, write them to `<scratchpad>/board-export.json` as `{"sessions": {"<session id>": {...}}, "cards": {"<card id>": {...}}}` with bare ids as keys (`t1`, not `cards/t1`, so they match each event's `card`), and pass `--board-export` with that file.
-   Fill each `TODO` and save it as `log/<date>-<project>-<slug>.md` per `log/TEMPLATE.md`, in the folder that holds `log/TEMPLATE.md`: `~/.claude/orchestration/` (the tool notes' location for local data), else `<setup>/orchestration/`. The orchestrator's context size comes from the status line or `/context`. Target: orchestrator share under 20% of tokens.
-6. **Anomalies.** For anything odd in this task that no rule covers, add one line to `log/anomalies.md` beside the cost logs. Search the file for the same cause first and promote a repeat (`<setup>/orchestration/README.md`, "Anomaly log"). Skip the step when there was nothing.
+   Fill each `TODO` and save it as `~/.orc/log/<date>-<project>-<slug>.md` (`ORC_DATA_DIR` when set), following `<setup>/orchestration/log/TEMPLATE.md`. The orchestrator's context size comes from the status line or `/context`. Target: orchestrator share under 20% of tokens.
+6. **Anomalies.** For anything odd in this task that no rule covers, add one line to `~/.orc/log/anomalies.md` beside the cost logs. Search the file for the same cause first and promote a repeat (`<setup>/orchestration/README.md`, "Anomaly log"). Skip the step when there was nothing.
 7. **Handoff.** Update the task's handoff doc with the decisions, what is done, what is open and the exact next step.
 8. **PR.** Commit only on a feature branch, never on `main` or `develop`. Open a draft PR against the base branch, with the PR footer the tool notes give. Confirm before pushing.
 9. **Board.** Write the commit and PR fields, then mark the session Done with `completed` and a closing `now` (see the `board` skill).

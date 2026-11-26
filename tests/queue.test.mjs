@@ -10,6 +10,10 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { main } from '../tools/orc.mjs';
 import { allowProblem, buildPrompt, classify, prBody, parseGithubRemote, untilDeadline, sessionEnv, lockToken, runCommand, BASE_TOOLS, DENY_TOOLS, FOOTER, TOKEN_PLACEHOLDER, REPORT_LIMIT } from '../tools/lib/queue.mjs';
+import { isolateHome } from './helpers.mjs';
+
+// No test in this file can reach the real home folder: commands that default --home use this scratch one.
+isolateHome();
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORC = path.join(REPO, 'tools', 'orc.mjs');

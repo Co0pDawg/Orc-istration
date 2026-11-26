@@ -223,8 +223,10 @@ Check "APP-10030* exports as APP-10030, UNKNOWN as null" (((@($x.events | Where-
 $sd = Join-Path $dir "sync"; $dry = Join-Path $dir "dry"
 New-Item -ItemType Directory $sd | Out-Null
 foreach ($f in "2026-10-19.csv", "2026-10-19.txt", "2026-11-01.csv", "2026-01-06.csv") { Copy-Item "$PSScriptRoot\test\sync-$f" (Join-Path $sd $f) }
+$orcData = Join-Path $dir "orc-data"; New-Item -ItemType Directory $orcData | Out-Null
+$env:ORC_DATA_DIR = $orcData  # never reads the real ~/.orc/config.json
 $env:WORKLOG_DIR = $sd; $env:TIMELINE_SYNC_STATE = Join-Path $dir "sync-state"; $env:WORKLOG_ADO = "$PSScriptRoot\test\fake-ado.ps1"
-$env:ORC_BOARD_URL = "https://claude.ai/artifact/test-board"  # never reads the real board.local.md
+$env:ORC_BOARD_URL = "https://claude.ai/artifact/test-board"
 $sync ={ param($d) pwsh -NoProfile -File "$PSScriptRoot\sync-timeline.ps1" -Date $d -DryRun $dry 2>&1 | Out-String }
 $o1 = & $sync 2026-10-19; $o2 = & $sync 2026-11-01
 $raw = Get-Content (Join-Path $dry "timeline-2026-10-19.json") -Raw -ErrorAction SilentlyContinue
@@ -256,9 +258,43 @@ $env:FAKE_BOARD_EXIT = "0"
 $o8 = pwsh -NoProfile -File "$PSScriptRoot\sync-timeline.ps1" -Date 2026-11-01 -Force 2>&1 | Out-String
 $calls = @(Get-Content $env:FAKE_BOARD_LOG)
 Check "local board: set timeline/<date> --file <pending> on the address's port, then the file is deleted" ($o8 -match "uploaded timeline/2026-11-01" -and -not (Test-Path $pend) -and $calls.Count -eq 2 -and $calls[1] -eq "set timeline/2026-11-01 --file $pend port=8499")
-$env:ORC_BOARD_URL = "https://claude.ai/artifact/test-board"
+# Config file: reads board.url and board.repo from $ORC_DATA_DIR/config.json when ORC_BOARD_URL / ORC_BOARD_REPO are unset.
+$env:ORC_BOARD_URL = $null; $env:ORC_BOARD_REPO = $null
+@{ version = 1; board = @{ url = "http://localhost:8511"; repo = "$PSScriptRoot\test\fake-board" } } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $orcData "config.json") -Encoding UTF8
+'{"date":"2026-11-01"}' | Set-Content $pend
+$oc1 = pwsh -NoProfile -File "$PSScriptRoot\sync-timeline.ps1" -Date 2026-12-31 2>&1 | Out-String
+Check "config.json: reads board.url and board.repo and uploads" ($oc1 -match "uploaded timeline/2026-11-01 to http://localhost:8511" -and -not (Test-Path $pend) -and (Get-Content $env:FAKE_BOARD_LOG)[-1] -eq "set timeline/2026-11-01 --file $pend port=8511")
+# Config file with local url and no repo: one WARN, file left pending, no throw.
+@{ version = 1; board = @{ url = "http://localhost:8512" } } | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $orcData "config.json") -Encoding UTF8
+'{"date":"2026-11-01"}' | Set-Content $pend
+$oc2 = pwsh -NoProfile -File "$PSScriptRoot\sync-timeline.ps1" -Date 2026-12-31 2>&1 | Out-String
+Check "config.json: local board without repo warns and leaves pending" ($oc2 -match "WARN cannot upload to http://localhost:8512: board\.repo is not set" -and (Test-Path $pend) -and $oc2 -notmatch "FAILED|Exception")
+# Default board repo fallback (<state home>/board when it exists) when board.repo and ORC_BOARD_REPO are unset.
+$defaultBoard = Join-Path $orcData "board"
+Copy-Item -Recurse "$PSScriptRoot\test\fake-board" $defaultBoard
+$ocDef = pwsh -NoProfile -File "$PSScriptRoot\sync-timeline.ps1" -Date 2026-12-31 2>&1 | Out-String
+Check "config.json: falls back to <state home>/board when board.repo is unset" ($ocDef -match "uploaded timeline/2026-11-01 to http://localhost:8512" -and -not (Test-Path $pend) -and (Get-Content $env:FAKE_BOARD_LOG)[-1] -eq "set timeline/2026-11-01 --file $pend port=8512")
+Remove-Item -Recurse -Force $defaultBoard
+# Malformed config.json: logs WARN cannot read ...; no board upload (and never logs "board.repo is not set" even with ORC_BOARD_URL set).
+'{ not json' | Set-Content (Join-Path $orcData "config.json") -Encoding UTF8
+'{"date":"2026-11-01"}' | Set-Content $pend
+$ocBad1 = pwsh -NoProfile -File "$PSScriptRoot\sync-timeline.ps1" -Date 2026-12-31 2>&1 | Out-String
+Check "config.json: malformed JSON logs WARN cannot read and leaves pending" ($ocBad1 -match "WARN cannot read .*config\.json: .+; no board upload" -and (Test-Path $pend) -and $ocBad1 -notmatch "board\.repo is not set")
+$env:ORC_BOARD_URL = "http://localhost:8512"
+$ocBad2 = pwsh -NoProfile -File "$PSScriptRoot\sync-timeline.ps1" -Date 2026-12-31 2>&1 | Out-String
+Check "config.json: malformed JSON with ORC_BOARD_URL does not log board.repo is not set" ($ocBad2 -match "WARN cannot read .*config\.json: .+; no board upload" -and $ocBad2 -notmatch "board\.repo is not set" -and (Test-Path $pend))
+$env:ORC_BOARD_URL = $null
+# Blank or non-string board.url in config.json: logged and leaves pending.
+foreach ($badUrl in @('{"version":1,"board":{"url":"   "}}', '{"version":1,"board":{"url":42}}')) {
+    $badUrl | Set-Content (Join-Path $orcData "config.json") -Encoding UTF8
+    $ocUrl = pwsh -NoProfile -File "$PSScriptRoot\sync-timeline.ps1" -Date 2026-12-31 2>&1 | Out-String
+    Check "config.json: invalid board.url ($badUrl) logs WARN and leaves pending" ($ocUrl -match "WARN invalid board\.url in .*config\.json: .+; no board upload" -and (Test-Path $pend))
+}
+Remove-Item (Join-Path $orcData "config.json")
+$env:ORC_BOARD_URL = "https://claude.ai/artifact/test-board"; $env:ORC_BOARD_REPO = "$PSScriptRoot\test\fake-board"
+$nBeforeArt = @(Get-Content $env:FAKE_BOARD_LOG).Count
 $o9 = pwsh -NoProfile -File "$PSScriptRoot\sync-timeline.ps1" -Date 2026-11-01 -Force 2>&1 | Out-String
-Check "artifact board: the pending file stays for a Claude session and the CLI is not called" ((Test-Path $pend) -and @(Get-Content $env:FAKE_BOARD_LOG).Count -eq 2)
+Check "artifact board: the pending file stays for a Claude session and the CLI is not called" ((Test-Path $pend) -and @(Get-Content $env:FAKE_BOARD_LOG).Count -eq $nBeforeArt)
 # Only an exact localhost / 127.0.0.1 host is local. A date with no log builds nothing, so only the upload step runs.
 $upload = { param($url) $env:ORC_BOARD_URL = $url; $n = @(Get-Content $env:FAKE_BOARD_LOG).Count
     if (-not (Test-Path $pend)) { '{"date":"2026-11-01"}' | Set-Content $pend }
@@ -306,7 +342,7 @@ Check "sync notes: roll-up beats a commit subject" ($n.notes.'APP-10004' -eq "De
 Check "sync notes: no commit falls back to ADO; an old string cache entry gets its title" ($n.notes.'APP-10003' -eq "User Story: Fake 10003" -and (Get-Content (Join-Path $env:TIMELINE_SYNC_STATE "types.json") -Raw) -match '"title"')
 Check "sync notes: no prompt text in the doc" ($rawN -notmatch 'secret prompt')
 Check "sync blocks: PM times, and a 12:00 AM end after a PM start is next midnight" ($rawN.Contains('{"start":"2026-10-21T13:15:00-04:00","end":"2026-10-21T13:45:00-04:00","ticket":"APP-10004","text":"Development: Afternoon block."},{"start":"2026-10-21T23:30:00-04:00","end":"2026-10-22T00:00:00-04:00","ticket":"APP-10004","text":"Testing: Late block."}]'))
-$env:WORKLOG_DIR = $dir; $env:TIMELINE_SYNC_STATE = $null; $env:WORKLOG_ADO = $null; $env:ORC_BOARD_URL = $null
+$env:WORKLOG_DIR = $dir; $env:TIMELINE_SYNC_STATE = $null; $env:WORKLOG_ADO = $null; $env:ORC_BOARD_URL = $null; $env:ORC_DATA_DIR = $null
 
 # --- ADO path via a fake ado.ps1 (WORKLOG_ADO) and a claude stub whose entry 2 echoes the wrong start time ---
 New-Item -ItemType Directory (Join-Path $dir "bin") | Out-Null

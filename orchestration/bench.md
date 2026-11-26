@@ -8,7 +8,7 @@ The cases are invented for the bench, each built around one mechanism a builder 
 
 Run every case, as a baseline and as a variant, before keeping any of these changes:
 
-- `roles/builder.md` or `roles/refuter.md`, or the shared rules they follow (`AGENTS.md`, the marching orders);
+- `core/roles/builder.md` or `core/roles/refuter.md`, or the shared rules they follow (`core/AGENTS.md`, the marching orders);
 - `models.json`, when it changes the model or effort of the builder's or refuter's tier;
 - a tier experiment, such as a Mid-tier refuter (`--models` with an override file).
 
@@ -50,7 +50,7 @@ A new case must be sound without a model: for `build`, the `Accept:` command fai
 ## Scoring rules
 
 - **Build:** after the agent finishes, `accept/` is copied in and the `Accept:` command runs in the scratch repo, with no shell: it is split on spaces (no quoting), and a leading `node` is the Node running orc. Exit 0 is `pass`, anything else `fail`.
-- **Refute verdict:** the last line of the agent's final text in the refuter report format (`roles/refuter.md`: `VERDICT: ACCEPT` or `VERDICT: REWORK`, at the start of the line; `**` or backtick decoration is allowed). The template line itself (`VERDICT: ACCEPT | REWORK`) and a bare `ACCEPT` or `REWORK` are not verdicts. No verdict is an `error`. A refute run is `pass` when the verdict equals `Expect:`, else `fail`; defects found are reported apart and do not change the outcome.
+- **Refute verdict:** the last line of the agent's final text in the refuter report format (`core/roles/refuter.md`: `VERDICT: ACCEPT` or `VERDICT: REWORK`, at the start of the line; `**` or backtick decoration is allowed). The template line itself (`VERDICT: ACCEPT | REWORK`) and a bare `ACCEPT` or `REWORK` are not verdicts. No verdict is an `error`. A refute run is `pass` when the verdict equals `Expect:`, else `fail`; defects found are reported apart and do not change the outcome.
 - **Defects:** for `Expect: REWORK`, each `expected.md` row is `found` when the final text anywhere cites `path:line` (or `path:a-b`) in the row's file with the first line inside one of its ranges, using the corpus matching (`review/corpus.md`). The scratch repo's own path is removed first, so an absolute citation counts.
 - **Errors:** a non-zero exit, a timeout (`--timeout`, default 900 seconds, kills the process tree), a budget stop or any other error the CLI's result JSON reports (a non-success `subtype`, or `is_error`), output that is not the result JSON, a tool that cannot start and a scratch repo that cannot be set up are each recorded with `outcome: "error"` and the reason. An error is never a pass. Its tokens and cost are still recorded when the result JSON carries them, since the money was spent. For a refute case the result file still records the verdict and defects read from any final text, for diagnosis, but the report gives them no weight (below).
 - **Report columns**, per variant over all its runs:

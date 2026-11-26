@@ -24,8 +24,8 @@ Total: 2.00 hours
 ```
 
 ```
-pwsh ~/.claude/tools/worklog/worklog.ps1            # today
-pwsh ~/.claude/tools/worklog/worklog.ps1 2026-09-22
+pwsh <setup>/extras/worklog/worklog.ps1            # today
+pwsh <setup>/extras/worklog/worklog.ps1 2026-09-22
 ```
 
 PR actions taken in Azure DevOps count as time: `ado-actions.ps1` reads the day's PR threads for the signed-in user's votes, written comments and completions, and each becomes a prompt event in its own `ado-<pr>-<HHmmss>` session, billed to the PR's ticket by the same rule as other PR evidence. An action counts only in a 15-minute slot no session holds, so it never moves existing time, and the review time before a vote is not inferred. Skipped as automation under the user's identity: a completion on a PR with auto-complete set, a comment starting "Scheduled conflict sweep", and a comment within 2 minutes of a session's logged `pr-comment-add` on that PR. Work item edits are not counted: their revisions come mostly from sessions and auto-close cascades and cannot be told from hand edits, so they stay on the "Touched in ADO" line. To drop one action, add `ado-<pr>-<HHmmss> -` to `<date>.map`. A failed read warns and leaves the actions out.
@@ -38,20 +38,20 @@ Descriptions come from `claude -p --model sonnet` (haiku fallback). To use anoth
 
 ## Install
 
-Add to `hooks` in `~/.claude/settings.json`:
+`node tools/orc.mjs hooks --home <your home> --apply` wires these hooks from `adapters/claude-code/settings.example.json` pointing at `<setup>/extras/worklog/log-event.ps1`. Or add to `hooks` in `~/.claude/settings.json` by hand:
 
 ```json
 "UserPromptSubmit": [
   { "matcher": "", "hooks": [ { "type": "command", "async": true, "timeout": 10,
-    "command": "powershell -NoProfile -NonInteractive -File \"C:\\src\\worklog\\log-event.ps1\" -Kind prompt" } ] }
+    "command": "powershell -NoProfile -NonInteractive -File \"<setup>/extras/worklog/log-event.ps1\" -Kind prompt" } ] }
 ],
 "Stop": [
   { "matcher": "", "hooks": [ { "type": "command", "async": true, "timeout": 10,
-    "command": "powershell -NoProfile -NonInteractive -File \"C:\\src\\worklog\\log-event.ps1\" -Kind stop" } ] }
+    "command": "powershell -NoProfile -NonInteractive -File \"<setup>/extras/worklog/log-event.ps1\" -Kind stop" } ] }
 ],
 "PostToolUse": [
   { "matcher": "Bash|PowerShell|Agent", "hooks": [ { "type": "command", "async": true, "timeout": 10,
-    "command": "powershell -NoProfile -NonInteractive -File \"C:\\src\\worklog\\log-event.ps1\" -Kind tool" } ] }
+    "command": "powershell -NoProfile -NonInteractive -File \"<setup>/extras/worklog/log-event.ps1\" -Kind tool" } ] }
 ]
 ```
 
@@ -88,11 +88,11 @@ pwsh -NoProfile -File sync-timeline.ps1 -Date 2026-10-19 -DryRun C:\temp\tl   # 
 
 ### Uploading
 
-On a local board (`ORC_BOARD_URL`, else the URL in `~/.claude/board.local.md`, starts with `http://localhost` or `http://127.0.0.1`), `sync-timeline.ps1` uploads each pending file itself: `node <board repo>/local/board.js set timeline/<date> --file <file>`, with the board repo from `ORC_BOARD_REPO` (default `~/.claude/orchestration/board`) and `ORC_BOARD_PORT` from the address. It deletes the file only when the CLI exits 0 and leaves it pending otherwise.
+On a local board (`ORC_BOARD_URL`, else `board.url` in `~/.orc/config.json` or `$ORC_DATA_DIR/config.json`, starts with `http://localhost` or `http://127.0.0.1`), `sync-timeline.ps1` uploads each pending file itself: `node <board repo>/local/board.js set timeline/<date> --file <file>`, with the board repo from `ORC_BOARD_REPO` (else `board.repo` in the same `config.json`, else `~/.orc/board` — or `$ORC_DATA_DIR/board` — if that folder exists) and `ORC_BOARD_PORT` from the address. It deletes the file only when the CLI exits 0 and leaves it pending otherwise.
 
 With an artifact board, a Claude session uploads each pending file in `~/.claude/timeline-sync/pending/`:
 
-1. ArtifactData `get` with url your board's URL (`~/.claude/board.local.md`), collection `timeline`, doc_id = the file's date.
+1. ArtifactData `get` with url your board's URL (from the Board line of your rulebook / `~/.orc/config.json`), collection `timeline`, doc_id = the file's date.
 2. ArtifactData `set` with the same url, collection and doc_id, `file_path` = the pending file, and `if_version` = the version from step 1 when the doc exists.
 3. Delete the pending file.
 
