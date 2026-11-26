@@ -42,6 +42,7 @@ Searched: <secondary-artifacts' Searched: line, verbatim>   <!-- only when secon
 - A literal pipe inside a cell is written `\|`. The parser splits on unescaped pipes only.
 - **Runtime checks** lists the report's runtime checks. Result starts `_not run_`; whoever runs the check (the developer, or a workflow's live step) sets `pass` or `fail — <what was seen>`. The panel never runs the app.
 - `calibration` reads only tables whose header names `Severity`, `Agent` and, last, `Verdict`, and the escaped-defects table below. Any other table in the file, Runtime checks included, is ignored. A clean review keeps the heading and has no table.
+- **`## Second review`**, appended by wrap-up on a Full change, holds plain lines: the second reviewer's tool, the reviewed commit, and its verdict or why it did not run (`orchestration/wrap-up.md`). `calibration` ignores it.
 
 **Escaped defects.** A defect the review should have caught but did not is appended to the log of the review that missed it, under its own heading:
 
