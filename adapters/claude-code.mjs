@@ -17,6 +17,7 @@ const capabilityTools = {
 const ASK = 'ask the developer with `AskUserQuestion`.';
 const ASK_ONLY = 'Ask the developer with `AskUserQuestion`.';
 const ROUTED_PANEL = 'A role that `review/PROCEDURE.md` "Routed agents" sends to another tool is the exception: run it with `orc dispatch` in the shell as that section says.';
+const ROUTED_START = 'A role that `review/PROCEDURE.md` "Routed agents" sends to another tool, or the refuter that `orchestration/wrap-up.md` "Second reviewer (Full)" sends to another tool, is the exception: run it with `orc dispatch` in the shell as that section says.';
 const BASE = ['Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit', 'AskUserQuestion'];
 
 // Claude Code's own part of each wrapper: the command's tool list, and notes on how to ask, dispatch and run in this
@@ -47,7 +48,7 @@ const procedureNotes = {
   start: {
     tools: [...BASE, 'Agent', 'SendMessage', 'EnterPlanMode', 'ExitPlanMode'],
     notes:
-      `Run the grill and the review panel in this session by following \`CHECKOUT/workflows/grill.md\` and \`CHECKOUT/review/PROCEDURE.md\`; launch the panel's explorers in one message, each with \`run_in_background: true\`. Plan with EnterPlanMode and ExitPlanMode; dispatch every agent by its roster name as \`subagent_type\`; resume a builder with SendMessage; publish a Step 9 UI mockup as a private artifact; ${ASK} ${ROUTED_PANEL}`,
+      `Run the grill and the review panel in this session by following \`CHECKOUT/workflows/grill.md\` and \`CHECKOUT/review/PROCEDURE.md\`; launch the panel's explorers in one message, each with \`run_in_background: true\`. Plan with EnterPlanMode and ExitPlanMode; dispatch every agent by its roster name as \`subagent_type\`; resume a builder with SendMessage; publish a Step 9 UI mockup as a private artifact; ${ASK} ${ROUTED_START}`,
   },
   grill: {
     tools: [...BASE, 'Agent'],

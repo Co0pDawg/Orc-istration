@@ -20,6 +20,7 @@ const capabilityTools = {
 // is no subagent-stop hook; the artifact board is Claude Code only.
 const DISPATCH = "Dispatch each roster agent with `invoke_subagent` and its roster name, as the tool notes' Dispatch line says.";
 const ROUTED_PANEL = 'A role that `review/PROCEDURE.md` "Routed agents" sends to another tool is the exception: run it with `orc dispatch` in the shell as that section says.';
+const ROUTED_START = 'A role that `review/PROCEDURE.md` "Routed agents" sends to another tool, or the refuter that `orchestration/wrap-up.md` "Second reviewer (Full)" sends to another tool, is the exception: run it with `orc dispatch` in the shell as that section says.';
 const NO_METRICS = 'Skip every metrics capture step: `metrics capture` reads Claude Code transcripts only, so it is unsupported here.';
 const NO_STOP_HOOK = 'There is no subagent-stop hook here, so update the board session yourself after every agent report.';
 const procedureNotes = {
@@ -28,7 +29,7 @@ const procedureNotes = {
   'wrap-up': [NO_STOP_HOOK],
   sprint: [DISPATCH],
   'repo-standards': [DISPATCH],
-  start: [DISPATCH, ROUTED_PANEL, NO_METRICS],
+  start: [DISPATCH, ROUTED_START, NO_METRICS],
   grill: [DISPATCH],
   'draft-pr': [],
   'peer-review': [DISPATCH, ROUTED_PANEL, NO_METRICS],
