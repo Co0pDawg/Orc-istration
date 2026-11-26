@@ -16,6 +16,7 @@ const capabilityTools = {
 
 const ASK = 'ask the developer with `AskUserQuestion`.';
 const ASK_ONLY = 'Ask the developer with `AskUserQuestion`.';
+const ROUTED_PANEL = 'A role that `review/PROCEDURE.md` "Routed agents" sends to another tool is the exception: run it with `orc dispatch` in the shell as that section says.';
 const BASE = ['Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit', 'AskUserQuestion'];
 
 // Claude Code's own part of each wrapper: the command's tool list, and notes on how to ask, dispatch and run in this
@@ -46,7 +47,7 @@ const procedureNotes = {
   start: {
     tools: [...BASE, 'Agent', 'SendMessage', 'EnterPlanMode', 'ExitPlanMode'],
     notes:
-      'Run the grill and the review panel in this session by following `CHECKOUT/workflows/grill.md` and `CHECKOUT/review/PROCEDURE.md`; launch the panel\'s explorers in one message, each with `run_in_background: true`. Plan with EnterPlanMode and ExitPlanMode; dispatch every agent by its roster name as `subagent_type`; resume a builder with SendMessage; publish a Step 9 UI mockup as a private artifact; ' + ASK,
+      `Run the grill and the review panel in this session by following \`CHECKOUT/workflows/grill.md\` and \`CHECKOUT/review/PROCEDURE.md\`; launch the panel's explorers in one message, each with \`run_in_background: true\`. Plan with EnterPlanMode and ExitPlanMode; dispatch every agent by its roster name as \`subagent_type\`; resume a builder with SendMessage; publish a Step 9 UI mockup as a private artifact; ${ASK} ${ROUTED_PANEL}`,
   },
   grill: {
     tools: [...BASE, 'Agent'],
@@ -56,14 +57,14 @@ const procedureNotes = {
   'peer-review': {
     tools: [...BASE, 'Agent', 'SendMessage'],
     notes:
-      'Run the review panel in this session by following `CHECKOUT/review/PROCEDURE.md`, launching its explorers in one message, each with `run_in_background: true`; dispatch every agent by its roster name as `subagent_type`; ' + ASK,
+      `Run the review panel in this session by following \`CHECKOUT/review/PROCEDURE.md\`, launching its explorers in one message, each with \`run_in_background: true\`; dispatch every agent by its roster name as \`subagent_type\`; ${ASK} ${ROUTED_PANEL}`,
   },
   create: { tools: BASE.filter((t) => t !== 'Edit'), notes: ASK_ONLY },
   'fix-ci': { tools: [...BASE, 'Agent', 'SendMessage'], notes: `Run the Step 7 poll with \`run_in_background: true\`; ${ASK}` },
   'pre-pr-review': {
     tools: ['Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit', 'Agent', 'SendMessage', 'AskUserQuestion'],
     notes:
-      'Dispatch each explorer and the verifier by its roster name as `subagent_type`, never `general-purpose`; launch all selected explorers in one message, each with `run_in_background: true`, so they run in parallel; pass a tier override as `model:` (the Tiers line of the tool notes maps tiers to models); resume an explorer with SendMessage; ' + ASK,
+      `Dispatch each explorer and the verifier by its roster name as \`subagent_type\`, never \`general-purpose\`; launch all selected explorers in one message, each with \`run_in_background: true\`, so they run in parallel; pass a tier override as \`model:\` (the Tiers line of the tool notes maps tiers to models); resume an explorer with SendMessage; ${ASK} ${ROUTED_PANEL}`,
   },
   'review-verdict': { tools: ['Bash', 'Glob', 'Grep', 'Read', 'Edit', 'AskUserQuestion'], notes: 'Ask for a missing reason with `AskUserQuestion`.' },
   'calibration-report': {

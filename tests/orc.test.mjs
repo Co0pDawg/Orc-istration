@@ -1260,3 +1260,25 @@ test('D3d: an identical hand-copied static file stays unrecorded, is kept after 
   assert.ok(mf3.files['.claude/skills/orc-permissions/SKILL.md'], 'now recorded in manifest');
   assert.equal((await run(['status', '--tool', 'claude-code', '--repo', copy, '--home', home, '--no-board'])).code, 0);
 });
+
+test('panel commands and skills on Claude Code and Antigravity note the Routed agents orc dispatch exception', async () => {
+  const built = Object.fromEntries((await buildGolden(REPO)).map((r) => [r.adapter.id, r.files]));
+  const panel = ['start', 'peer-review', 'pre-pr-review'];
+  const nonPanel = ['grill', 'draft-pr', 'board'];
+  for (const [tool, pathFor] of [
+    ['claude-code', (name) => (PROCEDURES.find((p) => p.name === name).kind === 'routine' ? `.claude/skills/${name}/SKILL.md` : `.claude/commands/${name}.md`)],
+    ['antigravity', (name) => `.gemini/config/skills/${name}/SKILL.md`],
+  ]) {
+    for (const name of panel) {
+      const file = built[tool].find((f) => f.path === pathFor(name));
+      assert.ok(file, `${tool}: ${name} generated`);
+      assert.match(file.content, /review\/PROCEDURE\.md.*"Routed agents"/, `${tool}/${name} names Routed agents`);
+      assert.match(file.content, /orc dispatch/, `${tool}/${name} names orc dispatch`);
+    }
+    for (const name of nonPanel) {
+      const file = built[tool].find((f) => f.path === pathFor(name));
+      assert.ok(file, `${tool}: ${name} generated`);
+      assert.doesNotMatch(file.content, /Routed agents/, `${tool}/${name} does not mention Routed agents`);
+    }
+  }
+});

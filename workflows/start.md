@@ -153,6 +153,7 @@ Pick the tier by the rulebook's "Pre-PR review tiers" (`node <checkout>/tools/or
 - A fix this workflow applies on its own, without asking, is logged in the review run log with the `(agent)` verdict source (`(developer)` is for a verdict the developer gave); Step 16 lists those fixes for the developer to confirm.
 - Ask the developer only when a finding needs a real decision: a fix that changes intended behavior, contradicts Step 6 or Step 9, or trades off two reasonable approaches.
 - A rejected finding (false positive, or not worth fixing) is named in the summary, never dropped silently.
+- For a Full change, after the Step 13 fixes are committed and pushed, run the "Second reviewer (Full)" step of `orchestration/wrap-up.md` (using the setup checkout's path); handle any REWORK through Step 10.
 
 ## Step 14 - Live verification
 
@@ -174,7 +175,7 @@ Report:
 
 - The ticket (id, title, URL), `TARGET_ID` and whether it is the ticket or a child, and the branch with its start point and `BASE`. For a hotfix branch, repeat what the rulebook's hotfix flow says happens next (where it merges, what else must receive it).
 - What was built, task by task, with each commit's short sha.
-- The grill's decisions (or where they sit in the plan), the full test result, and the review tier and verdict, with what was fixed and what was left to the developer.
+- The grill's decisions (or where they sit in the plan), the full test result, the review tier and verdict (with what was fixed and what was left to the developer), and for a Full change the second reviewer's tool and verdict (or that it did not run, and why).
 - The findings fixed with the `(agent)` verdict source, for the developer to confirm, and each runtime check's result from Step 14 (or "not run" and why).
 - The durable rules written and declined.
 - For a stopped run: tasks committed, tasks not done with reasons, and uncommitted edits left in the tree.

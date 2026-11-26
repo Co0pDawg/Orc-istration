@@ -14,7 +14,7 @@ This file is the single source for the run-log format, the verdict values, how v
 # Review Log: <TARGET> → <BASE>
 
 Date: <YYYY-MM-DD>
-Agents: <explorers run, each with its lanes — naming `on <tool>` for any routed agent, e.g. review-code-explorer (code-reviewer), review-failure-explorer on codex (silent-failure-hunter), review-verifier; append `ran in-session: <tool> failed (<reason>)` for any routed fallback>
+Agents: <explorers run, each with its lanes — naming `on <tool>` for any routed agent, e.g. review-code-explorer (code-reviewer), review-failure-explorer on codex (silent-failure-hunter), review-verifier; append `<role> ran in-session: <tool> failed (<reason>)` for any routed fallback>
 Leads: <N raised, N confirmed, N plausible, N refuted>
 Verification: <N checked, N confirmed, N plausible, N refuted>   <!-- only when finding verification ran -->
 Verdict: <verdict> — N issue / N warning / N suggestion / N nit / N question
@@ -36,7 +36,7 @@ Searched: <secondary-artifacts' Searched: line, verbatim>   <!-- only when secon
 - One row per finding in the report, numbered from 1, then one row per finding the verifier refuted in finding verification (the report's **Refuted by verification**), with its verdict already set as above.
 - **Severity** is one of `issue`, `warning`, `suggestion`, `nit`, `question`.
 - **Agent** holds exact lane names, never an explorer name: `code-reviewer`, `architecture-reviewer`, `type-design-analyzer`, `code-simplifier`, `silent-failure-hunter`, `comment-analyzer`, `pr-test-analyzer`, `ticket-coverage`, `secondary-artifacts`, `ui-test-reviewer`. A merged finding lists its lanes comma-separated (`code-reviewer, silent-failure-hunter`), with no other format, so per-lane keys stay stable. Use the lane tag on each finding.
-- On the **`Agents:`** header line, name the tool of every routed agent (`<role> on <tool> (<lanes>)`, e.g. `review-failure-explorer on codex (silent-failure-hunter)`, or `review-verifier on codex`), and note any routed fallback as `ran in-session: <tool> failed (<reason>)`. `calibration` and `metrics` ignore the `Agents:` header line and read lane keys only from the finding table's **Agent** column.
+- On the **`Agents:`** header line, name the tool of every routed agent (`<role> on <tool> (<lanes>)`, e.g. `review-failure-explorer on codex (silent-failure-hunter)`, or `review-verifier on codex`), and note any routed fallback as `<role> ran in-session: <tool> failed (<reason>)`. `calibration` ignores the `Agents:` header line and reads lane keys only from the finding table's **Agent** column; `metrics capture` reads `<role> on <tool>` entries on `Agents:` to mark mixed-tool runs as partial (`review/metrics.md`).
 - **Where** is `file:line`, or the spec item id for a finding about a requirement.
 - **Verdict** is the last column and starts `_pending_`.
 - A literal pipe inside a cell is written `\|`. The parser splits on unescaped pipes only.

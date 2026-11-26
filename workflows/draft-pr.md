@@ -75,7 +75,7 @@ Follow the repo's PR guidelines (its rulebook or documentation map names them) f
 4. **Assert only what the diff shows.** Naming the tests the diff adds is fine; saying they pass is not. Everything that needs proving goes into How to test as a reviewer step.
 5. **Screenshots:** for a UI change, put `**[SCREENSHOT NEEDED: <what to capture>]**` where the image belongs (bold text, since some hosts hide HTML comments) and list every marker in the summary.
 6. **Review focus:** only when something is genuinely uncertain or easy to miss.
-7. **Notes:** from the diff only (schema or migration changes, new config keys, feature flags, shared-contract changes), a bullet only when the thing is present. Never write that something is absent.
+7. **Notes:** from the diff only (schema or migration changes, new config keys, feature flags, shared-contract changes), a bullet only when the thing is present. Never write that something is absent. Exception: when this task ran (or attempted) wrap-up's second reviewer step, include a bullet naming the second reviewer's tool, reviewed commit and verdict, or that it did not run.
 8. **ASCII punctuation only:** no em or en dashes, curly quotes or ellipsis characters; use ` - `, straight quotes and `...`. Write it right the first time: a description is visible from the moment the PR exists.
 9. End with any line the rulebook requires on every PR description.
 

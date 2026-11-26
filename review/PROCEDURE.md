@@ -207,17 +207,18 @@ Note each explorer's agent id; lead routing resumes them.
 
 ### Routed agents
 
-Before launching, read `routing` from the shared `config.json` (under `ORC_DATA_DIR` when set, else `~/.orc/`). A role's own `routing` entry is either a plain tool id string or a list of tool ids; its first tool is that string or the list's first item. Any explorer or `review-verifier` whose own `routing` entry names first a tool other than the one the orchestrator is running in is dispatched headlessly there; the `fallback` key alone never reroutes a role. With no config or no such entry, nothing changes.
+Before launching, read `routing` from the shared `config.json` (under `ORC_DATA_DIR` when set, else `~/.orc/`). If `config.json` exists but cannot be read or parsed, tell the user and note it in the Step 4 report (never report it as no route), and launch in-session. Otherwise, a role's own `routing` entry is either a plain tool id string or a list of tool ids; its first tool is that string or the list's first item. Any explorer or `review-verifier` whose own `routing` entry names first a tool other than the one the orchestrator is running in is dispatched headlessly there; the `fallback` key alone never reroutes a role. With no config or no such entry, nothing changes.
 
-- **Command:** run from the reviewed repo's root, in the background where the tool can, with stdout saved to a file outside the reviewed diff (under `<scratchpad>` or `.orc/tmp/`):
+- **Command:** run from the reviewed repo's root, in the background where the tool can, saving stdout only to a file outside the reviewed repo (the tool's scratch folder, or the system temp folder when it has none) and stderr to a separate file there:
   ```
   node <CHECKOUT>/tools/orc.mjs dispatch --tool <that tool> --role <role> --brief <prompt file> --no-lint --timeout 1800
   ```
-- **Prompt file:** write it outside the reviewed diff (under `<scratchpad>` or `.orc/tmp/`). Put in it the same items an in-session prompt holds (for an explorer, the items above; for `review-verifier`, the lead-routing, finding-verification or severity-review items below), plus explicit orders to report inline, change no file and write no board. Pass `--no-lint` because an explorer or verifier prompt is not a marching-orders brief.
+  `tools/orc.mjs` passes stdout through unchanged; for a tool such as Antigravity that prints one JSON object whose `response` string holds the report, read the `response` string as the report before any format check.
+- **Prompt file:** write it outside the reviewed repo (the tool's scratch folder, or the system temp folder when it has none). Put in it the same items an in-session prompt holds (for an explorer, the items above; for `review-verifier`, the lead-routing, finding-verification or severity-review items below), plus explicit orders to report inline, change no file and write no board. Pass `--no-lint` because an explorer or verifier prompt is not a marching-orders brief.
 - **Tier override:** when Step 3's model choice overrides the agent's tier, pass `--model <slug>` with that tool's model for the chosen tier (from `models.json`, `~/.orc/models.json` or `models.local.json`, using `headless.<tier>` when defined for that tool). With `--tool`, `--model` replaces only the model passed to that tool and leaves the role's or tier's effort unchanged.
 - **No resume:** a routed agent cannot be resumed. Leads owned by a routed explorer go to `review-verifier`, and when `review-verifier` is routed each verifier step launches a fresh run.
-- **Fallback on failure:** if the run cannot start, exits non-zero or returns no report in the expected format, launch the same role in-session as usual and note `ran in-session: <tool> failed (<reason>)` in both the Step 4 report and the Step 5 run log.
-- **Clean-tree check:** from the repo root, record before launching and compare after each routed agent ends: `git rev-parse HEAD`; `git rev-parse --abbrev-ref HEAD`; `git status --porcelain --untracked-files=all -- . ':!.orc/'`; the `git hash-object` of a file written by `git diff HEAD --binary --output=<file outside the repo> -- . ':!.orc/'`; and the `git hash-object` of each file listed by `git ls-files --others --exclude-standard -- . ':!.orc/'`. A configured run-log folder is excluded in place of `.orc/`, as in Step 1. Gitignored files are not covered. Report any difference to the user and do not revert it.
+- **Fallback on failure:** if the run cannot start, exits non-zero or returns no report in the expected format, launch the same role in-session as usual and note `<role> ran in-session: <tool> failed (<reason>)` in both the Step 4 report and the Step 5 run log.
+- **Clean-tree check:** from the repo root, record before launching and compare after each routed agent ends (writing the check's output files outside the reviewed repo, in the tool's scratch folder or the system temp folder when it has none): `git rev-parse HEAD`; `git rev-parse --abbrev-ref HEAD`; `git status --porcelain --untracked-files=all -- . ':!.orc/'`; the `git hash-object` of a file written by `git diff HEAD --binary --output=<file outside the repo> -- . ':!.orc/'`; the `git hash-object` of a file written by `git diff --cached HEAD --binary --output=<file outside the repo> -- . ':!.orc/'`; and the `git hash-object` of each file listed by `git ls-files --others --exclude-standard -- . ':!.orc/'`. A configured run-log folder is excluded in place of `.orc/`, as in Step 1. Gitignored files are not covered. If any of these commands fails, report the check as inconclusive, naming the command and path; never treat it as unchanged. Report any difference to the user and do not revert it.
 
 ### Waiting
 
@@ -327,15 +328,13 @@ approved | needs changes | informational — N issue / N warning / N suggestion 
 Leads: N raised, N confirmed, N plausible, N refuted
 Verification: N checked, N confirmed, N plausible, N refuted
 Severity review: N raised
-Agents: <routed agents, e.g. review-failure-explorer on codex (silent-failure-hunter), or ran in-session: <tool> failed (<reason>)>
+Agents: <routed agents, e.g. review-failure-explorer on codex (silent-failure-hunter), or <role> ran in-session: <tool> failed (<reason>)>
 ```
 
 **Ticket coverage** (only with a `BRIEF`) has one row per id from the brief's Spec items table, plus the edge-case
 rows (`<id>a`) the agents added. **Static** is `ticket-coverage`'s status. Omit **Not verified** when it listed
 nothing. Omit **Runtime checks**, **Refuted by verification** and the `Verification:` line when they would be empty.
-Include `Agents:` whenever any agent was routed, naming the tool of each routed agent (for example
-`review-failure-explorer on codex (silent-failure-hunter)` or `review-verifier on codex`) and any
-`ran in-session: <tool> failed (<reason>)` fallback note; omit it when every agent ran in-session without routing.
+Include `Agents:` only when a role was routed (including fallbacks), and note any unreadable or unparseable `config.json` in the report; omit `Agents:` when every agent ran in-session without routing.
 The counts in the first Verdict line leave refuted findings out.
 
 ### Runtime checks
@@ -358,9 +357,7 @@ and list anything the description still has to cover.
 ## Step 5 — Log the run
 
 Write the run log record exactly as `review/calibration.md` specifies (its location, file name, header lines, table
-and carry-forward from an earlier run of the same branch). On the log's `Agents:` line, name the tool of every routed
-agent (for example `review-failure-explorer on codex (silent-failure-hunter)` or `review-verifier on codex`) and note
-any routed fallback as `ran in-session: <tool> failed (<reason>)`. One row per finding in the report, plus one row per
+and carry-forward from an earlier run of the same branch). One row per finding in the report, plus one row per
 finding under **Refuted by verification**, its verdict already set to
 `false-positive — refuted by verifier: <evidence> (agent)`. The agent cell uses
 exact **lane** names (the tag on each finding, never an explorer name), comma-separated for merged findings, so

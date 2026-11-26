@@ -269,6 +269,42 @@ export function measureAgent(ev, since, until, roots, agentType) {
 // One lane's verdict counts, in the run report and in the report's Review lanes table.
 const laneCounter = () => ({ total: 0, confirmed: 0, falsePositive: 0, wontFix: 0, notActioned: 0, pending: 0, agent: 0 });
 
+// Read routed agents (`<role> on <tool>`) from a run log's `Agents:` header line.
+// A `ran in-session:` fallback entry does not count.
+export function routedAgentsFromLog(text) {
+  let value = null;
+  for (const line of String(text).split(/\r?\n/)) {
+    if (/^\s*\|/.test(line) || /^##\s/.test(line)) break;
+    const m = /^\s*Agents:\s*(.+)$/.exec(line);
+    if (m) {
+      value = m[1];
+      break;
+    }
+  }
+  if (!value) return [];
+  const parts = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === '(') depth++;
+    else if (ch === ')' && depth > 0) depth--;
+    else if (depth === 0 && (ch === ',' || ch === ';')) {
+      parts.push(value.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(value.slice(start));
+  const routed = [];
+  for (const raw of parts) {
+    const part = raw.trim();
+    if (!part || /\bran in-session:/i.test(part)) continue;
+    const m = /^([a-z][a-z0-9-]*)\s+on\s+([a-z][a-z0-9-]*)(?:\s*\([^)]*\))*\s*$/i.exec(part);
+    if (m) routed.push({ role: m[1], tool: m[2] });
+  }
+  return routed;
+}
+
 // The run log's verdict counts, in the report's shape (a non-canonical verdict counts as pending). A triaged verdict
 // carrying `(agent)` counts under `agent`, not confirmed / falsePositive / wontFix, through calibration's own bucket, so
 // precision here matches `calibration`. `verification` is the run log's Verification: line (finding verification), or
@@ -514,7 +550,17 @@ export function capture({ cwd, workflow, session, transcript, log, mode, version
     ...report,
   };
   const warnings = warning ? [warning] : [];
-  if (log) full.outcomes.findings = findingsFromLog(readText(path.resolve(cwd, log)), path.basename(log), warnings);
+  if (log) {
+    const logText = readText(path.resolve(cwd, log));
+    const logName = path.basename(log);
+    full.outcomes.findings = findingsFromLog(logText, logName, warnings);
+    const routed = routedAgentsFromLog(logText);
+    if (routed.length) {
+      full.partial = true;
+      full.routed = routed;
+      warnings.push(`metrics: ${logName}: run is partial (routed agents are outside Claude Code transcripts: ${routed.map((r) => `${r.role} on ${r.tool}`).join(', ')})`);
+    }
+  }
   return { report: full, file, warnings };
 }
 
@@ -600,7 +646,8 @@ export function loadRuns(dir) {
 export function metricsReport(runs, prices = DEFAULT_PRICES) {
   const L = [];
   const top = runs.filter((r) => !r.nestedIn);
-  const c = (r) => cost(r.totals?.tokensByModel, prices);
+  const rawCost = (r) => cost(r.totals?.tokensByModel, prices);
+  const c = (r) => (r.partial ? null : rawCost(r));
   L.push('# Agent workflow metrics', '');
   if (!runs.length) return `${[...L, 'No run reports found.'].join('\n')}\n`;
   const starts = runs.map((r) => r.startedUtc).sort();
@@ -692,10 +739,14 @@ export function metricsReport(runs, prices = DEFAULT_PRICES) {
     const wfs = groupBy(rs, (r) => r.workflow).map(([w, g]) => `${w} ${g.length}`).join(', ');
     L.push(`| ${dev} | ${rs.length} | ${wfs} | ${fcost(sum(rs.map(c)))} |`);
   }
-  const unpriced = runs.filter((r) => c(r) === null);
+  const unpriced = runs.filter((r) => rawCost(r) === null);
   if (unpriced.length) {
     const models = [...new Set(unpriced.flatMap((r) => Object.keys(r.totals?.tokensByModel ?? {}).filter((m) => !prices.models?.[m])))];
     L.push('', `${unpriced.length} runs used a model missing from the price table and are left out of cost totals: ${models.join(', ')}.`);
+  }
+  const partial = runs.filter((r) => r.partial);
+  if (partial.length) {
+    L.push('', `${partial.length} partial run(s) had routed agents outside Claude Code transcripts and are left out of cost figures.`);
   }
   return `${L.join('\n')}\n`;
 }
