@@ -179,7 +179,7 @@ test('V7: serialize quotes YAML-ambiguous scalars and writes empty lists as []',
     assert.match(out, /^---\nk: "/, s);
     assert.equal(parse(out).data.k, s, s);
   }
-  for (const s of ['haiku', 'gpt-6.1-sol', 'anthropic/claude-sonnet-5-5#high', 'Glob, Grep, Read, Bash', 'path:line']) {
+  for (const s of ['haiku', 'gpt-6.2-sol', 'anthropic/claude-sonnet-5-5#high', 'Glob, Grep, Read, Bash', 'path:line']) {
     assert.match(serialize({ k: s }, ''), new RegExp(`k: ${s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}\\n`), s);
   }
   assert.match(serialize({ subagent: true, tools: [] }, ''), /subagent: true\ntools: \[\]\n/);

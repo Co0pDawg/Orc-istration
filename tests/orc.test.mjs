@@ -161,7 +161,7 @@ test('models.local.json overrides per tool and tier', () => {
   const m = loadModels(copy);
   assert.deepEqual(m.copilot.high, { model: 'x-high' });
   assert.deepEqual(m.copilot.low, {});
-  assert.deepEqual(m.codex.mid, { model: 'gpt-6.1-sol', effort: 'low' });
+  assert.deepEqual(m.codex.mid, { model: 'gpt-6.2-sol', effort: 'low' });
   assert.deepEqual(loadModels(copy, { local: false }).copilot.high, {});
 });
 

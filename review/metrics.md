@@ -8,7 +8,7 @@ This file is the single source for the report schema, the privacy rules and the 
 
 Capture reads **Claude Code session transcripts only**. Claude Code records each session under `~/.claude/projects/<project>/`: `<session>.jsonl` for the main thread, and `<session>/subagents/agent-<id>.jsonl` with `agent-<id>.meta.json` (agent type, description) for each subagent. Each API message carries its `usage` and model. Tool calls and tool results give the files read and their sizes.
 
-Other tools (Codex, Gemini CLI, Copilot, Cursor, OpenCode, Antigravity) are unsupported: they write no transcript in this shape. In one of them there is no session to read, so `metrics capture` prints `metrics: skipped (no Claude Code session; capture reads Claude Code transcripts only)`, exits 0 and writes nothing, and the review goes on; its run log still feeds `calibration`.
+Other tools (Codex, Gemini CLI, Copilot, Cursor, OpenCode, Antigravity) are unsupported: they write no transcript in this shape. In one of them there is no session to read, so `metrics capture` prints `metrics: skipped (no Claude Code session; capture reads Claude Code transcripts only)`, exits 0 and writes nothing, and the review goes on; its run log still feeds `calibration`. Because metrics capture reads Claude Code transcripts only, a routed agent's tokens are not captured when the review panel dispatches it headlessly to another tool (`review/PROCEDURE.md`, "Routed agents").
 
 Nothing is counted during the run. Capture reads the transcripts afterwards, so a run cannot under-report by skipping a step.
 

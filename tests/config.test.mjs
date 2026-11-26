@@ -320,8 +320,8 @@ test('~/.orc/models.json layers between models.json and models.local.json, only 
   assert.equal(m.codex.high.model, 'shared-high');
   assert.equal(m.codex.high.effort, 'high', 'two-level merge keeps the base effort');
   assert.equal(m.codex.headless.low, 'shared-low');
-  assert.equal(loadModels(repo, { env }).codex.high.model, 'gpt-6-astra', 'not read without shared');
-  assert.equal(loadModels(repo, { local: false, shared: true, env }).codex.high.model, 'gpt-6-astra', 'not read with local: false');
+  assert.equal(loadModels(repo, { env }).codex.high.model, 'gpt-6.2-astra', 'not read without shared');
+  assert.equal(loadModels(repo, { local: false, shared: true, env }).codex.high.model, 'gpt-6.2-astra', 'not read with local: false');
   fs.writeFileSync(path.join(repo, 'models.local.json'), JSON.stringify({ codex: { high: { model: 'local-high' } } }));
   assert.equal(loadModels(repo, { shared: true, env }).codex.high.model, 'local-high', 'models.local.json wins');
   const bad = dataDir(undefined, { codex: { huge: {} } });
@@ -433,17 +433,17 @@ test('dispatch --tool is explicit: no fallback, a configured binary that is gone
 test('dispatch --model replaces the first tool\'s model, keeps the effort, and is dropped on a fallback', () => {
   const dir = tempDir('stub');
   const data = dataDir({ version: 1, binaries: { codex: stub(dir), 'claude-code': stub(dir) }, routing: { builder: ['codex', 'claude-code'] } });
-  const r = cli(['dispatch', '--role', 'builder', '--brief', briefFile(), '--dry-run', '--model', 'gpt-6.2-astra'], data);
+  const r = cli(['dispatch', '--role', 'builder', '--brief', briefFile(), '--dry-run', '--model', 'gpt-6.3-astra'], data);
   assert.equal(r.code, 0, r.err);
   const mxc = process.platform === 'win32' ? ' -c windows\\.sandbox=mxc' : '';
-  assert.match(r.out, new RegExp(`exec --model gpt-6\\.2-astra --sandbox workspace-write -c "model_reasoning_effort=\\\\"high\\\\""${mxc} -`));
+  assert.match(r.out, new RegExp(`exec --model gpt-6\\.3-astra --sandbox workspace-write -c "model_reasoning_effort=\\\\"high\\\\""${mxc} -`));
   const explicit = cli(['dispatch', '--tool', 'claude-code', '--role', 'scout', '--brief', briefFile(), '--dry-run', '--model', 'sonnet'], data);
   assert.match(explicit.out, /--agent scout --model sonnet$/m);
 
   const fallback = dataDir({ version: 1, binaries: { codex: missingPath(), 'claude-code': stub(dir) }, routing: { builder: ['codex', 'claude-code'] } });
-  const f = cli(['dispatch', '--role', 'builder', '--brief', briefFile(), '--dry-run', '--model', 'gpt-6.2-astra'], fallback);
+  const f = cli(['dispatch', '--role', 'builder', '--brief', briefFile(), '--dry-run', '--model', 'gpt-6.3-astra'], fallback);
   assert.equal(f.code, 0, f.err);
-  assert.match(f.err, /^dispatch: --model gpt-6\.2-astra dropped \(it was for codex\); claude-code runs its high model$/m);
+  assert.match(f.err, /^dispatch: --model gpt-6\.3-astra dropped \(it was for codex\); claude-code runs its high model$/m);
   assert.match(f.out, /--agent builder --model opus$/m);
   assert.match(cli(['status', '--tool', 'codex', '--model', 'x'], fallback).err, /--model applies to dispatch and queue only/);
 });
@@ -779,10 +779,10 @@ test('dispatch --prefer puts a tool first and keeps the chain behind it; not wit
   const data = dataDir({ version: 1, binaries: { codex: sf, 'claude-code': sf }, fallback: 'claude-code', routing: { refuter: 'claude-code' } });
   const routed = cli(['dispatch', '--role', 'refuter', '--brief', briefFile(), '--dry-run'], data);
   assert.match(routed.out, /--agent refuter --model opus$/m, 'the routed reviewer runs Claude Code');
-  const second = cli(['dispatch', '--role', 'refuter', '--brief', briefFile(), '--dry-run', '--prefer', 'codex', '--model', 'gpt-6.2-astra'], data);
+  const second = cli(['dispatch', '--role', 'refuter', '--brief', briefFile(), '--dry-run', '--prefer', 'codex', '--model', 'gpt-6.3-astra'], data);
   assert.equal(second.code, 0, second.err);
   assert.equal(second.err, '');
-  assert.ok(second.out.startsWith(`${stubCommand(sf)} exec --model gpt-6.2-astra --sandbox workspace-write`), `the second reviewer runs Codex, --model on the first member: ${second.out}`);
+  assert.ok(second.out.startsWith(`${stubCommand(sf)} exec --model gpt-6.3-astra --sandbox workspace-write`), `the second reviewer runs Codex, --model on the first member: ${second.out}`);
   // The preferred tool unavailable: the routing entry and fallback stay behind it, once each.
   const gone = dataDir({ version: 1, binaries: { codex: missingPath(), 'claude-code': stub(dir) }, fallback: 'claude-code', routing: { refuter: ['claude-code', 'codex'] } });
   const f = cli(['dispatch', '--role', 'refuter', '--brief', briefFile(), '--dry-run', '--prefer', 'codex'], gone);
