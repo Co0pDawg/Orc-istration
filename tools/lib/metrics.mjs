@@ -269,40 +269,20 @@ export function measureAgent(ev, since, until, roots, agentType) {
 // One lane's verdict counts, in the run report and in the report's Review lanes table.
 const laneCounter = () => ({ total: 0, confirmed: 0, falsePositive: 0, wontFix: 0, notActioned: 0, pending: 0, agent: 0 });
 
-// Read routed agents (`<role> on <tool>`) from a run log's `Agents:` header line.
-// A `ran in-session:` fallback entry does not count.
+// Read routed agents (`review-<role> on <tool>`) from a run log's `Agents:` header line, however the entries are joined.
+// A `<role> ran in-session: <tool> failed (<reason>)` fallback note has no `<role> on <tool>`, so it does not count.
 export function routedAgentsFromLog(text) {
-  let value = null;
-  for (const line of String(text).split(/\r?\n/)) {
-    if (/^\s*\|/.test(line) || /^##\s/.test(line)) break;
-    const m = /^\s*Agents:\s*(.+)$/.exec(line);
-    if (m) {
-      value = m[1];
-      break;
-    }
+  const lines = String(text).split(/\r?\n/);
+  const end = lines.findIndex((line) => /^\s*\||^##\s/.test(line));
+  const header = (end < 0 ? lines : lines.slice(0, end)).map((line) => /^\s*Agents:\s*(.+)$/.exec(line)?.[1]).find(Boolean);
+  if (!header) return [];
+  // Lane lists and failure reasons sit in parentheses and may say "on <tool>" themselves: drop them, innermost first.
+  let bare = header;
+  for (let before = ''; before !== bare; ) {
+    before = bare;
+    bare = bare.replace(/\([^()]*\)/g, ' ');
   }
-  if (!value) return [];
-  const parts = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < value.length; i++) {
-    const ch = value[i];
-    if (ch === '(') depth++;
-    else if (ch === ')' && depth > 0) depth--;
-    else if (depth === 0 && (ch === ',' || ch === ';')) {
-      parts.push(value.slice(start, i));
-      start = i + 1;
-    }
-  }
-  parts.push(value.slice(start));
-  const routed = [];
-  for (const raw of parts) {
-    const part = raw.trim();
-    if (!part || /\bran in-session:/i.test(part)) continue;
-    const m = /^([a-z][a-z0-9-]*)\s+on\s+([a-z][a-z0-9-]*)(?:\s*\([^)]*\))*\s*$/i.exec(part);
-    if (m) routed.push({ role: m[1], tool: m[2] });
-  }
-  return routed;
+  return [...bare.matchAll(/\b(review-[a-z0-9-]+)\s+on\s+([a-z][a-z0-9-]*)/gi)].map((m) => ({ role: m[1], tool: m[2] }));
 }
 
 // The run log's verdict counts, in the report's shape (a non-canonical verdict counts as pending). A triaged verdict
@@ -647,7 +627,14 @@ export function metricsReport(runs, prices = DEFAULT_PRICES) {
   const L = [];
   const top = runs.filter((r) => !r.nestedIn);
   const rawCost = (r) => cost(r.totals?.tokensByModel, prices);
-  const c = (r) => (r.partial ? null : rawCost(r));
+  // A run is partial when it, or any run nested in it, had routed agents: its figures lack their cost.
+  const byId = new Map(runs.map((r) => [r.runId, r]));
+  const isPartial = (r, seen = new Set()) => {
+    if (r.partial) return true;
+    seen.add(r.runId);
+    return (r.childRuns ?? []).some((x) => byId.has(x.runId) && !seen.has(x.runId) && isPartial(byId.get(x.runId), seen));
+  };
+  const c = (r) => (isPartial(r) ? null : rawCost(r));
   L.push('# Agent workflow metrics', '');
   if (!runs.length) return `${[...L, 'No run reports found.'].join('\n')}\n`;
   const starts = runs.map((r) => r.startedUtc).sort();
@@ -744,7 +731,7 @@ export function metricsReport(runs, prices = DEFAULT_PRICES) {
     const models = [...new Set(unpriced.flatMap((r) => Object.keys(r.totals?.tokensByModel ?? {}).filter((m) => !prices.models?.[m])))];
     L.push('', `${unpriced.length} runs used a model missing from the price table and are left out of cost totals: ${models.join(', ')}.`);
   }
-  const partial = runs.filter((r) => r.partial);
+  const partial = runs.filter((r) => isPartial(r));
   if (partial.length) {
     L.push('', `${partial.length} partial run(s) had routed agents outside Claude Code transcripts and are left out of cost figures.`);
   }

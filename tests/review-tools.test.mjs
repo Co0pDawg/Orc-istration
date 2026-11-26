@@ -744,6 +744,22 @@ test('routedAgentsFromLog and metrics capture mark routed runs partial and warn;
     [{ role: 'review-failure-explorer', tool: 'codex' }],
     'mixed routed + fallback counts only the routed agent',
   );
+  const codeOnCodex = [{ role: 'review-code-explorer', tool: 'codex' }];
+  for (const [form, why] of [
+    ['review-code-explorer on codex (code-reviewer, code-simplifier)', 'a lane list holds commas'],
+    ['review-code-explorer on codex (code-reviewer) review-verifier ran in-session: codex failed (exit 1)', 'a fallback note joined by a space'],
+    ['review-code-explorer on codex (code-reviewer). review-verifier ran in-session: codex failed (exit 1).', 'full stops'],
+    ['review-code-explorer on codex (findings (batch 2)) (lite)', 'nested and repeated parentheses'],
+    ['review-docs-explorer (comment-analyzer); review-code-explorer on codex', 'a semicolon, no lanes'],
+    ['review-verifier ran in-session: codex failed (review-verifier on codex timed out), review-code-explorer on codex', 'a reason that says "on codex"'],
+  ]) {
+    assert.deepStrictEqual(routedAgentsFromLog(logWith(`Agents: ${form}`)), codeOnCodex, why);
+  }
+  assert.deepStrictEqual(
+    routedAgentsFromLog(`${logWith('Agents: review-verifier')}\n## Notes\n\nAgents: review-code-explorer on codex\n`),
+    [],
+    'only the header line counts',
+  );
 
   const dir = tempDir('metrics-routed');
   const routedLog = path.join(dir, '2026-11-25-codex-second-review.md');
@@ -794,6 +810,13 @@ test('metricsReport leaves partial runs out of cost figures and says how many', 
   assert.match(md, /^\| abc123 \| 2 \| pre-pr-review 2 \| \$4\.00 \|$/m);
   assert.match(md, /1 partial run\(s\) had routed agents outside Claude Code transcripts and are left out of cost figures\./);
   assert.doesNotMatch(md, /missing from the price table/, 'a priced partial run is not reported as unpriced');
+
+  // A parent whose nested run is partial lacks that cost too, so it is left out and counted.
+  const parent = makeRun('run-parent', 20_000_000, { workflow: 'start', childRuns: [{ runId: 'run-partial', workflow: 'pre-pr-review' }] });
+  const nested = metricsReport([parent, { ...partialRun, nestedIn: 'run-parent' }], prices);
+  assert.match(nested, /API-equivalent cost of top-level runs: \$0\.00\./);
+  assert.match(nested, /2 partial run\(s\) had routed agents/);
+  assert.doesNotMatch(nested, /\$80\.00/);
 
   // When every run is partial, median cost is n/a and total cost is $0.00, matching unpriced runs.
   const onlyPartial = metricsReport([partialRun], prices);
