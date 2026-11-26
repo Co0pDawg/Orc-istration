@@ -161,7 +161,7 @@ test('models.local.json overrides per tool and tier', () => {
   const m = loadModels(copy);
   assert.deepEqual(m.copilot.high, { model: 'x-high' });
   assert.deepEqual(m.copilot.low, {});
-  assert.deepEqual(m.codex.mid, { model: 'gpt-6.1-sol', effort: 'low' });
+  assert.deepEqual(m.codex.mid, { model: 'gpt-6.2-sol', effort: 'low' });
   assert.deepEqual(loadModels(copy, { local: false }).copilot.high, {});
 });
 
@@ -1259,4 +1259,47 @@ test('D3d: an identical hand-copied static file stays unrecorded, is kept after 
   const mf3 = JSON.parse(fs.readFileSync(path.join(claude, '.orc-manifest.claude-code.json'), 'utf8'));
   assert.ok(mf3.files['.claude/skills/orc-permissions/SKILL.md'], 'now recorded in manifest');
   assert.equal((await run(['status', '--tool', 'claude-code', '--repo', copy, '--home', home, '--no-board'])).code, 0);
+});
+
+test('panel commands and skills on Claude Code and Antigravity note the Routed agents and second-reviewer orc dispatch exceptions', async () => {
+  const built = Object.fromEntries((await buildGolden(REPO)).map((r) => [r.adapter.id, r.files]));
+  const panel = ['start', 'peer-review', 'pre-pr-review'];
+  const secondReviewer = ['start'];
+  const nonPanel = ['grill', 'draft-pr', 'board'];
+  const secondSources = new Set(
+    PROCEDURES.filter((p) => read(path.join(REPO, p.source.file)).includes('"Second reviewer (Full)"')).map((p) => p.name),
+  );
+  assert.ok(secondSources.has('start'), 'start source names Second reviewer (Full)');
+  for (const [tool, pathFor] of [
+    ['claude-code', (name) => (PROCEDURES.find((p) => p.name === name).kind === 'routine' ? `.claude/skills/${name}/SKILL.md` : `.claude/commands/${name}.md`)],
+    ['antigravity', (name) => `.gemini/config/skills/${name}/SKILL.md`],
+  ]) {
+    for (const name of panel) {
+      const file = built[tool].find((f) => f.path === pathFor(name));
+      assert.ok(file, `${tool}: ${name} generated`);
+      assert.match(file.content, /review\/PROCEDURE\.md.*"Routed agents"/, `${tool}/${name} names Routed agents`);
+      assert.match(file.content, /orc dispatch/, `${tool}/${name} names orc dispatch`);
+      if (secondReviewer.includes(name)) {
+        assert.match(file.content, /refuter.*orchestration\/wrap-up\.md.*"Second reviewer \(Full\)"/, `${tool}/${name} names second-reviewer exception`);
+      } else {
+        assert.doesNotMatch(file.content, /Second reviewer \(Full\)/, `${tool}/${name} does not mention Second reviewer (Full)`);
+      }
+    }
+    for (const name of nonPanel) {
+      const file = built[tool].find((f) => f.path === pathFor(name));
+      assert.ok(file, `${tool}: ${name} generated`);
+      assert.doesNotMatch(file.content, /Routed agents/, `${tool}/${name} does not mention Routed agents`);
+      assert.doesNotMatch(file.content, /Second reviewer \(Full\)/, `${tool}/${name} does not mention Second reviewer (Full)`);
+    }
+    // Any procedure whose source runs "Second reviewer (Full)" and whose wrapper gives a native-dispatch instruction must exempt it.
+    for (const p of PROCEDURES) {
+      if (!secondSources.has(p.name)) continue;
+      const file = built[tool].find((f) => f.path === pathFor(p.name));
+      assert.ok(file, `${tool}: ${p.name} generated`);
+      if (/subagent_type|invoke_subagent/.test(file.content)) {
+        assert.match(file.content, /refuter.*orchestration\/wrap-up\.md.*"Second reviewer \(Full\)"/, `${tool}/${p.name} exempts second-reviewer refuter`);
+        assert.match(file.content, /orc dispatch/, `${tool}/${p.name} names orc dispatch`);
+      }
+    }
+  }
 });

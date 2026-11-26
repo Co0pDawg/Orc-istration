@@ -269,6 +269,22 @@ export function measureAgent(ev, since, until, roots, agentType) {
 // One lane's verdict counts, in the run report and in the report's Review lanes table.
 const laneCounter = () => ({ total: 0, confirmed: 0, falsePositive: 0, wontFix: 0, notActioned: 0, pending: 0, agent: 0 });
 
+// Read routed agents (`review-<role> on <tool>`) from a run log's `Agents:` header line, however the entries are joined.
+// A `<role> ran in-session: <tool> failed (<reason>)` fallback note has no `<role> on <tool>`, so it does not count.
+export function routedAgentsFromLog(text) {
+  const lines = String(text).split(/\r?\n/);
+  const end = lines.findIndex((line) => /^\s*\||^##\s/.test(line));
+  const header = (end < 0 ? lines : lines.slice(0, end)).map((line) => /^\s*Agents:\s*(.+)$/.exec(line)?.[1]).find(Boolean);
+  if (!header) return [];
+  // Lane lists and failure reasons sit in parentheses and may say "on <tool>" themselves: drop them, innermost first.
+  let bare = header;
+  for (let before = ''; before !== bare; ) {
+    before = bare;
+    bare = bare.replace(/\([^()]*\)/g, ' ');
+  }
+  return [...bare.matchAll(/\b(review-[a-z0-9-]+)\s+on\s+([a-z][a-z0-9-]*)/gi)].map((m) => ({ role: m[1], tool: m[2] }));
+}
+
 // The run log's verdict counts, in the report's shape (a non-canonical verdict counts as pending). A triaged verdict
 // carrying `(agent)` counts under `agent`, not confirmed / falsePositive / wontFix, through calibration's own bucket, so
 // precision here matches `calibration`. `verification` is the run log's Verification: line (finding verification), or
@@ -514,7 +530,17 @@ export function capture({ cwd, workflow, session, transcript, log, mode, version
     ...report,
   };
   const warnings = warning ? [warning] : [];
-  if (log) full.outcomes.findings = findingsFromLog(readText(path.resolve(cwd, log)), path.basename(log), warnings);
+  if (log) {
+    const logText = readText(path.resolve(cwd, log));
+    const logName = path.basename(log);
+    full.outcomes.findings = findingsFromLog(logText, logName, warnings);
+    const routed = routedAgentsFromLog(logText);
+    if (routed.length) {
+      full.partial = true;
+      full.routed = routed;
+      warnings.push(`metrics: ${logName}: run is partial (routed agents are outside Claude Code transcripts: ${routed.map((r) => `${r.role} on ${r.tool}`).join(', ')})`);
+    }
+  }
   return { report: full, file, warnings };
 }
 
@@ -600,7 +626,15 @@ export function loadRuns(dir) {
 export function metricsReport(runs, prices = DEFAULT_PRICES) {
   const L = [];
   const top = runs.filter((r) => !r.nestedIn);
-  const c = (r) => cost(r.totals?.tokensByModel, prices);
+  const rawCost = (r) => cost(r.totals?.tokensByModel, prices);
+  // A run is partial when it, or any run nested in it, had routed agents: its figures lack their cost.
+  const byId = new Map(runs.map((r) => [r.runId, r]));
+  const isPartial = (r, seen = new Set()) => {
+    if (r.partial) return true;
+    seen.add(r.runId);
+    return (r.childRuns ?? []).some((x) => byId.has(x.runId) && !seen.has(x.runId) && isPartial(byId.get(x.runId), seen));
+  };
+  const c = (r) => (isPartial(r) ? null : rawCost(r));
   L.push('# Agent workflow metrics', '');
   if (!runs.length) return `${[...L, 'No run reports found.'].join('\n')}\n`;
   const starts = runs.map((r) => r.startedUtc).sort();
@@ -692,10 +726,14 @@ export function metricsReport(runs, prices = DEFAULT_PRICES) {
     const wfs = groupBy(rs, (r) => r.workflow).map(([w, g]) => `${w} ${g.length}`).join(', ');
     L.push(`| ${dev} | ${rs.length} | ${wfs} | ${fcost(sum(rs.map(c)))} |`);
   }
-  const unpriced = runs.filter((r) => c(r) === null);
+  const unpriced = runs.filter((r) => rawCost(r) === null);
   if (unpriced.length) {
     const models = [...new Set(unpriced.flatMap((r) => Object.keys(r.totals?.tokensByModel ?? {}).filter((m) => !prices.models?.[m])))];
     L.push('', `${unpriced.length} runs used a model missing from the price table and are left out of cost totals: ${models.join(', ')}.`);
+  }
+  const partial = runs.filter((r) => isPartial(r));
+  if (partial.length) {
+    L.push('', `${partial.length} partial run(s) had routed agents outside Claude Code transcripts and are left out of cost figures.`);
   }
   return `${L.join('\n')}\n`;
 }

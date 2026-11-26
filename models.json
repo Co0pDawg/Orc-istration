@@ -17,8 +17,8 @@
   },
   "codex": {
     "low": { "model": "gpt-6-luna" },
-    "mid": { "model": "gpt-6.1-sol", "effort": "high" },
-    "high": { "model": "gpt-6-astra", "effort": "high" }
+    "mid": { "model": "gpt-6.2-sol", "effort": "high" },
+    "high": { "model": "gpt-6.2-astra", "effort": "high" }
   },
   "cursor": {
     "low": { "model": "inherit" },

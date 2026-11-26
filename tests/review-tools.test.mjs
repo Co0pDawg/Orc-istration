@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { main } from '../tools/orc.mjs';
 import { parseRunLog, verdictOf, sourceOf, calibrationReport, aggregate, precision } from '../tools/lib/calibration.mjs';
 import { parseExpected } from '../tools/lib/corpus.mjs';
-import { readTranscript, measureAgent, redactPath, agentResult, loopOutcomes, findingsFromLog, runReport, findTranscript, cost, metricsReport, loadRuns, isoWeek } from '../tools/lib/metrics.mjs';
+import { readTranscript, measureAgent, redactPath, agentResult, loopOutcomes, findingsFromLog, routedAgentsFromLog, runReport, findTranscript, cost, metricsReport, loadRuns, isoWeek } from '../tools/lib/metrics.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FIX = path.join(REPO, 'tests', 'fixtures');
@@ -704,4 +704,123 @@ test('metrics report counts a nested run once and shows loop, lane and unpriced 
   const missing = await run(['metrics', 'report', '--dir', path.join(dir, 'none')]);
   assert.equal(missing.code, 1);
   assert.match(missing.err, /metrics: no metrics folder at/);
+});
+
+test('routedAgentsFromLog and metrics capture mark routed runs partial and warn; fallbacks do not count', async () => {
+  // Exact Agents: line shape from the real run log (.orc/reviews/2026-11-25-codex-second-review.md).
+  const realAgentsLine = 'Agents: review-code-explorer (code-reviewer, code-simplifier), review-failure-explorer on codex (silent-failure-hunter), review-docs-explorer (comment-analyzer), review-checklist-explorer (ticket-coverage), review-verifier';
+  const logWith = (agentsLine) => [
+    '# Review Log: codex-second-review → phase3-skills-guard',
+    '',
+    'Date: 2026-11-25',
+    agentsLine,
+    'Leads: 6 raised, 3 confirmed, 3 plausible, 0 refuted',
+    'Verification: 10 checked, 4 confirmed, 6 plausible, 0 refuted',
+    'Verdict: needs changes — 1 issue / 0 warning / 0 suggestion / 0 nit / 0 question',
+    '',
+    '| # | Severity | Agent | Finding (one line) | Where | Verdict |',
+    '|---|----------|-------|--------------------|-------|---------|',
+    '| 1 | issue | silent-failure-hunter | Sample finding | review/PROCEDURE.md:220 | _pending_ |',
+    '',
+  ].join('\n');
+
+  assert.deepStrictEqual(routedAgentsFromLog(logWith(realAgentsLine)), [
+    { role: 'review-failure-explorer', tool: 'codex' },
+  ]);
+  assert.deepStrictEqual(
+    routedAgentsFromLog(logWith('Agents: review-code-explorer (code-reviewer), review-failure-explorer on codex (silent-failure-hunter), review-verifier on antigravity (lite)')),
+    [
+      { role: 'review-failure-explorer', tool: 'codex' },
+      { role: 'review-verifier', tool: 'antigravity' },
+    ],
+  );
+  assert.deepStrictEqual(
+    routedAgentsFromLog(logWith('Agents: review-code-explorer (code-reviewer), review-failure-explorer ran in-session: codex failed (auth failed on codex), review-verifier')),
+    [],
+    'a ran in-session: fallback entry does not count',
+  );
+  assert.deepStrictEqual(
+    routedAgentsFromLog(logWith('Agents: review-code-explorer (code-reviewer), review-failure-explorer on codex (silent-failure-hunter), review-verifier ran in-session: antigravity failed (timeout)')),
+    [{ role: 'review-failure-explorer', tool: 'codex' }],
+    'mixed routed + fallback counts only the routed agent',
+  );
+  const codeOnCodex = [{ role: 'review-code-explorer', tool: 'codex' }];
+  for (const [form, why] of [
+    ['review-code-explorer on codex (code-reviewer, code-simplifier)', 'a lane list holds commas'],
+    ['review-code-explorer on codex (code-reviewer) review-verifier ran in-session: codex failed (exit 1)', 'a fallback note joined by a space'],
+    ['review-code-explorer on codex (code-reviewer). review-verifier ran in-session: codex failed (exit 1).', 'full stops'],
+    ['review-code-explorer on codex (findings (batch 2)) (lite)', 'nested and repeated parentheses'],
+    ['review-docs-explorer (comment-analyzer); review-code-explorer on codex', 'a semicolon, no lanes'],
+    ['review-verifier ran in-session: codex failed (review-verifier on codex timed out), review-code-explorer on codex', 'a reason that says "on codex"'],
+  ]) {
+    assert.deepStrictEqual(routedAgentsFromLog(logWith(`Agents: ${form}`)), codeOnCodex, why);
+  }
+  assert.deepStrictEqual(
+    routedAgentsFromLog(`${logWith('Agents: review-verifier')}\n## Notes\n\nAgents: review-code-explorer on codex\n`),
+    [],
+    'only the header line counts',
+  );
+
+  const dir = tempDir('metrics-routed');
+  const routedLog = path.join(dir, '2026-11-25-codex-second-review.md');
+  fs.writeFileSync(routedLog, logWith(realAgentsLine));
+  const captured = await run(['metrics', 'capture', '--workflow', 'pre-pr-review', '--transcript', MAIN, '--log', routedLog, '--print']);
+  assert.strictEqual(captured.code, 0, captured.err);
+  const report = JSON.parse(captured.out);
+  assert.strictEqual(report.partial, true);
+  assert.deepStrictEqual(report.routed, [{ role: 'review-failure-explorer', tool: 'codex' }]);
+  const warnLines = captured.err.split('\n').filter(Boolean);
+  assert.strictEqual(warnLines.length, 1, `expected one WARN line, got: ${captured.err}`);
+  assert.match(warnLines[0], /^WARN metrics: 2026-11-25-codex-second-review\.md:.*partial.*review-failure-explorer on codex/);
+
+  // Fallback-only log: no partial, no routed, no warning.
+  const fallbackLog = path.join(dir, '2026-11-25-fallback.md');
+  fs.writeFileSync(fallbackLog, logWith('Agents: review-code-explorer (code-reviewer), review-failure-explorer ran in-session: codex failed (exit 1), review-verifier'));
+  const fb = await run(['metrics', 'capture', '--workflow', 'pre-pr-review', '--transcript', MAIN, '--log', fallbackLog, '--print']);
+  assert.strictEqual(fb.code, 0, fb.err);
+  assert.strictEqual(fb.err, '');
+  const fbReport = JSON.parse(fb.out);
+  assert.strictEqual(Object.hasOwn(fbReport, 'partial'), false);
+  assert.strictEqual(Object.hasOwn(fbReport, 'routed'), false);
+
+  // Normal log with no routed agent: unchanged (no partial, no routed, no warning).
+  const normal = await run(['metrics', 'capture', '--workflow', 'pre-pr-review', '--transcript', MAIN, '--log', path.join(REVIEWS, '2026-01-05-feature-101-login.md'), '--print']);
+  assert.strictEqual(normal.code, 0, normal.err);
+  assert.strictEqual(normal.err, '');
+  const normalReport = JSON.parse(normal.out);
+  assert.strictEqual(Object.hasOwn(normalReport, 'partial'), false);
+  assert.strictEqual(Object.hasOwn(normalReport, 'routed'), false);
+});
+
+test('metricsReport leaves partial runs out of cost figures and says how many', () => {
+  const prices = { cacheWrite5mMultiplier: 1.25, cacheWrite1hMultiplier: 2, models: { 'claude-opus-5-5': { input: 4, output: 20, cacheRead: 0.2 } } };
+  const makeRun = (id, inputTokens, extra = {}) => {
+    const rep = runReport(MAIN, 'pre-pr-review', { until: at(60), roots: ROOTS }).report;
+    Object.assign(rep, { runId: id, developer: 'abc123', branch: 'feature/4242-x', schemaVersion: 1 }, extra);
+    rep.totals.tokensByModel = { 'claude-opus-5-5': { input: inputTokens, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0, output: 0, context: inputTokens } };
+    return rep;
+  };
+  // Normal run costs $4.00 (1M input tokens at $4/M); partial run would cost $40.00 (10M) if included.
+  const fullRun = makeRun('run-full', 1_000_000);
+  const partialRun = makeRun('run-partial', 10_000_000, { partial: true, routed: [{ role: 'review-failure-explorer', tool: 'codex' }] });
+  const md = metricsReport([fullRun, partialRun], prices);
+  assert.match(md, /API-equivalent cost of top-level runs: \$4\.00\./);
+  assert.match(md, /^\| pre-pr-review \| 2 \|[^|]+\|[^|]+\|[^|]+\|[^|]+\| \$4\.00 \| \$4\.00 \|/m);
+  assert.match(md, /^\| 2026-W02 \| pre-pr-review \| 2 \| \$4\.00 \|/m);
+  assert.match(md, /^\| abc123 \| 2 \| pre-pr-review 2 \| \$4\.00 \|$/m);
+  assert.match(md, /1 partial run\(s\) had routed agents outside Claude Code transcripts and are left out of cost figures\./);
+  assert.doesNotMatch(md, /missing from the price table/, 'a priced partial run is not reported as unpriced');
+
+  // A parent whose nested run is partial lacks that cost too, so it is left out and counted.
+  const parent = makeRun('run-parent', 20_000_000, { workflow: 'start', childRuns: [{ runId: 'run-partial', workflow: 'pre-pr-review' }] });
+  const nested = metricsReport([parent, { ...partialRun, nestedIn: 'run-parent' }], prices);
+  assert.match(nested, /API-equivalent cost of top-level runs: \$0\.00\./);
+  assert.match(nested, /2 partial run\(s\) had routed agents/);
+  assert.doesNotMatch(nested, /\$80\.00/);
+
+  // When every run is partial, median cost is n/a and total cost is $0.00, matching unpriced runs.
+  const onlyPartial = metricsReport([partialRun], prices);
+  assert.match(onlyPartial, /API-equivalent cost of top-level runs: \$0\.00\./);
+  assert.match(onlyPartial, /^\| pre-pr-review \| 1 \|[^|]+\|[^|]+\|[^|]+\|[^|]+\| n\/a \| \$0\.00 \|/m);
+  assert.match(onlyPartial, /1 partial run\(s\) had routed agents/);
 });

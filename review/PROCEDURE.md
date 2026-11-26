@@ -1,6 +1,6 @@
 # Pre-PR Review Procedure
 
-Version: 1.1.1 (bump on change: major = workflow reshape, minor = new behavior, patch = fix or wording; the metrics
+Version: 1.2.0 (bump on change: major = workflow reshape, minor = new behavior, patch = fix or wording; the metrics
 capture records it)
 
 The orchestrator's procedure for the review panel: a pre-submission review of every change a branch introduces
@@ -205,6 +205,21 @@ Each explorer's prompt holds:
 
 Note each explorer's agent id; lead routing resumes them.
 
+### Routed agents
+
+Before launching, read `routing` from the shared `config.json` (under `ORC_DATA_DIR` when set, else `~/.orc/`). If `config.json` exists but cannot be read or parsed, tell the user and note it in the Step 4 report (never report it as no route), and launch in-session. Otherwise, a role's own `routing` entry is either a plain tool id string or a list of tool ids; its first tool is that string or the list's first item. Any explorer or `review-verifier` whose own `routing` entry names first a tool other than the one the orchestrator is running in is dispatched headlessly there; the `fallback` key alone never reroutes a role. With no config or no such entry, nothing changes.
+
+- **Command:** run from the reviewed repo's root, in the background where the tool can, saving stdout only to a file outside the reviewed repo (the tool's scratch folder, or the system temp folder when it has none) and stderr to a separate file there:
+  ```
+  node <CHECKOUT>/tools/orc.mjs dispatch --tool <that tool> --role <role> --brief <prompt file> --no-lint --timeout 1800
+  ```
+  `orc dispatch` prints `command:` and `stdin:` lines to stdout before streaming the tool's output, so skip those leading lines when reading the saved file; for a tool such as Antigravity that prints a JSON result object, take that object from the output (the last JSON object starting a line with a string `status`, as `dispatch` itself reads it) and use its `response` string as the report before any format check.
+- **Prompt file:** write it outside the reviewed repo (the tool's scratch folder, or the system temp folder when it has none). Put in it the same items an in-session prompt holds (for an explorer, the items above; for `review-verifier`, the lead-routing, finding-verification or severity-review items below), plus explicit orders to report inline, change no file and write no board. Pass `--no-lint` because an explorer or verifier prompt is not a marching-orders brief.
+- **Tier override:** when Step 3's model choice overrides the agent's tier, pass `--model <slug>` with that tool's model for the chosen tier (from `models.json`, `~/.orc/models.json` or `models.local.json`, using `headless.<tier>` when defined for that tool). With `--tool`, `--model` replaces only the model passed to that tool and leaves the role's or tier's effort unchanged.
+- **No resume:** a routed agent cannot be resumed. Leads owned by a routed explorer go to `review-verifier`, and when `review-verifier` is routed each verifier step launches a fresh run.
+- **Fallback on failure:** if the run cannot start, exits non-zero or returns no report in the expected format, launch the same role in-session as usual and note `<role> ran in-session: <tool> failed (<reason>)` in both the Step 4 report and the Step 5 run log.
+- **Clean-tree check:** from the repo root, record before launching and compare after each routed agent ends (writing the check's output files outside the reviewed repo, in the tool's scratch folder or the system temp folder when it has none): `git rev-parse HEAD`; `git rev-parse --abbrev-ref HEAD`; `git status --porcelain --untracked-files=all -- . ':!.orc/'`; the `git hash-object` of a file written by `git diff HEAD --binary --output=<file outside the repo> -- . ':!.orc/'`; the `git hash-object` of a file written by `git diff --cached HEAD --binary --output=<file outside the repo> -- . ':!.orc/'`; and the `git hash-object` of each file listed by `git ls-files --others --exclude-standard -- . ':!.orc/'`. A configured run-log folder is excluded in place of `.orc/`, as in Step 1; then pass `':!.orc/tmp/'` as well, so temporary files there are never counted. Gitignored files are not covered. Run `git submodule status --recursive`; when it lists any submodule, say that submodule contents were not checked and report the check as inconclusive. If any of these commands fails, report the check as inconclusive, naming the command and path; never treat it as unchanged. Report any difference to the user and do not revert it.
+
 ### Waiting
 
 Wait for every explorer to complete before routing leads. While agents run and as results arrive, do **not** relay
@@ -222,7 +237,8 @@ or asking them as questions. Settle every lead before the report:
 2. A lead whose `Owner` lane belongs to a **different** explorer that ran: resume that explorer with the batch of leads
    it owns (one message per explorer, using the id from Step 3): "Verify these leads with your context, per the
    explorer contract's *When resumed to verify leads* section." It keeps its context, so verification reuses what it
-   already read. In a tool that cannot resume an agent, these leads go to the verifier in step 3 instead.
+   already read. In a tool that cannot resume an agent, or when that explorer ran headlessly on another tool (an
+   explorer that fell back to an in-session run can still be resumed), these leads go to the verifier in step 3 instead.
 3. Every other lead (an explorer's own-lane lead, no owner, or an owner whose explorer did not run): one
    `review-verifier` agent, all leads in one batch, with `CHECKOUT`, `BRANCH`, `BASE`, the diff command, the project's
    review rules path and the `BRIEF` path. Run it in parallel with step 2's messages.
@@ -238,8 +254,8 @@ confidence, and a fix built on a wrong finding costs more than the check. Before
 and `warning:` finding that did not come from a lead the verifier or an owning explorer already settled to
 `review-verifier` in **findings mode**: one batch, each with its number, lane tag, severity, text, location and
 evidence, plus `CHECKOUT`, `BRANCH`, `BASE`, the diff command, the project's review rules path and the `BRIEF` path.
-Resume the lead-routing verifier if one ran and the tool can resume it; otherwise launch one. Skip the step when there
-are no issues or warnings.
+Resume the lead-routing verifier if one ran and can be resumed (not routed); otherwise launch one. Skip the step when
+there are no issues or warnings.
 
 - `CONFIRMED` findings stay, and `PLAUSIBLE` ones stay tagged `(plausible)`, each at the severity the verifier
   returns: a raise moves the finding to its new severity section with the verifier's reason (the verifier never
@@ -254,10 +270,10 @@ are no issues or warnings.
 
 After lead routing, send every remaining `suggestion:`, `nit:` and `question:` to `review-verifier` in
 **severity-review** mode: one line each (number, lane tag, severity, text, location), with `CHECKOUT`, `BRANCH`,
-`BASE`, the diff command and the `BRIEF` path. Resume the lead-routing verifier if one ran and the tool can resume it;
-otherwise launch one. Apply every `RAISE` line: the item moves to its new severity section, keeps its lane tag, and
-carries the verifier's reason; a raised question becomes a finding with the question appended. The verifier never
-lowers or drops an item. Skip this step when there are no suggestions, nits or questions.
+`BASE`, the diff command and the `BRIEF` path. Resume the lead-routing verifier if one ran and can be resumed (not
+routed); otherwise launch one. Apply every `RAISE` line: the item moves to its new severity section, keeps its lane
+tag, and carries the verifier's reason; a raised question becomes a finding with the question appended. The verifier
+never lowers or drops an item. Skip this step when there are no suggestions, nits or questions.
 
 ---
 
@@ -312,11 +328,13 @@ approved | needs changes | informational — N issue / N warning / N suggestion 
 Leads: N raised, N confirmed, N plausible, N refuted
 Verification: N checked, N confirmed, N plausible, N refuted
 Severity review: N raised
+Agents: <routed agents, e.g. review-failure-explorer on codex (silent-failure-hunter), or <role> ran in-session: <tool> failed (<reason>)>
 ```
 
 **Ticket coverage** (only with a `BRIEF`) has one row per id from the brief's Spec items table, plus the edge-case
 rows (`<id>a`) the agents added. **Static** is `ticket-coverage`'s status. Omit **Not verified** when it listed
 nothing. Omit **Runtime checks**, **Refuted by verification** and the `Verification:` line when they would be empty.
+Include `Agents:` only when a role was routed (including fallbacks), and note any unreadable or unparseable `config.json` in the report; omit `Agents:` when every agent ran in-session without routing.
 The counts in the first Verdict line leave refuted findings out.
 
 ### Runtime checks
