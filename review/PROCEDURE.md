@@ -1,16 +1,15 @@
 # Pre-PR Review Procedure
 
-Version: 1.1.0 (bump on change: major = workflow reshape, minor = new behavior, patch = fix or wording; the metrics
+Version: 1.1.1 (bump on change: major = workflow reshape, minor = new behavior, patch = fix or wording; the metrics
 capture records it)
 
 The orchestrator's procedure for the review panel: a pre-submission review of every change a branch introduces
 relative to a base branch, run by read-only explorer agents over checklist lanes, with leads settled by a verifier,
 one consolidated report, a run log for calibration and per-run metrics. It is tool-neutral; each tool's notes say how
-to dispatch an agent by roster name, override its tier for one dispatch, resume it and ask the user a question. In
-Claude Code, `/pre-pr-review` runs this file.
+to dispatch an agent by roster name, override its tier for one dispatch, resume it and ask the user a question, and
+name the command or skill that runs this file.
 
-`CHECKOUT` below is the setup checkout (the Orc-istration clone: the tool notes say where; the Claude Code commands
-use `$ORC_HOME` when set, else the rulebook's "Setup checkout (this machine)" line, else `~/.claude`). Every `review/...` path is relative to it. The review itself runs in the
+`CHECKOUT` below is the setup checkout (the Orc-istration clone). Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `config.json` (under `ORC_DATA_DIR` when set, else under `~/.orc/`), else ask the user. Call it CHECKOUT and confirm `CHECKOUT/review/PROCEDURE.md` exists there; if it does not, stop and say so. Every `review/...` path is relative to it. The review itself runs in the
 reviewed repo's working directory.
 
 **Arguments (all optional):**
@@ -39,7 +38,7 @@ Parse the arguments to determine:
 Fetch first so the comparison is against the current remote base, not a stale local ref — a stale `origin/<BASE>`
 silently reviews the wrong diff:
 
-```bash
+```
 git fetch origin <BASE>
 git diff --name-only origin/<BASE>...<TARGET> -- . ':!.orc/'
 git diff origin/<BASE>...<TARGET> -- . ':!.orc/'
@@ -51,7 +50,7 @@ exclusion wherever an agent's prompt gives it a diff command.
 
 Also collect the change's intent:
 
-```bash
+```
 git log origin/<BASE>..<TARGET> --pretty=format:"%s%n%b"
 ```
 
@@ -349,14 +348,15 @@ the report has **Runtime checks**, the log gets a `## Runtime checks` table with
 
 **Metrics.** Then capture the run's token, context and outcome metrics (`review/metrics.md`):
 
-```bash
+```
 node <CHECKOUT>/tools/orc.mjs metrics capture --workflow pre-pr-review --log <the run log> --mode <lite|full> --version <this file's version>
 ```
 
 Add `--session <id>` or `--transcript <path>` when the tool notes say how to find the current session. It prints the
 report's path; keep it as `METRICS`. The report is written into the reviewed repo (default `.orc/metrics/`) and stays
-uncommitted unless the repo commits its `.orc/` folder. When it exits 1, put its error line under the Step 4 report and
-carry on: metrics never block a review.
+uncommitted unless the repo commits its `.orc/` folder. Capture reads Claude Code transcripts only: outside Claude Code
+it prints `metrics: skipped (...)` and exits 0, so there is no `METRICS`, and the review goes on. When it exits 1, put
+its error line under the Step 4 report and carry on: metrics never block a review.
 
 ---
 
@@ -382,12 +382,13 @@ verdict cells, using the verdict values in `review/calibration.md`, at these mom
 - **The review concludes** (the user asks to commit, open a PR, or moves on): sweep remaining `suggestion:`/`nit:`
   rows to not-actioned — logged but not engaged with, excluded from precision math. `issue:`/`warning:` rows the user
   never addressed stay pending; list them when closing so nothing blocking is silently dropped. After the sweep, run
-  the Step 5 metrics capture again with the same arguments so the report carries the final verdicts.
+  the Step 5 metrics capture again with the same arguments so the report carries the final verdicts (outside Claude
+  Code it reports skipped again, and the review goes on).
 
-The verdict command (`/review-verdict` in Claude Code, or `review/calibration.md` followed by hand) remains available
+The verdict command (your tool notes name it; or `review/calibration.md` followed by hand) remains available
 for leftovers and corrections, but a session that fixes findings as it goes should end with nothing pending.
 
 **Calibration trigger.** After the sweep, apply the calibration trigger in `review/calibration.md`. When it trips,
-close with one line offering the calibration report (`/calibration-report` in Claude Code, or
+close with one line offering the calibration report (the command your tool notes name, or
 `node <CHECKOUT>/tools/orc.mjs calibration`). Do not run it unprompted, and do not mention the trigger when it has not
 tripped.

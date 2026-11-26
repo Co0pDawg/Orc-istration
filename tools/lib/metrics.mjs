@@ -467,9 +467,16 @@ function readReports(dir) {
   return out;
 }
 
-// capture: returns { report, file, warnings } (file is where it goes; the caller writes it unless printing).
-export function capture({ cwd, workflow, session, transcript, log, mode, version, out, now = Date.now(), projectsDir }) {
+export const SKIPPED = 'metrics: skipped (no Claude Code session; capture reads Claude Code transcripts only)';
+
+// capture: returns { report, file, warnings } (file is where it goes; the caller writes it unless printing), or
+// { skipped } with no --session, no --transcript, no CLAUDE_CODE_SESSION_ID and not inside Claude Code (`inClaudeCode`:
+// CLAUDECODE set).
+export function capture({ cwd, workflow, session, transcript, log, mode, version, out, now = Date.now(), projectsDir, inClaudeCode = false }) {
   if (!/^[\w:-]+$/.test(workflow ?? '')) throw new Error('metrics: capture needs --workflow <name> (pre-pr-review, or session for a whole transcript)');
+  // Outside Claude Code there is no session to read: a clean skip, not an error, so a review on another tool goes on.
+  // Inside Claude Code a missing session id is an error (findTranscript says so), not a silent skip.
+  if (!transcript && !session && !inClaudeCode) return { skipped: SKIPPED };
   const mainPath = transcript ? path.resolve(cwd, transcript) : findTranscript(session, projectsDir);
   if (!fs.existsSync(mainPath)) throw new Error(`metrics: transcript not found: ${mainPath}`);
   if (log && !fs.existsSync(path.resolve(cwd, log))) throw new Error(`metrics: run log not found: ${path.resolve(cwd, log)}`);

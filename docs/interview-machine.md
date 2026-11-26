@@ -59,7 +59,7 @@ It writes nothing. Read the output:
 - `would add to settings.json ...` for the guard hook and each preset entry; existing entries are kept, and a working guard the owner already has is not added twice.
 - `WARN ... which is not on disk, so it guards nothing` names an old guard hook whose script is gone; the kit adds its own guard and leaves that entry alone. Mention it to the user.
 - `refused: ... settings.json is not valid JSON` means the owner's `settings.json` is broken. Stop and tell the user; do not edit it.
-- `refused: ... records a full orc install, not a sprint kit` means this machine already has Orc-istration installed. Stop and tell the user: the roster is already there, and the message says how to add `/sprint`.
+- `refused: ... records a full orc install, not a sprint kit` means this machine already has Orc-istration installed. Stop and tell the user: the roster is already there, and if `/sprint` is missing (a full install made before skill generation), running `install --tool claude-code --apply` again adds it, after deleting any hand-copied `skills/sprint/SKILL.md`, as the message says.
 - `--apply would refuse` means a file installed earlier by orc was edited by hand. Stop and tell the user.
 
 ## 4. Apply (seconds)
@@ -89,7 +89,7 @@ Tell the user in one line that the sprint kit is installed and verified.
 
 ## 6. Start the sprint
 
-In the exercise folder, start the sprint with the minutes and the task, for example `/sprint 45` followed by the interviewer's task, or "start a 45-minute sprint: <task>". The skill reads `orchestration/sprint.md` from the clone (the rulebook's "Setup checkout (this machine)" line points at it) and runs the timebox. A pasted task is taken as a finished brief ("as given"); to show requirements gathering instead, say the interviewer is the client, and the sprint starts with Discover: you ask the questions and the agreed `REQUIREMENTS.md` is the first commit. The story-page template, `make-story.mjs` and the theme are also read from the clone, so delete the clone only after the sprint. There is no board on this machine; the rulebook says so, and sprint mode waives it anyway.
+In the exercise folder, start the sprint with the minutes and the task, for example `/sprint 45` followed by the interviewer's task, or "start a 45-minute sprint: <task>". The skill reads `orchestration/sprint.md` from the clone (the rulebook's "Setup checkout (this machine)" line points at it) and runs the timebox. A pasted task is taken as a finished brief ("as given"); to show requirements gathering instead, say the interviewer is the client, and the sprint starts with Discover: you ask the questions and the agreed `REQUIREMENTS.md` is the first commit. The story-page template, `make-story.mjs` and the theme are also read from the clone (`orchestration/sprint/`), so delete the clone only after the sprint. There is no board on this machine; the rulebook says so, and sprint mode waives it anyway.
 
 ## 7. Clean up afterwards
 

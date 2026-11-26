@@ -58,8 +58,10 @@ function bench(argv, env = {}) {
   const dir = tempDir('bench-stub');
   const out = path.join(dir, 'out');
   const fakeHome = tempDir('fakehome');
+  const childEnv = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome, ORC_DATA_DIR: tempDir('bench-data'), ORC_TOOL_BIN_CLAUDE_CODE: stub(dir), ...env };
+  for (const [k, v] of Object.entries(env)) if (v === undefined) delete childEnv[k];
   const r = spawnSync(process.execPath, [ORC, 'bench', ...argv, ...(argv.includes('--out') ? [] : ['--out', out])], {
-    env: { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome, ORC_TOOL_BIN_CLAUDE_CODE: stub(dir), ...env },
+    env: childEnv,
     encoding: 'utf8',
     timeout: 120000,
   });
@@ -72,6 +74,12 @@ function bench(argv, env = {}) {
   }
   return { code: r.status, out: r.stdout, err: r.stderr, calls, runs, results, outDir: out };
 }
+
+// PATH with any folder holding a claude executable removed, so a test can prove binaries.claude-code is used.
+const pathWithoutClaude = (process.env.PATH ?? process.env.Path ?? '')
+  .split(path.delimiter)
+  .filter((d) => d && !['claude', 'claude.exe', 'claude.cmd', 'claude.bat'].some((n) => fs.existsSync(path.join(d, n))))
+  .join(path.delimiter);
 
 const result = (r, name) => JSON.parse(r.results[`${name}.json`]);
 
@@ -572,4 +580,48 @@ test('every real case lists cleanly and its expected rows parse', () => {
   assert.deepStrictEqual(warnings, []);
   assert.strictEqual(cases.length, 7);
   for (const c of cases.filter((x) => x.expect === 'REWORK')) assert.ok(c.expected.length >= 1, c.id);
+});
+
+test('bench run uses binaries.claude-code from ~/.orc/config.json, and warns and continues on invalid config.json', () => {
+  const stubDir = tempDir('bench-cfg-bin');
+  const bin = stub(stubDir);
+  const data = tempDir('bench-orcdata');
+  fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({ version: 1, binaries: { 'claude-code': bin } }));
+  const r = bench(['run', '--case', 'csv-quoted-fields'], {
+    ORC_DATA_DIR: data,
+    ORC_TOOL_BIN_CLAUDE_CODE: undefined,
+    PATH: pathWithoutClaude,
+    STUB_SOLVE: csvSolution(),
+  });
+  assert.strictEqual(r.code, 0, r.err);
+  const calls = fs.readFileSync(path.join(stubDir, 'calls.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.strictEqual(calls.length, 1, 'the stub named only in binaries.claude-code ran');
+  assert.strictEqual(result(r, 'csv-quoted-fields').outcome, 'pass');
+  assert.strictEqual(result(r, 'csv-quoted-fields').claudeVersion, '9.9.9');
+
+  fs.writeFileSync(path.join(data, 'config.json'), '{not json');
+  const warn = bench(['run', '--case', 'csv-quoted-fields', '--dry-run'], { ORC_DATA_DIR: data });
+  assert.strictEqual(warn.code, 0, warn.err);
+  assert.match(warn.err, /WARN .*config\.json: not valid JSON.*bench run goes on without its binaries/);
+});
+
+test('bench run refuses a binaries.claude-code that does not exist, and starts nothing', () => {
+  const data = tempDir('bench-orcdata-missing');
+  const configFile = path.join(data, 'config.json');
+  const gone = path.join(tempDir('bench-nobin'), 'claude.exe');
+  fs.writeFileSync(configFile, JSON.stringify({ version: 1, binaries: { 'claude-code': gone } }));
+  const r = bench(['run', '--case', 'csv-quoted-fields'], { ORC_DATA_DIR: data, ORC_TOOL_BIN_CLAUDE_CODE: undefined, PATH: pathWithoutClaude });
+  assert.strictEqual(r.code, 1);
+  assert.ok(r.err.includes(`bench: cannot run claude-code: ${gone} (binaries.claude-code in ${configFile}) does not exist`), r.err);
+  assert.deepStrictEqual(r.calls, []);
+  assert.deepStrictEqual(r.runs, [], 'no run folder, no result');
+});
+
+test('bench run ignores ~/.orc/models.json so a benchmark depends on the checkout and flags alone', () => {
+  const data = tempDir('bench-shared-models');
+  fs.writeFileSync(path.join(data, 'models.json'), JSON.stringify({ 'claude-code': { high: { model: 'shared-override-model', effort: 'low' } } }));
+  const r = bench(['run', '--case', 'csv-quoted-fields', '--dry-run'], { ORC_DATA_DIR: data });
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.out, / --model opus --effort high /);
+  assert.doesNotMatch(r.out, /shared-override-model/);
 });

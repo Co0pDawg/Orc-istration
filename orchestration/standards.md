@@ -2,12 +2,7 @@
 
 This procedure sets up a project's coding standards: `STANDARDS.md` at the project's root. Builders follow it, and refuters check diffs against its Review checklists. Each section comes from the cited archive in this setup checkout (`standards/`, format in `standards/README.md`), or from the user's own files.
 
-`<repo>` below is the project, and `<setup>` is the setup checkout, found in this order:
-
-1. The `ORC_HOME` environment variable, when set.
-2. The "Setup checkout (this machine)" line in your rulebook's tool notes (`install` writes it).
-3. For Claude Code, `~/.claude` when it is the checkout (it has `tools/orc.mjs`).
-4. If none applies, ask the user for the path.
+`<repo>` below is the project, and `<setup>` is the setup checkout. Find the Orc-istration checkout: the "Setup checkout (this machine)" line in the rulebook's tool notes, else `setupCheckout` in `config.json` (under `ORC_DATA_DIR` when set, else under `~/.orc/`), else ask the user. Call it CHECKOUT and confirm `CHECKOUT/tools/orc.mjs` exists there; if it does not, stop and say so. `<setup>` below is that CHECKOUT. Commands run as `node "<setup>/tools/orc.mjs" standards ...`, quoted for paths with spaces, with `--repo <repo>`. The generated `repo-standards` skill points here.
 
 ## When to run it
 
@@ -25,7 +20,7 @@ The result lists each detected archive id with its match count and example paths
 
 ## Step 2: ask the user (one ask)
 
-Ask a single several-picks question. In Claude Code, that is one `AskUserQuestion` with `multiSelect: true`. Other tools use their own question tool, or a plain numbered question. Each question needs 2 to 4 options, plus a free-text "Other".
+Ask a single several-picks question with the tool's question prompt (your tool notes say which, and how it takes several picks), or as a plain numbered question when the tool has none. Each question needs 2 to 4 options, plus a free-text "Other".
 
 If `STANDARDS.md` already exists (`standardsFile` is true), the same single ask holds three questions instead:
 
@@ -43,9 +38,9 @@ If `STANDARDS.md` already exists (`standardsFile` is true), the same single ask 
   - When more than 4 are detected, split them across two questions in the same ask, at least 2 options each (5 as 3+2, 6 as 3+3). Past 8, name the rest in an option's description and leave them to "Other".
   - The free-text "Other" lets the user name a stack that was not detected or is not in the archive.
 - **Question 2: "Do you have your own standards to import?"** (single-select)
-  - "No, the archive is enough".
+  - "No, the archive is enough" (only the archive sections picked above).
   - "Yes, a local file or folder" (the path goes in the notes or in Other).
-  - "Yes, a URL".
+  - "Yes, a URL" (fetched and imported as Markdown, Step 4).
 
 ## Step 3: stacks not in the archive
 

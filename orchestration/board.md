@@ -1,0 +1,31 @@
+# Board
+
+How the orchestrator writes an orchestrated task to the live board: open the session and its cards, write at each dispatch, report and commit, and mark it Done. Use it at the start of any task that dispatches a builder, refuter or debugger, and at each of those moments after; not for inline work or a lone scout or researcher lookup. The rulebook's "Orchestration Board" section is the summary; this file is the step list. The generated `board` skill points here.
+
+The protocol is the "Writing protocol" section of the board's `README.md`: read it at the start of each orchestrated task, and follow it over anything here. The board is its own repo (Orc-Dashboard). Find its README at `<board repo>/README.md`, where `<board repo>` is `board.repo` in `~/.orc/config.json` (suggested: `~/.orc/board`), else `~/.orc/board/README.md`. The board address is in the Board line of the tool notes (added at install from `~/.orc/config.json`). No address: skip the board and say so once.
+
+## Backend
+
+- **Artifact** (`claude.ai/artifact/...`): only a tool whose notes say how can write it (the tool notes name the tool to load, how to resolve the address and how to pin each write). Any other tool skips the board and says so once.
+- **Local** (`http://localhost:<port>`): `node <board repo>/local/board.js batch` for the Start write, `append` for progress and events, `update` for fields. Exit 2 is a version conflict.
+
+## Every write
+
+- Take times from the clock at the moment of the write, ISO 8601 with offset (`2026-11-25T14:03:07-05:00`), never an estimate. On any platform, `node <setup>/tools/orc.mjs now` prints it (`<setup>` is the setup checkout); in a POSIX shell, `date -Iseconds`; in PowerShell, `Get-Date -Format "yyyy-MM-ddTHH:mm:sszzz"`.
+- Pin each write to an existing doc to the version last read. On a conflict, re-read and redo.
+- Bump the session's `updated`, so it sorts first.
+- Write more than one doc in one `batch`.
+- A failed write is reported once and never blocks the task.
+
+## The moments
+
+1. **Start**, before the first dispatch, as one batch: the session doc `sessions/<YYYY-MM-DD>-<project>-<slug>` and one `cards/<id>` per task, every planned stage `pending`. `stages` is an array in plan order, never an object. Add `github: "owner/repo"` when the repo's tickets are GitHub issues. Then do any other Start steps the README lists for this machine.
+2. **Dispatch**: set the card's `agent`, append `{at, text: "<agent> dispatched on #<task>", card}`, update `now` and `status`. Put `BOARD: <address> card cards/<id> stage <label>` in the brief (artifact backend: add `slug <uuid>` after the address).
+3. **Check-in** and **heartbeat**: append to that dispatch event's `sub` only when something changed. Schedule a check every 20 to 30 minutes for a dispatch expected to run past about 30 minutes.
+4. **Report**: write `tokens` from the completion notice. In that same write, read the card and correct any stage the agent did not move. Append the outcome as a top-level event naming the card (`refuter ACCEPT`, `builder done: 40 tests pass`).
+5. **Commit**: set the card's `commit` and append an event naming the hash. **PR opened**: set the session's `pr: {id, url, status: "draft"}`.
+6. **Finish**, also when the task is abandoned or handed off: session `status: "Done"`, `completed`, a closing `now` and a final event.
+
+## Refuters, scouts and researchers
+
+Where the tool notes say these roles cannot write the board, give a refuter's brief `BOARD: none`, and after it reports, write its stage, `note` and `tokens` yourself. Builders and debuggers write their own card's `progress`, `note` and named stage. Agents never write the session doc.

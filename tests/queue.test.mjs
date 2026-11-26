@@ -9,7 +9,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { main } from '../tools/orc.mjs';
-import { allowProblem, buildPrompt, classify, prBody, parseGithubRemote, untilDeadline, sessionEnv, lockToken, runCommand, BASE_TOOLS, DENY_TOOLS, FOOTER, TOKEN_PLACEHOLDER, REPORT_LIMIT } from '../tools/lib/queue.mjs';
+import { allowProblem, buildPrompt, classify, prBody, parseGithubRemote, untilDeadline, sessionEnv, lockToken, runCommand, queueOptions, queuePlan, BASE_TOOLS, DENY_TOOLS, FOOTER, TOKEN_PLACEHOLDER, REPORT_LIMIT } from '../tools/lib/queue.mjs';
+import { formatCommand } from '../tools/lib/dispatch.mjs';
 import { isolateHome } from './helpers.mjs';
 
 // No test in this file can reach the real home folder: commands that default --home use this scratch one.
@@ -197,12 +198,21 @@ const r = spawnSync('git', argv, { stdio: 'inherit', shell: false, windowsHide: 
 process.exit(r.status ?? 1);
 `;
 
+// PATH with any folder holding a claude executable removed, so a test can prove binaries.claude-code is used.
+const pathWithoutClaude = (process.env.PATH ?? process.env.Path ?? '')
+  .split(path.delimiter)
+  .filter((d) => d && !['claude', 'claude.exe', 'claude.cmd', 'claude.bat'].some((n) => fs.existsSync(path.join(d, n))))
+  .join(path.delimiter);
+
 function queue(s, argv, { modes = {}, state = true, repoDir = s.dev, gitLog = null, gitFail = null, extraEnv = {} } = {}) {
   const logs = newLogs(s);
-  const env = { ...process.env, ...stubEnv(s, modes, logs) };
+  const env = { ...process.env, ORC_DATA_DIR: path.join(s.home, '.orc'), ...stubEnv(s, modes, logs) };
   delete env.ORC_TOOL_BIN_GIT;
   delete env.NODE_TEST_CONTEXT;
-  Object.assign(env, extraEnv);
+  for (const [k, v] of Object.entries(extraEnv)) {
+    if (v === undefined) delete env[k];
+    else env[k] = v;
+  }
   if (gitLog) {
     const wrapper = path.join(s.stubs, 'git-wrapper.mjs');
     fs.writeFileSync(wrapper, GIT_WRAPPER);
@@ -448,6 +458,8 @@ test('run without --apply is a dry run: it prints the plan with the deny list an
   assert.match(r.out, /worktree: .*wt \(detached at origin\/main, then branch queue\/issue-1\)/);
   assert.match(r.out, /-p --output-format json --permission-mode acceptEdits --max-budget-usd 5 --no-session-persistence --strict-mcp-config --model \S+ --effort high --allowedTools "Read,Edit,Write,Glob,Grep,Agent,Bash\(git status:\*\),Bash\(git diff:\*\),Bash\(git log:\*\),Bash\(git add:\*\),Bash\(git commit:\*\),Bash\(node:\*\),Bash\(npm test:\*\),Bash\(npm run:\*\),Bash\(npm ci:\*\)" --disallowedTools /);
   assert.ok(r.out.includes(`--disallowedTools ${JSON.stringify(DENY_TOOLS.join(','))}`), '--allow leaves the deny list whole');
+  assert.match(r.out, /^ {2}stdin: \d+ bytes \(the prompt\)$/m);
+  assert.doesNotMatch(r.out, /\(undefined\)/);
   assert.doesNotMatch(r.out, /--bare/);
   assert.match(r.out, /dry run: nothing changed/);
   assert.doesNotMatch(r.err, /WARN/, 'a protected base gives no warning');
@@ -985,4 +997,83 @@ test('the dry run past --until says each issue would not start, and prints no "w
   assert.match(r.out, /would not start issue #1: past --until/);
   assert.match(r.out, /would not start issue #2: past --until/);
   assert.doesNotMatch(r.out, /would run issue/);
+});
+
+test('queuePlan sets stdinHolds to "the prompt" and resolves binaries from config.json', () => {
+  const dir = tempDir('queue-plan-bin');
+  const stubFile = path.join(dir, 'claude-stub.mjs');
+  fs.writeFileSync(stubFile, 'process.exit(0);\n');
+  const o = queueOptions({}, { 'claude-code': { high: { model: 'opus', effort: 'high' } } }, dir);
+  const prompt = 'hello prompt';
+  const plan = queuePlan(o, prompt, { PATH: pathWithoutClaude }, { binaries: { 'claude-code': stubFile }, configFile: path.join(dir, 'config.json') });
+  assert.strictEqual(plan.stdinHolds, 'the prompt');
+  assert.strictEqual(plan.exe.source, 'config');
+  assert.strictEqual(plan.exe.command, process.execPath);
+  assert.strictEqual(plan.argv[0], stubFile);
+  const formatted = formatCommand(plan);
+  assert.match(formatted, /^stdin: 12 bytes \(the prompt\)$/m);
+  assert.doesNotMatch(formatted, /\(undefined\)/);
+});
+
+test('queue run uses binaries.claude-code from ~/.orc/config.json, and warns and continues on invalid config.json', () => {
+  const s = setup({ issues: [issue(1)] });
+  const data = tempDir('queue-orcdata');
+  fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({ version: 1, binaries: { 'claude-code': path.join(s.stubs, 'claude.mjs') } }));
+  const r = queue(s, ['run', '--apply'], { extraEnv: { ORC_DATA_DIR: data, ORC_TOOL_BIN_CLAUDE_CODE: undefined, PATH: pathWithoutClaude } });
+  assert.strictEqual(r.code, 0, r.err);
+  assert.strictEqual(r.claude.length, 1, 'the stub named only in binaries.claude-code ran');
+  assert.strictEqual(marker(s, 1).outcome, 'handled');
+
+  fs.writeFileSync(path.join(data, 'config.json'), '{not json');
+  const warn = queue(s, ['run'], { extraEnv: { ORC_DATA_DIR: data } });
+  assert.strictEqual(warn.code, 0, warn.err);
+  assert.match(warn.err, /WARN .*config\.json: not valid JSON.*queue run goes on without its binaries/);
+});
+
+test('queue run --apply refuses a binaries.claude-code that does not exist, and starts nothing', () => {
+  const s = setup({ issues: [issue(1)] });
+  const data = tempDir('queue-orcdata-missing');
+  const configFile = path.join(data, 'config.json');
+  const gone = path.join(tempDir('queue-nobin'), 'claude.exe');
+  fs.writeFileSync(configFile, JSON.stringify({ version: 1, binaries: { 'claude-code': gone } }));
+  const r = queue(s, ['run', '--apply'], { extraEnv: { ORC_DATA_DIR: data, ORC_TOOL_BIN_CLAUDE_CODE: undefined, PATH: pathWithoutClaude } });
+  assert.strictEqual(r.code, 1);
+  assert.ok(r.err.includes(`cannot run claude-code: ${gone} (binaries.claude-code in ${configFile}) does not exist`), r.err);
+  assert.deepStrictEqual(r.claude, []);
+  assert.strictEqual(marker(s, 1), null);
+  assert.deepStrictEqual(localQueueBranches(s), []);
+});
+
+test('queue run reads ~/.orc/models.json (printing unknown-tool warnings) as dispatch does', () => {
+  const s = setup({ issues: [issue(1)] });
+  const data = tempDir('queue-shared-models');
+  fs.writeFileSync(
+    path.join(data, 'models.json'),
+    JSON.stringify({ 'claude-code': { high: { model: 'shared-queue-model', effort: 'medium' } }, 'future-tool': { high: { model: 'x' } } }),
+  );
+  const r = queue(s, ['run'], { extraEnv: { ORC_DATA_DIR: data } });
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.out, / --model shared-queue-model --effort medium /);
+  assert.match(r.err, /WARN .*models\.json: unknown tool id "future-tool"/);
+});
+
+test('queue stores its state under ORC_DATA_DIR/queue/<owner>/<repo>, not HOME, and --state still overrides', () => {
+  const s = setup({ issues: [issue(1), issue(2)] });
+  const data = tempDir('queue-state-home');
+  const expectedState = path.join(data, 'queue', 'owner', 'repo');
+  const dry = queue(s, ['run'], { state: false, extraEnv: { ORC_DATA_DIR: data } });
+  assert.strictEqual(dry.code, 0, dry.err);
+  assert.ok(dry.out.includes(path.join(expectedState, 'wt')), `worktree under ORC_DATA_DIR:\n${dry.out}`);
+  assert.ok(!dry.out.includes(path.join(s.home, '.orc')), 'dry run does not point at HOME/.orc');
+
+  const applied = queue(s, ['run', '--apply'], { state: false, extraEnv: { ORC_DATA_DIR: data } });
+  assert.strictEqual(applied.code, 0, applied.err);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(expectedState, 'issue-1.json'), 'utf8')).outcome, 'handled');
+  assert.strictEqual(fs.existsSync(path.join(s.home, '.orc')), false, 'HOME/.orc stays absent');
+
+  const custom = tempDir('queue-state-override');
+  const over = queue(s, ['run', '--apply', '--state', custom], { state: false, extraEnv: { ORC_DATA_DIR: data } });
+  assert.strictEqual(over.code, 0, over.err);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(custom, 'issue-2.json'), 'utf8')).outcome, 'handled');
+  assert.strictEqual(fs.existsSync(path.join(expectedState, 'issue-2.json')), false, '--state overrides ORC_DATA_DIR');
 });

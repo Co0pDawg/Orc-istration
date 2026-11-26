@@ -6,11 +6,11 @@ Write a PR description for the current branch that follows the repo's PR guideli
 
 ## Step 1 - Establish the branch
 
-```bash
+```
 git rev-parse --abbrev-ref HEAD
 git status --short
-git rev-parse --abbrev-ref --symbolic-full-name @{u}
-git rev-list --count @{u}..HEAD
+git rev-parse --abbrev-ref --symbolic-full-name '@{u}'
+git rev-list --count '@{u}..HEAD'
 ```
 
 **Stop and report** when:
@@ -28,7 +28,7 @@ If `@{u}` does not resolve, or the count is non-zero, the remote lacks local com
 
 Start from `BASE` (Settings). If the rulebook routes some branches elsewhere (release or hotfix branches to the production branch, say), apply its rule to the branch name. Sanity-check with the counts:
 
-```bash
+```
 git fetch origin <BASE> <other candidate>
 git rev-list --count origin/<BASE>..HEAD
 git rev-list --count origin/<other candidate>..HEAD
@@ -38,7 +38,7 @@ A branch far ahead of one candidate but a commit or two ahead of the other was c
 
 ## Step 3 - Gather change context
 
-```bash
+```
 git diff origin/<TARGET>...HEAD --stat
 git log origin/<TARGET>..HEAD --pretty=format:"%s%n%b"
 ```
@@ -79,7 +79,7 @@ Follow the repo's PR guidelines (its rulebook or documentation map names them) f
 8. **ASCII punctuation only:** no em or en dashes, curly quotes or ellipsis characters; use ` - `, straight quotes and `...`. Write it right the first time: a description is visible from the moment the PR exists.
 9. End with any line the rulebook requires on every PR description.
 
-Write it to `<scratch>/pr-<branch-slug>.md` and print it in full. Check the budget with `wc -w -c <file>` and scan with `grep -n '[^ -~]' <file>`; any printed line holds a non-ASCII character. Regenerate the offending sentence rather than find-and-replacing in the file (a blind dash replace leaves doubled spaces).
+Write it to `<scratch>/pr-<branch-slug>.md` and print it in full. Check the budget and scan for non-ASCII characters with `node <checkout>/tools/orc.mjs text-check <file> --max-words 399 --max-bytes 4000 --ascii`: it prints the word and byte counts, then one `non-ascii: <line>: <text>` line per offending line, and exits 1 when the text is over budget or holds one. Regenerate the offending sentence rather than find-and-replacing in the file (a blind dash replace leaves doubled spaces).
 
 ## Step 6 - Create the draft PR
 

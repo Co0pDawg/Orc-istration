@@ -1,13 +1,13 @@
 # Workflows
 
-Tool-neutral procedures for the work around the build loop. Each is a plain markdown procedure the orchestrator follows; in Claude Code a thin `adapters/claude-code/commands/<name>.md` wrapper (installed into `~/.claude/commands/`) finds this checkout and runs it.
+Tool-neutral procedures for the work around the build loop. Each is a plain markdown procedure the orchestrator follows. `install` generates a thin wrapper for each from the procedure catalogue (`core/procedures.mjs`): a command or skill per tool, which finds this checkout and runs it (your tool notes say where it lands and how to start it).
 
 | Workflow | What it does |
 |---|---|
 | `start.md` | Work a ticket end to end: fetch and judge it, plan, branch, grill, builder/refuter loop per task with commit and push after ACCEPT, full tests once, pre-PR review, live verification, durable-rules check, live checklist on the ticket |
 | `grill.md` | Interview the developer on a plan until no decision is open; append a Decisions list |
 | `draft-pr.md` | Write the PR description from the branch and its work items; open it as a draft |
-| `peer-review.md` (+ `peer-review-score.sh`) | Review and fix a teammate's PR at a tier sized to its diff |
+| `peer-review.md` | Review and fix a teammate's PR at a tier sized to its diff (`orc pr-size` scores it) |
 | `create.md` | File a work item from the conversation |
 | `fix-ci.md` | Get a failing CI pipeline back to green in diagnose, fix, deliver, queue, wait, review cycles |
 
@@ -33,10 +33,12 @@ Generated files (ticket dumps, descriptions, comment bodies, downloads) go in th
 
 ## Orchestration
 
-The rulebook (`core/AGENTS.md` in this checkout) governs every dispatch: marching orders, the build loop, the rate-limit guard, test runs, the pre-PR review tiers and the board. Dispatch agents by roster name. Ask the developer through the tool's question prompt (in Claude Code, `AskUserQuestion`), never only in prose.
+The rulebook (`core/AGENTS.md` in this checkout) governs every dispatch: marching orders, the build loop, the rate-limit guard, test runs, the pre-PR review tiers and the board. Dispatch agents by roster name. Ask the developer through the tool's question prompt (see your tool notes), never only in prose.
 
 **Lite mode** saves usage on a tight plan: `--lite`, or the line `Orc orchestration: lite` in the developer's rulebook (`--full` overrides it). Each workflow says what it changes. A change in an extra-scrutiny area the target repo's rulebook or review rules name always runs full.
 
-**Metrics** (Claude Code only): `node <checkout>/tools/orc.mjs metrics capture --workflow <name> [--mode lite|full]` writes a report under `.orc/metrics/` (`review/metrics.md`). A capture that exits 1 is noted in the summary and never stops the run.
+**Metrics** (Claude Code only): `node <checkout>/tools/orc.mjs metrics capture --workflow <name> [--mode lite|full]` writes a report under `.orc/metrics/` (`review/metrics.md`). Outside Claude Code it prints `metrics: skipped` and exits 0, and the run goes on. A capture that exits 1 is noted in the summary and never stops the run.
+
+**Commands, not shell snippets:** a step that computes something runs an `orc` command (`pr-size`, `text-check`, `poll`, `now`; `node <checkout>/tools/orc.mjs help <command>`) or plain `git`, so it runs the same in any shell.
 
 **Changing a workflow:** git history is the record. Keep step numbers stable, since workflows cite each other's steps.

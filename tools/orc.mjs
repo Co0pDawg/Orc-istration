@@ -12,6 +12,9 @@ import { sha256, diskHash, loadManifest, writeManifest, safeRel, escapes } from 
 import { knownTools, validateModels } from './lib/models.mjs';
 import { briefTemplate, lintBrief, parseMarchingOrders } from './lib/brief.mjs';
 import { reviewTier } from './lib/reviewtier.mjs';
+import { prSize } from './lib/prsize.mjs';
+import { textCheck } from './lib/textcheck.mjs';
+import { pollUntil } from './lib/poll.mjs';
 import { costlog, readBoardExport } from './lib/costlog.mjs';
 import { calibrationReport, DEFAULT_MIN_PRECISION } from './lib/calibration.mjs';
 import { listCases, scoreReport } from './lib/corpus.mjs';
@@ -19,8 +22,8 @@ import { listBenchCases, runBench, loadBenchResults, benchReport, BENCH_USAGE } 
 import { runQueue, QUEUE_USAGE } from './lib/queue.mjs';
 import { capture, loadRuns, metricsReport, repoTop, DEFAULT_PRICES } from './lib/metrics.mjs';
 import { dispatchPlan, runDispatch, formatCommand, argvProblem, binEnv, unavailable } from './lib/dispatch.mjs';
-import { mergeHooks, formatLike, readSettings, writeSettings } from './lib/hooks.mjs';
-import { KIT_HOOK_SCRIPTS, KIT_SKILLS, KIT_NOTES, KNOWN_STACKS, presetRules, detectStacks, kitHookExample, planKitSettings, removeKitSettings, kitRecordProblem, guardStatus } from './lib/sprintkit.mjs';
+import { mergeHooks, formatLike, readSettings, writeSettings, ANTIGRAVITY_GUARD_KEY, antigravityGuardPath, antigravityGuardScript, setAntigravityGuard, removeAntigravityGuard } from './lib/hooks.mjs';
+import { KIT_HOOK_SCRIPTS, KIT_PROCEDURES, KIT_NOTES, KNOWN_STACKS, presetRules, detectStacks, kitHookExample, planKitSettings, removeKitSettings, kitRecordProblem, guardStatus } from './lib/sprintkit.mjs';
 import { decodeText, readText } from './lib/text.mjs';
 import { USAGE, globalHelp, commandHelp } from './lib/help.mjs';
 import { validateArchive, runStandards, backupPath } from './lib/standards.mjs';
@@ -32,7 +35,7 @@ const DEFAULT_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 // The checkout running orc.mjs, with forward slashes. The last line of every install points at the standards setup.
 // The real (on-disk) case, so every shell that starts node writes and compares the same line.
 const SETUP = fs.realpathSync.native(DEFAULT_REPO).replace(/\\/g, '/');
-const STANDARDS_NEXT = `set up each project's coding standards: see ${SETUP}/orchestration/standards.md (Claude Code: the repo-standards skill, where ~/.claude/skills has it).`;
+const STANDARDS_NEXT = `set up each project's coding standards: see ${SETUP}/orchestration/standards.md (Claude Code and Antigravity: the repo-standards skill that install generates).`;
 
 // The Setup checkout line install adds (status adds it too): the checkout running orc.mjs, never recorded in the manifest.
 const setupNotes = () => [`- Setup checkout (this machine): ${SETUP}. Standards setup: node "${SETUP}/tools/orc.mjs" standards ...; procedure: ${SETUP}/orchestration/standards.md.`];
@@ -145,6 +148,24 @@ export async function loadAdapters(repo) {
     adapters.push(adapter);
   }
   return adapters;
+}
+
+// The procedure catalogue (core/procedures.mjs) of the checkout being built.
+export async function loadProcedures(repo) {
+  const file = path.join(repo, 'core', 'procedures.mjs');
+  if (!fs.existsSync(file)) throw new Error(`${file} is missing: the procedure catalogue the adapters render skills and commands from`);
+  return (await import(pathToFileURL(file).href)).PROCEDURES;
+}
+
+// A generated file: the marker on its first lines (rulebooks, TOML agents) or, under front matter, on the first line of
+// its body (generated skills and commands).
+export function isOrcGenerated(text) {
+  if (isGenerated(text)) return true;
+  try {
+    return isGenerated(parse(text).body);
+  } catch {
+    return false;
+  }
 }
 
 export function renderNotes(adapter, extra = [], profiles = []) {
@@ -330,17 +351,27 @@ function targetPathProblems(home, files) {
 // the Setup checkout line.
 const installNotes = (chosen, toolId) => [...(chosen.sprintKit ? KIT_NOTES : boardNotes(chosen, toolId)), ...setupNotes()];
 
-// The files a kit adds beside the build: the sprint skill under <root>/skills/.
-function kitFiles(repo, adapter) {
-  return KIT_SKILLS.map((rel) => ({ path: `${adapter.home.root}/${rel}`, content: read(path.join(repo, ...rel.split('/'))) }));
-}
-
 const SETTINGS_REL = '.claude/settings.json';
 // Two absolute paths name the same file (case-insensitive on Windows and macOS).
 const samePath = (a, b) => {
   const fold = ['win32', 'darwin'].includes(process.platform) ? (p) => path.resolve(p).toLowerCase() : (p) => path.resolve(p);
   return fold(a) === fold(b);
 };
+// A hooks.json (read with readSettings) that orc would re-indent on write: the WARN line, or null.
+const layoutWarning = (target, { original, settings }) =>
+  original !== null && formatLike(original, settings) !== original
+    ? `WARN ${target} is not in plain indented JSON layout; writing it re-indents the existing content (values and order unchanged)`
+    : null;
+
+// Removes only orc-guard from a read Antigravity hooks.json (`hooks --remove`, and uninstall when it deletes the guard
+// script): every other top-level key untouched in value and order, the BOM, indent and line ending kept, the old file
+// backed up first. Returns the backup path.
+function writeGuardRemoval(target, { original, bom, settings }, when) {
+  const backup = backupPath(target, when);
+  writeSettings(target, bom + formatLike(original, removeAntigravityGuard(settings).merged), backup);
+  return backup;
+}
+
 const KIT_NEXT = `start a fresh Claude Code session and check that /sprint and the roster agents are listed; then ask for a sprint (${SETUP}/docs/interview-machine.md).`;
 const KIT_RESTORABLE = 'replace (hand-written; backed up, uninstall restores it)';
 
@@ -403,8 +434,10 @@ function emittedTools(file) {
   return Array.isArray(data.tools) ? data.tools : String(data.tools).split(',').map((s) => s.trim());
 }
 
-// Returns {files, errors, warnings, rulebook}. Paths are home-relative with forward slashes; agent files carry `role`.
-export function buildTool(adapter, roles, models, agentsMd, { extraNotes = [], profiles = [] } = {}) {
+// Returns {files, errors, warnings, rulebook}. Paths are home-relative with forward slashes; agent files carry `role`,
+// and the skills and commands an adapter renders from the procedure catalogue carry `procedure` (its name) and a
+// `handCopyLabel`, so a hand copy from before generation is kept rather than refusing the install.
+export function buildTool(adapter, roles, models, agentsMd, { extraNotes = [], profiles = [], procedures = [] } = {}) {
   const errors = [];
   const warnings = [];
   let rulebook = null;
@@ -415,6 +448,22 @@ export function buildTool(adapter, roles, models, agentsMd, { extraNotes = [], p
     const tierModel = tiers[role.tier];
     if (!tierModel) errors.push(`${adapter.id}: no model for tier ${role.tier}`);
     else files.push({ ...adapter.renderAgent(role, tierModel), role: role.name });
+  }
+  if (adapter.renderProcedure) {
+    for (const p of procedures) {
+      let f;
+      try {
+        f = adapter.renderProcedure(p);
+      } catch (e) {
+        errors.push(e instanceof Error ? e.message : String(e));
+        continue;
+      }
+      const handCopyLabel = /(^|\/)commands\/[^/]+\.md$/.test(f.path) ? 'command' : 'skill';
+      files.push({ ...f, procedure: p.name, handCopyLabel });
+      const cap = adapter.limits?.skillBytes;
+      const size = Buffer.byteLength(parse(f.content).body, 'utf8');
+      if (cap && size >= cap) errors.push(`${adapter.id}: ${f.path} body is ${size} bytes; the limit is under ${cap}`);
+    }
   }
   const allowed = allowedTools(adapter);
   const editTools = new Set(adapter.capabilityTools?.edit ?? []);
@@ -457,9 +506,10 @@ async function buildAll(repo, toolId, { local = true, shared = false, extraNotes
   const models = loadModels(repo, { local, shared, env, warn });
   const agentsMd = read(path.join(repo, 'core', 'AGENTS.md'));
   const adapters = await loadAdapters(repo);
+  const procedures = await loadProcedures(repo);
   const picked = !toolId || toolId === 'all' ? adapters : adapters.filter((a) => a.id === toolId);
   if (!picked.length) throw new Error(`unknown tool ${toolId}; known: ${adapters.map((a) => a.id).join(', ')}`);
-  return picked.map((adapter) => ({ adapter, ...buildTool(adapter, roles, models, agentsMd, { extraNotes, profiles: loaded }) }));
+  return picked.map((adapter) => ({ adapter, ...buildTool(adapter, roles, models, agentsMd, { extraNotes, profiles: loaded, procedures }) }));
 }
 
 // The scripts the tool's example hooks run (adapter.hookScripts), as files under its root: install copies them beside
@@ -481,13 +531,18 @@ function adapterStaticFiles(repo, adapter, { sprintKit = false } = {}) {
   }));
 }
 
+// The build files a sprint kit installs: every file but the generated procedures outside KIT_PROCEDURES. A kit replaces
+// a differing owner copy after a backup (uninstall restores it), so its procedure files carry no hand-copy label.
+function kitBuiltFiles(builtFiles) {
+  return builtFiles.filter((f) => !f.procedure || KIT_PROCEDURES.includes(f.procedure)).map((f) => (f.procedure ? { ...f, handCopyLabel: undefined } : f));
+}
+
 // Every file install writes and status compares for an adapter, excluding build-only files (`install: false`).
 function installFileList(repo, adapter, builtFiles, { sprintKit = false } = {}) {
   return [
-    ...builtFiles,
+    ...(sprintKit ? kitBuiltFiles(builtFiles) : builtFiles),
     ...hookScriptFiles(repo, adapter, { sprintKit }),
     ...adapterStaticFiles(repo, adapter, { sprintKit }),
-    ...(sprintKit ? kitFiles(repo, adapter) : []),
   ].filter((f) => f.install !== false);
 }
 
@@ -502,11 +557,11 @@ function walkFiles(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walkFiles(path.join(dir, e.name)) : [path.join(dir, e.name)]));
 }
 
-// What to edit for a built file: an agent file comes from its role, a command from the adapter, and the other
-// rulebook files from the core rulebook, the tool notes and the adapter.
+// What to edit for a built file: an agent file comes from its role, a generated skill or command from the procedure
+// catalogue and the adapter, and the other rulebook files from the core rulebook, the tool notes and the adapter.
 function sourceOf(adapter, file) {
   if (file.role) return { src: `core/roles/${file.role}.md`, those: false };
-  if (/(^|\/)commands\/[^/]+\.md$/.test(file.path)) return { src: `adapters/${adapter.id}.mjs`, those: false };
+  if (file.procedure) return { src: `core/procedures.mjs / adapters/${adapter.id}.mjs`, those: true };
   return { src: `core/AGENTS.md / adapters/${adapter.id}.notes.md / adapters/${adapter.id}.mjs`, those: true };
 }
 
@@ -558,12 +613,28 @@ export function firstDiffLine(a, b) {
   return 0;
 }
 
+// Local time with its UTC offset, to the second (2026-11-25T12:01:43-05:00): the board's timestamp, `orc now`.
+export function isoNow(d = new Date()) {
+  const p = (n) => String(Math.abs(n)).padStart(2, '0');
+  const off = -d.getTimezoneOffset();
+  const zone = `${off < 0 ? '-' : '+'}${p(Math.trunc(off / 60))}:${p(off % 60)}`;
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}${zone}`;
+}
+
+// `--timeout` for poll and dispatch: whole seconds from 1 to 86400; 0 when not given, NaN when invalid.
+const parseTimeout = (value) => {
+  if (value === undefined) return 0;
+  const n = /^\d+$/.test(value) ? Number(value) : NaN;
+  return n >= 1 && n <= 86400 ? n : NaN;
+};
+const TIMEOUT_USAGE = (value) => `--timeout needs a whole number of seconds from 1 to 86400, got ${value}`;
+
 function stamp(d = new Date()) {
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices', 'stack', 'from', 'case', 'report', 'variant', 'models', 'budget-usd', 'runs', 'label', 'author', 'max', 'until', 'model', 'allow', 'state', 'issue', 'family', 'prefer'];
+const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices', 'stack', 'from', 'case', 'report', 'variant', 'models', 'budget-usd', 'runs', 'label', 'author', 'max', 'until', 'model', 'allow', 'state', 'issue', 'family', 'prefer', 'head', 'sensitive', 'max-words', 'max-bytes', 'every'];
 
 // Value options that may repeat; each value may also be comma-separated.
 const LIST_OPTIONS = ['profile', 'stack'];
@@ -571,7 +642,7 @@ const LIST_OPTIONS = ['profile', 'stack'];
 // Value options that may repeat but are never comma-split (paths, case ids, logins, tool rules).
 const REPEAT_OPTIONS = ['from', 'case', 'author', 'allow'];
 
-const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print', 'json', 'sprint-kit', 'keep', 'keep-output', 'all'];
+const FLAG_OPTIONS = ['help', 'apply', 'force', 'from-stdin', 'dry-run', 'no-lint', 'node', 'no-profile', 'no-board', 'print', 'json', 'sprint-kit', 'keep', 'keep-output', 'all', 'remove', 'ascii'];
 
 // The argv index of the command word (the first argument that is neither an option nor an option's value).
 function commandIndex(argv) {
@@ -679,7 +750,7 @@ export async function compareInstall(repo, home, toolId, opt, io, configBoard = 
       const line = firstDiffLine(read(target), normalizeEol(f.content));
       if (line && recorded?.[f.path] && diskHash(target) !== recorded[f.path].sha256) state = `edited since install, differs (first difference at line ${line})`;
       // A hand-copied hook script, command or skill with no manifest entry is one install keeps: only --force replaces it.
-      else if (line && f.handCopyLabel && !recorded?.[f.path] && !isGenerated(read(target))) {
+      else if (line && f.handCopyLabel && !recorded?.[f.path] && !isOrcGenerated(read(target))) {
         state = `differs (first difference at line ${line}; a hand-copied ${f.handCopyLabel}, which install --apply keeps: install --apply --force replaces it, with a backup)`;
       } else if (line) state = `differs (first difference at line ${line})`;
     }
@@ -738,13 +809,18 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     io.err(msg);
     return 1;
   };
+  // `poll ... -- <command> [args...]`: everything after the first `--` is the polled command's argv, never parsed as
+  // orc options (its own `--help` or `-h` included).
+  const dashes = argv.indexOf('--');
+  const polled = dashes < 0 ? null : argv.slice(dashes + 1);
   let opt;
   try {
-    opt = args(argv);
+    opt = args(dashes < 0 ? argv : argv.slice(0, dashes));
   } catch (e) {
     return fail(e.message);
   }
   const cmd = opt._[0];
+  if (polled && cmd !== 'poll') return fail('`--` applies to poll only (poll --every <seconds> --until <regex> -- <command> [args...])');
   if (opt.help || opt._.includes('-h') || cmd === 'help') {
     const topic = cmd === 'help' || cmd === '-h' ? opt._.find((a, i) => i > 0 && a !== '-h') : cmd;
     if (!topic) {
@@ -785,6 +861,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   const kitStack = opt.stack && cmd === 'install' && opt['sprint-kit'];
   if (((opt.stack && !kitStack) || opt.from || (opt.json && cmd !== 'doctor')) && cmd !== 'standards') return fail('--stack, --from and --json apply to standards only (and --stack to install --sprint-kit, --json to doctor)');
   if (opt.family !== undefined && cmd !== 'models') return fail('--family applies to models only');
+  if (opt.remove && cmd !== 'hooks') return fail('--remove applies to hooks only');
+  if (opt.node && cmd !== 'hooks') return fail('--node applies to hooks only');
   if (opt.model !== undefined && !['dispatch', 'queue'].includes(cmd)) return fail('--model applies to dispatch and queue only');
   if (opt.prefer !== undefined && cmd !== 'dispatch') return fail('--prefer applies to dispatch only');
   if (opt.all && !['install', 'status'].includes(cmd)) return fail('--all applies to install and status only');
@@ -796,8 +874,12 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const unknown = opt.stack.filter((s) => !KNOWN_STACKS.includes(s));
     if (unknown.length) return fail(`unknown stack(s) ${unknown.join(', ')} for the sprint kit; known: ${KNOWN_STACKS.join(', ')}`);
   }
-  const queueOnly = ['label', 'author', 'max', 'until', 'allow', 'state', 'issue'].filter((k) => opt[k] !== undefined);
+  const queueOnly = ['label', 'author', 'max', 'allow', 'state', 'issue'].filter((k) => opt[k] !== undefined);
   if (queueOnly.length && cmd !== 'queue') return fail(`${queueOnly.map((k) => `--${k}`).join(', ')} apply to queue only`);
+  if (opt.until !== undefined && !['queue', 'poll'].includes(cmd)) return fail('--until applies to queue and poll only');
+  if (opt.every !== undefined && cmd !== 'poll') return fail('--every applies to poll only');
+  if ((opt.head !== undefined || opt.sensitive !== undefined) && cmd !== 'pr-size') return fail('--head and --sensitive apply to pr-size only');
+  if ((opt['max-words'] !== undefined || opt['max-bytes'] !== undefined || opt.ascii) && cmd !== 'text-check') return fail('--max-words, --max-bytes and --ascii apply to text-check only');
   const benchOnly = ['variant', 'models', 'runs', 'keep', 'keep-output'].filter((k) => opt[k] !== undefined);
   if (benchOnly.length && cmd !== 'bench') return fail(`${benchOnly.map((k) => `--${k}`).join(', ')} apply to bench only`);
   if (opt['budget-usd'] !== undefined && !['bench', 'queue'].includes(cmd)) return fail('--budget-usd applies to bench and queue only');
@@ -1053,8 +1135,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     // its uninstall would remove the whole earlier install. (The reverse cannot happen: a recorded kit stays a kit.)
     if (kit && early.manifest && early.manifest.options?.sprintKit !== true) {
       return fail(
-        `refused: ${early.file} records a full orc install, not a sprint kit; nothing written. The full install already has the roster agents and the hook scripts (hooks --node --apply wires the guard). ` +
-          `For /sprint, copy ${SETUP}/skills/sprint to ${path.join(home, '.claude', 'skills', 'sprint')} by hand; to switch to a sprint kit, run uninstall --tool claude-code --home <dir> --apply first.`,
+        `refused: ${early.file} records a full orc install, not a sprint kit; nothing written. The full install already has the roster agents and the hook scripts (hooks --node --apply wires the guard); a full install made before skill generation gets the sprint skill by running install --tool claude-code --apply again (delete a hand-copied skills/sprint/SKILL.md first, or install keeps it). ` +
+          `To switch to a sprint kit, run uninstall --tool claude-code --home <dir> --apply first.`,
       );
     }
     const extraNotes = installNotes(chosen, toolId);
@@ -1155,9 +1237,10 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         if (state === 'replace') {
           const m = recorded[f.path];
           // In the manifest the hash decides: untouched since install replaces, edited by hand is refused. With no
-          // manifest entry only rulebooks and TOML agents carry a marker; any other differing file is hand-written.
+          // manifest entry only rulebooks, TOML agents and generated skills and commands carry a marker; any other differing
+          // file is hand-written.
           if (m && diskHash(target) !== m.sha256) state = 'REPLACE EDITED';
-          else if (!m && !isGenerated(current)) state = 'REPLACE HAND-WRITTEN';
+          else if (!m && !isOrcGenerated(current)) state = 'REPLACE HAND-WRITTEN';
           // A hook script, command or skill copied by hand before install shipped them is kept, so it never refuses the whole install.
           if (state === 'REPLACE HAND-WRITTEN' && f.handCopyLabel && !opt.force) state = 'KEEP';
           // On a borrowed machine the kit replaces the owner's own file after a backup, and uninstall puts it back.
@@ -1305,9 +1388,28 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         io.err(`WARN ${mismatch}`);
       }
     }
+    // Antigravity: orc-guard lives in hooks.json, which no manifest records. It is removed when this uninstall deletes
+    // the guard script it runs, and named otherwise; an unreadable hooks.json is a WARN and never blocks the uninstall.
+    const hooksFile = path.join(home, '.gemini', 'config', 'hooks.json');
+    const removeGuardCmd = `node tools/orc.mjs hooks --tool antigravity --home ${/\s/.test(home) ? `"${home}"` : home} --remove --apply`;
+    const readGuardHook = () => {
+      if (adapter.id !== 'antigravity' || !fs.existsSync(hooksFile)) return null;
+      try {
+        const read = readSettings(hooksFile);
+        return Object.hasOwn(read.settings, ANTIGRAVITY_GUARD_KEY) ? read : null;
+      } catch (e) {
+        const why = e instanceof SyntaxError ? `not valid JSON: ${e.message}` : e instanceof Error ? e.message : String(e);
+        io.err(`WARN cannot read ${hooksFile} (${why}); if it still has ${ANTIGRAVITY_GUARD_KEY}, fix the file and run ${removeGuardCmd}`);
+        return null;
+      }
+    };
+    const guardNote = () => io.out(`note: ${hooksFile} still has ${ANTIGRAVITY_GUARD_KEY}; run ${removeGuardCmd} to remove it`);
     const { manifest, file, error } = loadManifest(home, adapter);
     if (error) return fail(error);
-    if (!manifest) return fail(`no install manifest at ${file}: remove ${adapter.id}'s files by hand`);
+    if (!manifest) {
+      if (readGuardHook()) guardNote();
+      return fail(`no install manifest at ${file}: remove ${adapter.id}'s files by hand`);
+    }
     const when = stamp(io.now ? io.now() : new Date());
     // Validate every entry and build the whole plan before deleting anything.
     const root = adapter.home.root;
@@ -1463,6 +1565,29 @@ export async function main(argv, io = { out: console.log, err: console.error, st
         io.out(`kept manifest listing ${Object.keys(kept).length} kept file(s): ${file}`);
       } else io.out(`removed manifest: ${file}`);
     } else io.out(`dry run for ${adapter.id}; add --apply to delete`);
+    const guardHook = readGuardHook();
+    if (guardHook) {
+      // Only an orc-guard that runs the guard script deleted above goes: it would run a missing file from now on.
+      const guardRel = `${root}/tools/guard.mjs`;
+      const script = antigravityGuardScript(guardHook.settings[ANTIGRAVITY_GUARD_KEY]).script;
+      const scriptPath = !script ? null : /^~[\\/]/.test(script) ? path.join(home, script.slice(2)) : path.resolve(path.dirname(hooksFile), script);
+      const unsafe = escapes(home, root, hooksFile);
+      if (!gone.has(guardRel) || !scriptPath || !samePath(scriptPath, safeRel(home, guardRel, root)) || unsafe) guardNote();
+      else {
+        const layout = layoutWarning(hooksFile, guardHook);
+        if (layout) io.err(layout);
+        if (!opt.apply) io.out(`would remove ${ANTIGRAVITY_GUARD_KEY} from ${hooksFile} (it runs ${script}, which this uninstall deletes; other hooks are kept, with a backup)`);
+        else {
+          try {
+            const backup = writeGuardRemoval(hooksFile, guardHook, when);
+            io.out(`backed up: ${backup}`);
+            io.out(`removed ${ANTIGRAVITY_GUARD_KEY} from ${hooksFile} (it ran ${script}, deleted above)`);
+          } catch (e) {
+            io.err(`WARN cannot remove ${ANTIGRAVITY_GUARD_KEY} from ${hooksFile} (${e instanceof Error ? e.message : String(e)}); run ${removeGuardCmd}`);
+          }
+        }
+      }
+    }
     return 0;
   }
 
@@ -1538,6 +1663,61 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     }
   }
 
+  if (cmd === 'pr-size') {
+    if (!opt.base || !opt.head || opt._.length !== 1) return fail('usage: pr-size --base <ref> --head <ref> [--sensitive <regex>] [--repo-dir <dir>]');
+    try {
+      prSize(path.resolve(opt['repo-dir'] ?? process.cwd()), opt.base, opt.head, opt.sensitive).forEach((l) => io.out(l));
+      return 0;
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  if (cmd === 'text-check') {
+    const usage = 'usage: text-check <file> [--max-words <n>] [--max-bytes <n>] [--ascii]';
+    if (opt._.length !== 2) return fail(usage);
+    const limit = (key) => {
+      if (opt[key] === undefined) return undefined;
+      if (!/^\d+$/.test(opt[key])) throw new Error(`--${key} needs a whole number, got ${opt[key]}`);
+      return Number(opt[key]);
+    };
+    let checked;
+    try {
+      const file = path.resolve(opt._[1]);
+      if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return fail(`text-check: no file at ${file}`);
+      checked = textCheck(fs.readFileSync(file), { maxWords: limit('max-words'), maxBytes: limit('max-bytes'), ascii: Boolean(opt.ascii) });
+    } catch (e) {
+      return fail(`text-check: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    checked.out.forEach((l) => io.out(l));
+    return checked.problems.length ? fail(`text-check: ${checked.problems.join('; ')}`) : 0;
+  }
+
+  if (cmd === 'poll') {
+    const usage = 'usage: poll --every <seconds> --until <regex> [--timeout <seconds>] -- <command> [args...]';
+    if (!polled?.length || opt._.length !== 1 || opt.every === undefined || opt.until === undefined) return fail(usage);
+    const every = /^\d+$/.test(opt.every) ? Number(opt.every) : NaN;
+    if (!(every >= 1 && every <= 3600)) return fail(`--every needs a whole number of seconds from 1 to 3600, got ${opt.every}`);
+    const timeoutSec = parseTimeout(opt.timeout);
+    if (Number.isNaN(timeoutSec)) return fail(TIMEOUT_USAGE(opt.timeout));
+    let until;
+    try {
+      until = new RegExp(opt.until);
+    } catch (e) {
+      return fail(`--until is not a valid regular expression: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const r = await pollUntil({ argv: polled, everyMs: every * 1000, until, timeoutMs: timeoutSec * 1000, log: io.err });
+    if (r.out !== undefined) io.out(r.out);
+    if (r.err) io.err(r.err);
+    return r.code;
+  }
+
+  if (cmd === 'now') {
+    if (opt._.length !== 1) return fail('usage: now');
+    io.out(isoNow());
+    return 0;
+  }
+
   if (cmd === 'costlog') {
     if (!opt.session) return fail('costlog needs --session <id>');
     const viaCli = Boolean(opt.board || opt['board-repo']);
@@ -1605,10 +1785,20 @@ export async function main(argv, io = { out: console.log, err: console.error, st
       }
       if (sub === 'run' && opt._.length === 2) {
         const toolId = opt.tool ?? 'claude-code';
-        const adapter = (await loadAdapters(repo)).find((a) => a.id === toolId);
+        const adapters = await loadAdapters(repo);
+        const adapter = adapters.find((a) => a.id === toolId);
         if (toolId !== 'claude-code' || !adapter) return fail(`bench: no bench recipe for ${toolId} (bench runs Claude Code only)`);
+        const roles = loadRoles(repo);
+        let cfg;
+        try {
+          cfg = loadConfig({ tools: adapters.map((a) => a.id), roles: roles.map((r) => r.name) });
+        } catch (e) {
+          io.err(`WARN ${e instanceof Error ? e.message : String(e)} (bench run goes on without its binaries)`);
+          cfg = { file: configFile(), config: null };
+        }
+        (cfg.warnings ?? []).forEach((w) => io.err(`WARN ${w}`));
         const models = loadModels(repo, { local: false, extra: opt.models ? path.resolve(opt.models) : null });
-        return await runBench({ repo, root, adapter, roles: loadRoles(repo), models, opt, cwd: io.cwd ? io.cwd() : process.cwd() }, io);
+        return await runBench({ repo, root, adapter, roles, models, opt, cwd: io.cwd ? io.cwd() : process.cwd(), binaries: cfg.config?.binaries ?? null, configFile: cfg.file }, io);
       }
       if (sub === 'report' && opt._.length === 2) {
         const dir = path.resolve(opt.dir ?? path.join(repoTop(process.cwd()) ?? process.cwd(), '.orc', 'bench'));
@@ -1626,7 +1816,17 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     const sub = opt._[1];
     if (!['list', 'run'].includes(sub) || opt._.length !== 2) return fail(QUEUE_USAGE);
     try {
-      return await runQueue({ sub, models: loadModels(repo), opt, cwd: io.cwd ? io.cwd() : process.cwd() }, io);
+      let cfg = { file: configFile(), config: null };
+      if (sub === 'run') {
+        try {
+          cfg = loadConfig({ tools: knownTools(repo), roles: loadRoles(repo).map((r) => r.name) });
+        } catch (e) {
+          io.err(`WARN ${e instanceof Error ? e.message : String(e)} (queue run goes on without its binaries)`);
+        }
+        (cfg.warnings ?? []).forEach((w) => io.err(`WARN ${w}`));
+      }
+      const models = loadModels(repo, { shared: true, warn: (w) => io.err(`WARN ${w}`) });
+      return await runQueue({ sub, models, opt, cwd: io.cwd ? io.cwd() : process.cwd(), binaries: cfg.config?.binaries ?? null, configFile: cfg.file }, io);
     } catch (e) {
       return fail(e.message.startsWith('queue:') ? e.message : `queue: ${e.message}`);
     }
@@ -1637,7 +1837,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     try {
       if (sub === 'capture' && opt._.length === 2) {
         if (opt.mode && !['lite', 'full'].includes(opt.mode)) return fail(`metrics: --mode must be lite or full, got ${opt.mode}`);
-        const { report, file, warnings } = capture({
+        const captured = capture({
           cwd: process.cwd(),
           workflow: opt.workflow,
           session: opt.session ?? process.env.CLAUDE_CODE_SESSION_ID,
@@ -1646,7 +1846,13 @@ export async function main(argv, io = { out: console.log, err: console.error, st
           mode: opt.mode,
           version: opt.version,
           out: opt.out,
+          inClaudeCode: Boolean(process.env.CLAUDECODE),
         });
+        if (captured.skipped) {
+          io.out(captured.skipped);
+          return 0;
+        }
+        const { report, file, warnings } = captured;
         warnings.forEach((w) => io.err(`WARN ${w}`));
         const json = JSON.stringify(report, null, 2);
         if (opt.print) {
@@ -1672,11 +1878,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
 
   if (cmd === 'dispatch') {
     if (!opt.role || !opt.brief) return fail('usage: dispatch [--tool <id> | --prefer <id>] --role <name> --brief <file> [--model <slug>] [--dry-run] [--timeout <seconds>] [--no-lint]');
-    let timeoutSec = 0;
-    if (opt.timeout !== undefined) {
-      timeoutSec = /^\d+$/.test(opt.timeout) ? Number(opt.timeout) : NaN;
-      if (!(timeoutSec >= 1 && timeoutSec <= 86400)) return fail(`--timeout needs a whole number of seconds from 1 to 86400, got ${opt.timeout}`);
-    }
+    const timeoutSec = parseTimeout(opt.timeout);
+    if (Number.isNaN(timeoutSec)) return fail(TIMEOUT_USAGE(opt.timeout));
     let plan;
     try {
       const role = knownRole(opt.role);
@@ -1743,8 +1946,77 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   }
 
   if (cmd === 'hooks') {
+    const tool = opt.tool ?? 'claude-code';
+    if (!['claude-code', 'antigravity'].includes(tool)) {
+      return fail(`hooks: unsupported tool ${tool}; supported: claude-code, antigravity`);
+    }
+    if (opt.remove && tool !== 'antigravity') return fail('hooks: --remove is for --tool antigravity only');
+    if (opt.node && tool !== 'claude-code') return fail('hooks: --node is for --tool claude-code only');
     if (!opt.home) return fail('hooks needs --home <dir> (no default)');
     const home = path.resolve(opt.home);
+    if (tool === 'antigravity') {
+      const target = path.join(home, '.gemini', 'config', 'hooks.json');
+      const unsafe = escapes(home, '.gemini', target);
+      if (unsafe) return fail(`hooks: ${unsafe}; nothing written`);
+      try {
+        const read = readSettings(target);
+        const { original, bom, settings } = read;
+        // Antigravity's hooks.json is keyed by hook name: a Claude-style `{"hooks": {...}}` wrapper loads as one hook
+        // named "hooks". It is not ours, so it is left alone.
+        if (settings && typeof settings === 'object' && Object.hasOwn(settings, 'hooks')) {
+          io.err(`WARN ${target} has a top-level key named "hooks", which Antigravity loads as a hook named "hooks" (a Claude Code-style wrapper?); orc leaves it alone`);
+        }
+        if (opt.remove) {
+          if (!Object.hasOwn(settings, ANTIGRAVITY_GUARD_KEY)) {
+            io.out(`nothing to remove: ${ANTIGRAVITY_GUARD_KEY} is not in ${target}`);
+            return 0;
+          }
+          const layout = layoutWarning(target, read);
+          if (layout) io.err(layout);
+          if (!opt.apply) {
+            io.out(`would remove ${ANTIGRAVITY_GUARD_KEY} from ${target}`);
+            io.out(`dry run: would update ${target}; add --apply to write`);
+            return 0;
+          }
+          const backup = writeGuardRemoval(target, read, stamp(io.now ? io.now() : new Date()));
+          io.out(`backed up: ${backup}`);
+          io.out(`removed ${ANTIGRAVITY_GUARD_KEY} from ${target}`);
+          io.out(`updated ${target}`);
+          return 0;
+        }
+        const scriptFs = path.join(home, '.gemini', 'tools', 'guard.mjs');
+        const scriptFwd = antigravityGuardPath(home);
+        const { status, merged, entry, diff } = setAntigravityGuard(settings, home);
+        if (!fs.existsSync(scriptFs)) {
+          io.err(`WARN hook script not found: ${scriptFwd}; run install --tool antigravity --apply first`);
+        }
+        if (status === 'unchanged') {
+          io.out(`already wired: ${ANTIGRAVITY_GUARD_KEY} in ${target}`);
+          return 0;
+        }
+        if (status === 'added') {
+          io.out(`${opt.apply ? 'added' : 'would add'} ${ANTIGRAVITY_GUARD_KEY} (PreToolUse [run_command]: ${entry.PreToolUse[0].hooks[0].command})`);
+        } else {
+          io.out(`${opt.apply ? 'replaced' : 'would replace'} ${ANTIGRAVITY_GUARD_KEY} (${diff})`);
+        }
+        if (original !== null && formatLike(original, settings) !== original) {
+          io.err(`WARN ${target} is not in plain indented JSON layout; writing it re-indents the existing content (values and order unchanged)`);
+        }
+        if (!opt.apply) {
+          io.out(`dry run: ${original === null ? 'would create' : 'would update'} ${target}; add --apply to write`);
+          return 0;
+        }
+        const backup = original === null ? null : backupPath(target, stamp(io.now ? io.now() : new Date()));
+        writeSettings(target, bom + formatLike(original, merged), backup);
+        if (backup) io.out(`backed up: ${backup}`);
+        io.out(`${original === null ? 'created' : 'updated'} ${target}`);
+        return 0;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const detail = e instanceof SyntaxError ? `${target} is not valid JSON (${msg}); nothing written` : msg;
+        return fail(`hooks: ${detail}`);
+      }
+    }
     const source = path.join(repo, 'adapters', 'claude-code', opt.node ? 'hooks.node.example.json' : 'settings.example.json');
     const target = path.join(home, '.claude', 'settings.json');
     const unsafe = escapes(home, '.claude', target);
@@ -1794,7 +2066,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
 
   if (cmd === 'doctor') {
     const home = path.resolve(opt.home ?? os.homedir());
-    return runDoctor({ repo, home, json: Boolean(opt.json), io }, { loadAdapters, loadRoles, loadModels, compareInstall, isArtifactBoard });
+    return runDoctor({ repo, home, json: Boolean(opt.json), io }, { loadAdapters, loadRoles, loadModels, compareInstall, isArtifactBoard, loadProcedures, isOrcGenerated });
   }
 
   if (cmd === 'standards') {

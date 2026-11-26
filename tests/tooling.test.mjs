@@ -11,7 +11,7 @@ import { main, loadModels, loadRoles } from '../tools/orc.mjs';
 import { parseMarchingOrders, briefTemplate, lintBrief } from '../tools/lib/brief.mjs';
 import { classify } from '../tools/lib/reviewtier.mjs';
 import { costlog, dispatchRows } from '../tools/lib/costlog.mjs';
-import { mergeHooks, formatLike } from '../tools/lib/hooks.mjs';
+import { mergeHooks, formatLike, setAntigravityGuard, antigravityGuardScript, antigravityGuardEntry } from '../tools/lib/hooks.mjs';
 import { killTree, runDispatch } from '../tools/lib/dispatch.mjs';
 import { run as reminder } from '../tools/board-reminder.mjs';
 import { q } from './helpers.mjs';
@@ -42,7 +42,7 @@ function agentFree(env, extra = {}) {
     for (const k of Object.keys(out)) if (k.toLowerCase() === key.toLowerCase()) delete out[k];
     out[key] = value;
   };
-  for (const k of Object.keys(out)) if (k.startsWith('ORC_TOOL_BIN_')) delete out[k];
+  for (const k of Object.keys(out)) if (k.startsWith('ORC_TOOL_BIN_') || k === 'ORC_HEADLESS') delete out[k];
   set('PATH', [tempDir('nopath'), ...(process.platform === 'win32' ? [path.join(process.env.SystemRoot ?? 'C:/Windows', 'System32')] : [])].join(path.delimiter));
   set('LOCALAPPDATA', tempDir('localappdata'));
   for (const [k, v] of Object.entries(extra)) set(k, v);
@@ -57,6 +57,28 @@ function isolated(argv, extraEnv = {}) {
   const r = spawnSync(process.execPath, [ORC, ...argv], { env, encoding: 'utf8', timeout: 60000 });
   assert.deepEqual(fs.readdirSync(fakeHome), [], 'scratch home stays empty');
   return { code: r.status, out: r.stdout, err: r.stderr };
+}
+
+// The same as `isolated`, without blocking, so several runs can wait side by side; killed after `killMs`. Resolves to
+// {code, out, err, ms}, `ms` being how long the run took.
+function isolatedAsync(argv, extraEnv = {}, killMs = 20000) {
+  const fakeHome = tempDir('fakehome');
+  const base = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome };
+  const env = argv[0] === 'dispatch' ? agentFree(base, extraEnv) : { ...base, ...extraEnv };
+  const t0 = Date.now();
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [ORC, ...argv], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
+    child.stdout.setEncoding('utf8').on('data', (c) => (out += c));
+    child.stderr.setEncoding('utf8').on('data', (c) => (err += c));
+    const timer = setTimeout(() => child.kill(), killMs);
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      assert.deepEqual(fs.readdirSync(fakeHome), [], 'scratch home stays empty');
+      resolve({ code, out, err, ms: Date.now() - t0 });
+    });
+  });
 }
 
 // A brief that passes lint for any role: every rulebook item, filled.
@@ -357,7 +379,7 @@ test('.gitignore: a standard deny-list; the cost-log template and every source s
     assert.equal(ignored(p), true, `${p} is ignored`);
   }
   for (const p of ['AGENTS.md', 'CLAUDE.md', 'core/AGENTS.md', 'core/roles/scout.md', '.claude/skills/ship-prompts/SKILL.md', '.agents/skills/ship-prompts/SKILL.md', 'tests/golden/claude-code/.claude/CLAUDE.md',
-    'tests/golden/claude-code/.claude/agents/scout.md', 'adapters/claude-code/commands/start.md', 'adapters/claude-code/skills/orc-permissions/SKILL.md', 'extras/worklog/worklog.ps1', 'skills/brief/SKILL.md', 'tools/orc.mjs', 'orchestration/README.md', 'docs/board.local.md', 'new-top-level-file.md']) {
+    'tests/golden/claude-code/.claude/agents/scout.md', 'core/procedures.mjs', 'adapters/claude-code/skills/orc-permissions/SKILL.md', 'extras/worklog/worklog.ps1', 'orchestration/brief.md', 'orchestration/sprint/make-story.mjs', 'tools/orc.mjs', 'orchestration/README.md', 'docs/board.local.md', 'new-top-level-file.md']) {
     assert.equal(ignored(p), false, `${p} can be tracked`);
   }
   // No tracked file is matched by an ignore rule.
@@ -424,6 +446,7 @@ const stdin = process.stdin.isTTY ? '' : await new Promise((r) => { let s = ''; 
 fs.writeFileSync(dir + '/argv.json', JSON.stringify(process.argv.slice(2)));
 fs.writeFileSync(dir + '/stdin.txt', stdin);
 fs.writeFileSync(dir + '/stub.pid', String(process.pid));
+fs.writeFileSync(dir + '/env.json', JSON.stringify({ ORC_HEADLESS: process.env.ORC_HEADLESS ?? null }));
 if (process.env.STUB_SLEEP) {
   const g = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
   fs.writeFileSync(dir + '/grandchild.pid', String(g.pid));
@@ -447,6 +470,8 @@ test('dispatch real run passes the brief byte-identical, with no shell, and retu
     const r = isolated(['dispatch', '--tool', tool, '--role', role, '--brief', brief], env);
     assert.equal(r.code, 3, r.err);
     assert.match(r.out, /stub output/);
+    // The tool runs with ORC_HEADLESS=1 (absent from orc's own environment), so its hooks know nobody can answer.
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'env.json'), 'utf8')), { ORC_HEADLESS: '1' }, tool);
     const argv = JSON.parse(fs.readFileSync(path.join(dir, 'argv.json'), 'utf8'));
     const stdin = fs.readFileSync(path.join(dir, 'stdin.txt'), 'utf8');
     if (tool === 'antigravity') {
@@ -458,6 +483,190 @@ test('dispatch real run passes the brief byte-identical, with no shell, and retu
       assert.deepEqual(argv.slice(0, 3), ['-p', '--agent', 'builder']);
       assert.equal(stdin, text, 'brief arrives byte-identical on stdin');
     }
+  }
+});
+
+// A stub agy that prints STUB_PAD bytes of plain lines, then the contents of STUB_STDOUT_FILE, and exits STUB_EXIT
+// (with STUB_HANG, it then writes STUB_READY_FILE, when given, and stays running instead).
+function resultStub(dir) {
+  const file = path.join(dir, 'result-stub.mjs');
+  fs.writeFileSync(file, `import fs from 'node:fs';
+const pad = Number(process.env.STUB_PAD ?? 0);
+const line = 'x'.repeat(99) + '\\n';
+let out = line.repeat(Math.floor(pad / 100));
+if (process.env.STUB_STDOUT_FILE) out += fs.readFileSync(process.env.STUB_STDOUT_FILE, 'utf8');
+const hang = () => {
+  if (process.env.STUB_READY_FILE) fs.writeFileSync(process.env.STUB_READY_FILE, 'printed');
+  setTimeout(() => {}, 60000);
+};
+process.stdout.write(out, () => (process.env.STUB_HANG ? hang() : process.exit(Number(process.env.STUB_EXIT ?? 0))));
+`);
+  return file;
+}
+
+// The two result objects recorded from real agy runs on 2026-11-24 (issue 51), and a normal success.
+const AGY_DENIED = '{"conversation_id":"x","status":"SUCCESS","response":"","duration_seconds":80.4,"num_turns":1,"usage":{"total_tokens":40019},"denied_actions":[{"action":"command","display_name":"Bash"}]}';
+const AGY_ERROR = '{"conversation_id":"y","status":"ERROR","response":"","duration_seconds":236,"num_turns":1,"usage":{"total_tokens":349212}}';
+const AGY_OK = '{"conversation_id":"z","status":"SUCCESS","response":"STATUS: DONE\\nCHANGED: a.mjs","duration_seconds":12,"num_turns":3,"usage":{"total_tokens":900},"denied_actions":[]}';
+
+test('dispatch antigravity: exit 1 with one stderr line when agy reports ERROR or a denied permission and no report (issue 51)', () => {
+  const dir = tempDir('stub-result');
+  const brief = briefFile();
+  const runWith = (stdout, extra = {}) => {
+    const outFile = path.join(dir, 'stdout.txt');
+    fs.writeFileSync(outFile, stdout);
+    return isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', brief], { ORC_TOOL_BIN_ANTIGRAVITY: resultStub(dir), STUB_STDOUT_FILE: outFile, ...extra });
+  };
+  const command = (out) => out.split('\n').slice(2).join('\n');
+
+  const denied = runWith(`${AGY_DENIED}\n`);
+  assert.strictEqual(denied.code, 1);
+  assert.strictEqual(denied.err, 'dispatch: antigravity ended with a denied permission and no report\n');
+  assert.strictEqual(command(denied.out), `${AGY_DENIED}\n`, 'the output passes through unchanged');
+
+  const error = runWith(AGY_ERROR);
+  assert.strictEqual(error.code, 1);
+  assert.strictEqual(error.err, 'dispatch: antigravity reported ERROR: no response\n');
+  assert.strictEqual(command(error.out), AGY_ERROR);
+  // A pretty-printed ERROR object after other lines, with a reason in its response, and a non-zero tool exit.
+  const pretty = runWith(`working...\n${JSON.stringify({ ...JSON.parse(AGY_ERROR), response: 'quota reached\nmore' }, null, 2)}\n`, { STUB_EXIT: '2' });
+  assert.strictEqual(pretty.code, 1);
+  assert.strictEqual(pretty.err, 'dispatch: antigravity reported ERROR: quota reached\n');
+
+  // A denied permission with a report is not a failure: the agent worked around it and said so.
+  const deniedWithReport = JSON.stringify({ ...JSON.parse(AGY_DENIED), response: 'STATUS: DONE\nCHANGED: a.mjs' });
+  const worked = runWith(`${deniedWithReport}\n`);
+  assert.strictEqual(worked.code, 0, worked.err);
+  assert.strictEqual(worked.err, '');
+
+  const ok = runWith(`${AGY_OK}\n`);
+  assert.strictEqual(ok.code, 0, ok.err);
+  assert.strictEqual(ok.err, '');
+  assert.strictEqual(command(ok.out), `${AGY_OK}\n`);
+  // A successful run keeps the tool's own exit code; output that is not a result object keeps it too.
+  assert.strictEqual(runWith(`${AGY_OK}\n`, { STUB_EXIT: '3' }).code, 3);
+  const plain = runWith('no json here\n{"status": broken\n', { STUB_EXIT: '0' });
+  assert.strictEqual(plain.code, 0);
+  assert.strictEqual(plain.err, '');
+});
+
+test('dispatch antigravity: a large output streams through whole before the result object is read', () => {
+  const dir = tempDir('stub-result-big');
+  const outFile = path.join(dir, 'stdout.txt');
+  fs.writeFileSync(outFile, `${AGY_ERROR}\n`);
+  const pad = 600 * 1024;
+  const r = isolated(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile()], { ORC_TOOL_BIN_ANTIGRAVITY: resultStub(dir), STUB_STDOUT_FILE: outFile, STUB_PAD: String(pad) });
+  assert.strictEqual(r.code, 1, r.err);
+  const body = r.out.split('\n').slice(2).join('\n');
+  assert.strictEqual(body.length, pad + AGY_ERROR.length + 1, 'every byte arrives, in order');
+  assert.ok(body.endsWith(`x\n${AGY_ERROR}\n`));
+  assert.strictEqual(r.err, 'dispatch: antigravity reported ERROR: no response\n');
+});
+
+test('dispatch: a tool with no headlessResult keeps its own exit code and stream, whatever it prints', () => {
+  const dir = tempDir('stub-result-nojson');
+  const outFile = path.join(dir, 'stdout.txt');
+  fs.writeFileSync(outFile, `${AGY_ERROR}\n${AGY_DENIED}\n`);
+  for (const [tool, role] of [['claude-code', 'builder'], ['codex', 'builder']]) {
+    const env = { [`ORC_TOOL_BIN_${tool.toUpperCase().replace('-', '_')}`]: resultStub(dir), STUB_STDOUT_FILE: outFile };
+    const r = isolated(['dispatch', '--tool', tool, '--role', role, '--brief', briefFile()], env);
+    assert.strictEqual(r.code, 0, `${tool}: ${r.err}`);
+    assert.strictEqual(r.err, '', tool);
+    assert.ok(r.out.endsWith(`${AGY_ERROR}\n${AGY_DENIED}\n`), tool);
+    assert.strictEqual(isolated(['dispatch', '--tool', tool, '--role', role, '--brief', briefFile()], { ...env, STUB_EXIT: '4' }).code, 4, tool);
+  }
+});
+
+test('dispatch antigravity: a timeout wins over a result object already printed', async () => {
+  // The three runs wait side by side, so the 4-second timeout leaves the stub time to start and print on a loaded
+  // runner without the test waiting 3 x 4 seconds; the ready file shows the stub printed before it was killed.
+  const runs = [AGY_ERROR, AGY_DENIED, AGY_OK].map(async (printed) => {
+    const dir = tempDir('stub-result-hang');
+    const outFile = path.join(dir, 'stdout.txt');
+    const ready = path.join(dir, 'ready');
+    fs.writeFileSync(outFile, `${printed}\n`);
+    const r = await isolatedAsync(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile(), '--timeout', '4'], { ORC_TOOL_BIN_ANTIGRAVITY: resultStub(dir), STUB_STDOUT_FILE: outFile, STUB_HANG: '1', STUB_READY_FILE: ready });
+    assert.ok(fs.existsSync(ready), 'the stub was up and had printed before the timeout');
+    assert.strictEqual(r.code, 124, r.err);
+    assert.match(r.err, /^dispatch: timed out after 4s; killing the process tree\n$/);
+    assert.ok(r.out.endsWith(`${printed}\n`));
+  });
+  await Promise.all(runs);
+});
+
+test('dispatch antigravity: a tool that exits while a grandchild still holds stdout returns its code and result within seconds', async () => {
+  const dir = tempDir('stub-grandchild');
+  const pidFile = path.join(dir, 'grandchild.pid');
+  const file = path.join(dir, 'gc-stub.mjs');
+  // The grandchild inherits the stub's stdout (the pipe orc reads) and outlives it, detached.
+  fs.writeFileSync(file, `import fs from 'node:fs';
+import { spawn } from 'node:child_process';
+const g = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { detached: true, stdio: ['ignore', 'inherit', 'ignore'], windowsHide: true });
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(g.pid));
+g.unref();
+process.stdout.write(process.env.STUB_RESULT + '\\n', () => process.exit(Number(process.env.STUB_EXIT)));
+`);
+  const kill = () => {
+    try {
+      process.kill(Number(fs.readFileSync(pidFile, 'utf8')));
+    } catch {
+      // already gone, or never started
+    }
+  };
+  try {
+    const brief = briefFile();
+    const ok = AGY_OK;
+    const code = await isolatedAsync(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', brief], { ORC_TOOL_BIN_ANTIGRAVITY: file, STUB_RESULT: ok, STUB_EXIT: '3' }, 15000);
+    kill();
+    assert.strictEqual(code.code, 3, code.err);
+    assert.ok(code.out.endsWith(`${ok}\n`));
+    assert.ok(code.ms < 6000, `returned after ${code.ms} ms`);
+    // The result object is still read: an ERROR result exits 1 with its line.
+    const failed = await isolatedAsync(['dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', brief], { ORC_TOOL_BIN_ANTIGRAVITY: file, STUB_RESULT: AGY_ERROR, STUB_EXIT: '0' }, 15000);
+    kill();
+    assert.strictEqual(failed.code, 1, failed.err);
+    assert.strictEqual(failed.err, 'dispatch: antigravity reported ERROR: no response\n');
+    assert.ok(failed.ms < 6000, `returned after ${failed.ms} ms`);
+  } finally {
+    kill();
+  }
+});
+
+test('dispatch antigravity: a reader that closes early stops the pass-through, not the run (no EPIPE stack trace)', async () => {
+  const dir = tempDir('stub-result-epipe');
+  const outFile = path.join(dir, 'stdout.txt');
+  fs.writeFileSync(outFile, `${AGY_ERROR}\n`);
+  const fakeHome = tempDir('fakehome');
+  const env = agentFree({ ...process.env, HOME: fakeHome, USERPROFILE: fakeHome }, { ORC_TOOL_BIN_ANTIGRAVITY: resultStub(dir), STUB_STDOUT_FILE: outFile, STUB_PAD: String(2 * 1024 * 1024) });
+  const child = spawn(process.execPath, [ORC, 'dispatch', '--tool', 'antigravity', '--role', 'scout', '--brief', briefFile()], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let read = 0;
+  let stderr = '';
+  child.stderr.on('data', (c) => (stderr += c));
+  child.stdout.on('data', (c) => {
+    read += c.length;
+    if (read >= 100 * 1024) child.stdout.destroy();
+  });
+  const code = await new Promise((resolve) => child.on('close', (c) => resolve(c)));
+  assert.ok(read >= 100 * 1024 && read < 2 * 1024 * 1024, `the reader closed early (${read} bytes)`);
+  assert.strictEqual(stderr, 'dispatch: antigravity reported ERROR: no response\n', 'the tail was still read; no stack trace');
+  assert.strictEqual(code, 1);
+});
+
+test('antigravity headlessResult reads the last result object; null when there is none', async () => {
+  const agy = (await import('../adapters/antigravity.mjs')).default;
+  assert.deepStrictEqual(agy.headlessResult(`${AGY_DENIED}\n`), { ok: true, status: 'SUCCESS', response: '', denied: 1 });
+  assert.deepStrictEqual(agy.headlessResult(`log line\r\n${AGY_ERROR}\r\n`), { ok: false, status: 'ERROR', response: '', denied: 0 });
+  assert.deepStrictEqual(agy.headlessResult(`{"note":1}\n${JSON.stringify(JSON.parse(AGY_OK), null, 2)}`), { ok: true, status: 'SUCCESS', response: 'STATUS: DONE\nCHANGED: a.mjs', denied: 0 });
+  // Lines after the result object are ignored; of two objects the last wins; an object written inside the response
+  // text is part of that string, not a result.
+  assert.deepStrictEqual(agy.headlessResult(`${AGY_ERROR}\nshutdown noise\n`), { ok: false, status: 'ERROR', response: '', denied: 0 });
+  assert.deepStrictEqual(agy.headlessResult(`${AGY_ERROR}\n{"oops":1}\n{"status": cut`), { ok: false, status: 'ERROR', response: '', denied: 0 });
+  assert.deepStrictEqual(agy.headlessResult(`${AGY_OK}\n${AGY_ERROR}\n`).status, 'ERROR');
+  assert.deepStrictEqual(agy.headlessResult(`${AGY_ERROR}\n${AGY_OK}\n`).status, 'SUCCESS');
+  const nested = JSON.stringify({ status: 'SUCCESS', response: 'saw\n{"status":"ERROR","response":""}\nand {"status":"ERROR"} in a log', usage: { inner: { status: 'ERROR' } } }, null, 2);
+  assert.deepStrictEqual(agy.headlessResult(`${nested}\n`), { ok: true, status: 'SUCCESS', response: 'saw\n{"status":"ERROR","response":""}\nand {"status":"ERROR"} in a log', denied: 0 });
+  for (const none of ['', 'plain text\n', '{"status": cut off', '[1,2]', '{"no_status":true}', AGY_ERROR.slice(10)]) {
+    assert.strictEqual(agy.headlessResult(none), null, JSON.stringify(none));
   }
 });
 
@@ -886,6 +1095,306 @@ test('mergeHooks rejects a non-array event and leaves the input untouched', () =
   assert.deepEqual(input, { hooks: { Stop: { not: 'an array' } } });
 });
 
+// ---------- hooks --tool antigravity ----------
+
+function orcaStatusHooks() {
+  const h = (cmd) => ({ type: 'command', command: `C:/Users/<you>/.orca/agent-hooks/${cmd}`, timeout: 10 });
+  return {
+    'orca-status': {
+      PreInvocation: [h('antigravity-pre-invocation.cmd')],
+      PostInvocation: [h('antigravity-post-invocation.cmd')],
+      Stop: [h('antigravity-stop.cmd')],
+      PreToolUse: [{ matcher: '*', hooks: [h('antigravity-pre-tool-use.cmd')] }],
+      PostToolUse: [{ matcher: '*', hooks: [h('antigravity-post-tool-use.cmd')] }],
+    },
+  };
+}
+
+test('hooks --tool antigravity: new file, warning when guard missing, exact top-level orc-guard shape, idempotent', () => {
+  const home = tempDir('agy-hooks-new');
+  const target = path.join(home, '.gemini', 'config', 'hooks.json');
+  const scriptFwd = path.join(home, '.gemini', 'tools', 'guard.mjs').replace(/\\/g, '/');
+
+  // Dry run writes nothing, prints would add and warns about missing guard.mjs.
+  const dry = isolated(['hooks', '--tool', 'antigravity', '--home', home]);
+  assert.strictEqual(dry.code, 0, dry.err);
+  assert.match(dry.out, /^would add orc-guard /m);
+  assert.match(dry.out, /dry run: would create /);
+  assert.match(dry.err, /WARN .*run install --tool antigravity --apply first/);
+  assert.deepStrictEqual(fs.readdirSync(home), [], 'dry run writes nothing');
+
+  // --apply creates folder and file with 2-space LF and no Claude-style hooks wrapper.
+  const ap = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.strictEqual(ap.code, 0, ap.err);
+  assert.match(ap.out, /^added orc-guard /m);
+  assert.match(ap.out, /^created /m);
+  assert.match(ap.err, /WARN .*run install --tool antigravity --apply first/);
+  const raw = fs.readFileSync(target, 'utf8');
+  assert.ok(!raw.includes('\r\n'), 'new file uses LF');
+  assert.ok(raw.endsWith('\n'), 'new file ends with LF');
+  assert.ok(raw.includes('\n  "orc-guard": {'), 'new file uses 2-space indent');
+  const parsed = JSON.parse(raw);
+  assert.deepStrictEqual(Object.keys(parsed), ['orc-guard'], 'no Claude-style hooks wrapper');
+  assert.deepStrictEqual(parsed['orc-guard'], {
+    PreToolUse: [
+      {
+        matcher: 'run_command',
+        hooks: [{ type: 'command', command: `node "${scriptFwd}"`, timeout: 10 }],
+      },
+    ],
+  });
+
+  // Once guard.mjs exists, no missing-script warning, and second run is already wired (no backup, no write).
+  fs.mkdirSync(path.join(home, '.gemini', 'tools'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.gemini', 'tools', 'guard.mjs'), '// guard\n');
+  const again = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.strictEqual(again.code, 0, again.err);
+  assert.match(again.out, /^already wired: orc-guard /m);
+  assert.strictEqual(again.err, '');
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), raw);
+  assert.deepStrictEqual(fs.readdirSync(path.dirname(target)), ['hooks.json'], 'no backup on no-op');
+});
+
+test('hooks --tool antigravity: preserves real-shaped orca-status across dry run, apply, re-apply and --remove', () => {
+  const home = tempDir('agy-hooks-orca');
+  const target = path.join(home, '.gemini', 'config', 'hooks.json');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.mkdirSync(path.join(home, '.gemini', 'tools'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.gemini', 'tools', 'guard.mjs'), '// guard\n');
+  const orca = orcaStatusHooks();
+  const original = `${JSON.stringify(orca, null, 2)}\n`;
+  fs.writeFileSync(target, original);
+
+  // 1. Dry run leaves file untouched.
+  const dry = isolated(['hooks', '--tool', 'antigravity', '--home', home]);
+  assert.strictEqual(dry.code, 0, dry.err);
+  assert.match(dry.out, /^would add orc-guard /m);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), original);
+
+  // 2. --apply backs up original, preserves orca-status first and byte-for-byte in value, adds orc-guard.
+  const ap1 = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.strictEqual(ap1.code, 0, ap1.err);
+  assert.match(ap1.out, /^backed up: .*hooks\.json\.orc-backup-/m);
+  const afterAdd = fs.readFileSync(target, 'utf8');
+  const parsedAdd = JSON.parse(afterAdd);
+  assert.deepStrictEqual(Object.keys(parsedAdd), ['orca-status', 'orc-guard']);
+  assert.deepStrictEqual(parsedAdd['orca-status'], orca['orca-status']);
+  const backups1 = fs.readdirSync(path.dirname(target)).filter((f) => f.includes('.orc-backup-'));
+  assert.strictEqual(backups1.length, 1);
+  assert.strictEqual(fs.readFileSync(path.join(path.dirname(target), backups1[0]), 'utf8'), original);
+
+  // 3. Second --apply is a no-op (already wired, no new backup, orca-status unchanged).
+  const ap2 = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.strictEqual(ap2.code, 0, ap2.err);
+  assert.match(ap2.out, /^already wired: orc-guard /m);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), afterAdd);
+  assert.strictEqual(fs.readdirSync(path.dirname(target)).filter((f) => f.includes('.orc-backup-')).length, 1);
+
+  // 4. --remove dry run writes nothing.
+  const remDry = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--remove']);
+  assert.strictEqual(remDry.code, 0, remDry.err);
+  assert.match(remDry.out, /^would remove orc-guard /m);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), afterAdd);
+
+  // 5. --remove --apply backs up and restores exact original content (orca-status byte-for-byte identical).
+  const rem = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--remove', '--apply']);
+  assert.strictEqual(rem.code, 0, rem.err);
+  assert.match(rem.out, /^removed orc-guard /m);
+  assert.match(rem.out, /^backed up: /m);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), original);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(target, 'utf8')), orca);
+
+  // 6. --remove when absent exits 0 and writes nothing.
+  const remAgain = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--remove', '--apply']);
+  assert.strictEqual(remAgain.code, 0, remAgain.err);
+  assert.match(remAgain.out, /nothing to remove: orc-guard is not in /);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), original);
+
+  // --remove on a home with no hooks.json exits 0 and creates nothing.
+  const emptyHome = tempDir('agy-hooks-empty-rm');
+  const remEmpty = isolated(['hooks', '--tool', 'antigravity', '--home', emptyHome, '--remove', '--apply']);
+  assert.strictEqual(remEmpty.code, 0, remEmpty.err);
+  assert.match(remEmpty.out, /nothing to remove: orc-guard is not in /);
+  assert.deepStrictEqual(fs.readdirSync(emptyHome), []);
+});
+
+test('hooks --tool antigravity: existing differing orc-guard reports what differs and replaces only orc-guard in place', () => {
+  const home = tempDir('agy-hooks-replace');
+  const target = path.join(home, '.gemini', 'config', 'hooks.json');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.mkdirSync(path.join(home, '.gemini', 'tools'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.gemini', 'tools', 'guard.mjs'), '// guard\n');
+  const initial = {
+    'first-hook': { Stop: [{ type: 'command', command: 'echo first', timeout: 5 }] },
+    'orc-guard': {
+      enabled: false,
+      PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: 'node "/old/guard.mjs"', timeout: 30 }] }],
+    },
+    'last-hook': { PreInvocation: [{ type: 'command', command: 'echo last', timeout: 5 }] },
+  };
+  const original = `${JSON.stringify(initial, null, 2)}\n`;
+  fs.writeFileSync(target, original);
+
+  const dry = isolated(['hooks', '--tool', 'antigravity', '--home', home]);
+  assert.strictEqual(dry.code, 0, dry.err);
+  assert.match(dry.out, /^would replace orc-guard /m);
+  assert.match(dry.out, /enabled was false/);
+  assert.match(dry.out, /matcher "\*" -> "run_command"/);
+  assert.match(dry.out, /timeout 30 -> 10/);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), original, 'dry run writes nothing');
+
+  const ap = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.strictEqual(ap.code, 0, ap.err);
+  assert.match(ap.out, /^replaced orc-guard /m);
+  const parsed = JSON.parse(fs.readFileSync(target, 'utf8'));
+  assert.deepStrictEqual(Object.keys(parsed), ['first-hook', 'orc-guard', 'last-hook'], 'key order preserved');
+  assert.deepStrictEqual(parsed['first-hook'], initial['first-hook']);
+  assert.deepStrictEqual(parsed['last-hook'], initial['last-hook']);
+  assert.strictEqual(parsed['orc-guard'].enabled, undefined);
+  assert.strictEqual(parsed['orc-guard'].PreToolUse[0].matcher, 'run_command');
+  assert.strictEqual(parsed['orc-guard'].PreToolUse[0].hooks[0].timeout, 10);
+
+  // --remove takes out orc-guard only: both other named hooks stay, in order, with their values.
+  const rm = isolated(['hooks', '--tool', 'antigravity', '--home', home, '--remove', '--apply']);
+  assert.strictEqual(rm.code, 0, rm.err);
+  const left = JSON.parse(fs.readFileSync(target, 'utf8'));
+  assert.deepStrictEqual(Object.keys(left), ['first-hook', 'last-hook'], 'only orc-guard is removed');
+  assert.deepStrictEqual(left['first-hook'], initial['first-hook']);
+  assert.deepStrictEqual(left['last-hook'], initial['last-hook']);
+  assert.ok(fs.readdirSync(path.dirname(target)).filter((f) => f.startsWith('hooks.json.orc-backup-')).length >= 2, 'each write is backed up');
+});
+
+test('setAntigravityGuard names each difference of an existing orc-guard', () => {
+  const home = '/h';
+  const entry = antigravityGuardEntry(home);
+  const want = entry.PreToolUse[0].hooks[0].command;
+  const diff = (prev) => setAntigravityGuard({ 'orc-guard': prev }, home).diff;
+  const hook = (over) => ({ PreToolUse: [{ matcher: 'run_command', hooks: [{ ...entry.PreToolUse[0].hooks[0], ...over }] }] });
+  assert.strictEqual(diff('x'), 'was "x"');
+  assert.strictEqual(diff({ ...entry, enabled: true }), 'enabled was true');
+  assert.strictEqual(diff({ ...entry, Stop: [], note: 1 }), 'extra key(s): Stop, note');
+  assert.strictEqual(diff({ PreToolUse: [] }), 'PreToolUse was []');
+  assert.strictEqual(diff({ PreToolUse: [{ matcher: 'run_command', hooks: [] }] }), 'PreToolUse hooks was []');
+  assert.strictEqual(diff(hook({ type: 'script' })), 'type "script" -> "command"');
+  assert.strictEqual(diff(hook({ command: 'node "/old/guard.mjs"' })), `command "node \\"/old/guard.mjs\\"" -> ${JSON.stringify(want)}`);
+  assert.strictEqual(diff({ enabled: false, ...hook({ timeout: 30 }) }), 'enabled was false; timeout 30 -> 10');
+  assert.strictEqual(setAntigravityGuard({ 'orc-guard': entry }, home).status, 'unchanged');
+});
+
+test('antigravityGuardScript: the script a node command runs, quoted or bare; none for another program; disabled', () => {
+  const at = (command, extra = {}) => antigravityGuardScript({ ...extra, PreToolUse: [{ matcher: 'run_command', hooks: [{ type: 'command', command }] }] });
+  assert.deepStrictEqual(at(`node '/my dir/guard.mjs'`), { command: `node '/my dir/guard.mjs'`, script: '/my dir/guard.mjs', disabled: false });
+  assert.strictEqual(at('node "C:/My Tools/guard.mjs"').script, 'C:/My Tools/guard.mjs');
+  assert.strictEqual(at('node /srv/orc/.gemini/tools/guard.mjs').script, '/srv/orc/.gemini/tools/guard.mjs');
+  assert.strictEqual(at('node.exe "C:/Program Files/orc/guard.mjs"').script, 'C:/Program Files/orc/guard.mjs');
+  assert.strictEqual(at('node.exe C:/orc/guard.mjs').script, 'C:/orc/guard.mjs');
+  assert.strictEqual(at('NODE C:/orc/guard.mjs').script, 'C:/orc/guard.mjs', 'the program name is matched case-insensitively');
+  assert.deepStrictEqual(at('python C:/orc/guard.py'), { command: 'python C:/orc/guard.py', script: null, disabled: false });
+  assert.strictEqual(at('echo guard').script, null);
+  assert.deepStrictEqual(at('node /x/guard.mjs', { enabled: false }), { command: 'node /x/guard.mjs', script: '/x/guard.mjs', disabled: true });
+  assert.deepStrictEqual(antigravityGuardScript(null), { command: null, script: null, disabled: false });
+  assert.deepStrictEqual(antigravityGuardScript({ enabled: false, PreToolUse: [{ hooks: [{ command: '  ' }] }] }), { command: null, script: null, disabled: true });
+});
+
+test('hooks --tool antigravity: one WARN for a Claude-style "hooks" key, left alone; --remove says removed only after the write', async () => {
+  const home = tempDir('agy-hooks-wrapper');
+  const target = path.join(home, '.gemini', 'config', 'hooks.json');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const wrapper = { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'node x.mjs' }] }] };
+  fs.writeFileSync(target, `${JSON.stringify({ hooks: wrapper }, null, 2)}\n`);
+  const add = await run(['hooks', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.strictEqual(add.code, 0, add.err);
+  const warns = add.err.split('\n').filter((l) => l.includes('top-level key named "hooks"'));
+  assert.deepStrictEqual(warns, [`WARN ${target} has a top-level key named "hooks", which Antigravity loads as a hook named "hooks" (a Claude Code-style wrapper?); orc leaves it alone`]);
+  const added = JSON.parse(fs.readFileSync(target, 'utf8'));
+  assert.deepStrictEqual(Object.keys(added), ['hooks', 'orc-guard']);
+  assert.deepStrictEqual(added.hooks, wrapper, 'the "hooks" key is left alone');
+
+  // A write that fails: the temp file writeSettings writes first is a folder, so nothing is said to be removed.
+  const blocker = `${target}.orc-tmp-${process.pid}`;
+  fs.mkdirSync(blocker);
+  const failed = await run(['hooks', '--tool', 'antigravity', '--home', home, '--remove', '--apply']);
+  fs.rmSync(blocker, { recursive: true });
+  assert.strictEqual(failed.code, 1);
+  assert.doesNotMatch(failed.out, /removed/);
+  assert.deepStrictEqual(Object.keys(JSON.parse(fs.readFileSync(target, 'utf8'))), ['hooks', 'orc-guard'], 'still there');
+  const rem = await run(['hooks', '--tool', 'antigravity', '--home', home, '--remove', '--apply']);
+  assert.strictEqual(rem.code, 0, rem.err);
+  assert.match(rem.out, /^backed up: .*\nremoved orc-guard from .*hooks\.json\nupdated /);
+  assert.match(rem.err, /top-level key named "hooks"/);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(target, 'utf8')), { hooks: wrapper });
+});
+
+test('uninstall --tool antigravity with no manifest still names a wired orc-guard', async () => {
+  const home = tempDir('agy-uninstall-nomanifest');
+  const target = path.join(home, '.gemini', 'config', 'hooks.json');
+  assert.strictEqual((await run(['hooks', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
+  const un = await run(['uninstall', '--tool', 'antigravity', '--home', home]);
+  assert.strictEqual(un.code, 1);
+  assert.match(un.err, /no install manifest at .*: remove antigravity's files by hand/);
+  assert.strictEqual(un.out, `note: ${target} still has orc-guard; run node tools/orc.mjs hooks --tool antigravity --home ${home} --remove --apply to remove it`);
+  assert.strictEqual((await run(['hooks', '--tool', 'antigravity', '--home', home, '--remove', '--apply'])).code, 0);
+  assert.strictEqual((await run(['uninstall', '--tool', 'antigravity', '--home', home])).out, '', 'no note once it is gone');
+});
+
+test('hooks --tool antigravity: keeps CRLF, tab indentation and BOM; refuses invalid JSON and non-object files', () => {
+  const home = tempDir('agy-hooks-style');
+  const target = path.join(home, '.gemini', 'config', 'hooks.json');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.mkdirSync(path.join(home, '.gemini', 'tools'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.gemini', 'tools', 'guard.mjs'), '// guard\n');
+  const orca = orcaStatusHooks();
+  const crlfTab = `\uFEFF${JSON.stringify(orca, null, '\t').replace(/\n/g, '\r\n')}\r\n`;
+  fs.writeFileSync(target, crlfTab);
+
+  assert.strictEqual(isolated(['hooks', '--tool', 'antigravity', '--home', home, '--apply']).code, 0);
+  const after = fs.readFileSync(target, 'utf8');
+  assert.strictEqual(after.charCodeAt(0), 0xfeff, 'BOM preserved');
+  assert.ok(after.includes('\r\n\t"orca-status": {\r\n\t\t'), 'tab indent and CRLF preserved');
+  assert.ok(!after.replace(/\r\n/g, '').includes('\n'), 'no bare LF introduced');
+  assert.ok(after.endsWith('\r\n'), 'trailing CRLF preserved');
+  assert.strictEqual(isolated(['hooks', '--tool', 'antigravity', '--home', home, '--remove', '--apply']).code, 0);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), crlfTab, 'round-trip remove restores exact CRLF/tab/BOM bytes');
+
+  // Invalid JSON and non-object top levels are refused naming the path and writing nothing.
+  for (const bad of ['{ broken', '[]', 'null', '"str"', '42']) {
+    fs.writeFileSync(target, bad);
+    for (const extra of [['--apply'], ['--remove', '--apply']]) {
+      const r = isolated(['hooks', '--tool', 'antigravity', '--home', home, ...extra]);
+      assert.strictEqual(r.code, 1, `${bad} ${extra.join(' ')}`);
+      assert.ok(r.err.includes(target), `error names ${target}: ${r.err}`);
+      assert.strictEqual(fs.readFileSync(target, 'utf8'), bad, 'file untouched');
+    }
+  }
+});
+
+test('hooks --tool validation: unsupported tool errors naming both supported tools; claude-code default unchanged', () => {
+  const home = tempDir('agy-hooks-opts');
+  const badTool = isolated(['hooks', '--tool', 'cursor', '--home', home]);
+  assert.strictEqual(badTool.code, 1);
+  assert.match(badTool.err, /unsupported tool cursor/);
+  assert.match(badTool.err, /claude-code/);
+  assert.match(badTool.err, /antigravity/);
+
+  // --remove is antigravity-only; --node is claude-code-only; --remove on other commands is refused.
+  assert.strictEqual(isolated(['hooks', '--home', home, '--remove']).code, 1);
+  assert.match(isolated(['hooks', '--tool', 'claude-code', '--home', home, '--remove']).err, /--remove is for --tool antigravity only/);
+  assert.match(isolated(['hooks', '--tool', 'antigravity', '--home', home, '--node']).err, /--node is for --tool claude-code only/);
+  assert.match(isolated(['install', '--tool', 'antigravity', '--home', home, '--remove']).err, /--remove applies to hooks only/);
+
+  // Explicit --tool claude-code behaves identically to no --tool.
+  const h1 = tempDir('hooks-cc-default');
+  const h2 = tempDir('hooks-cc-explicit');
+  const r1 = isolated(['hooks', '--home', h1, '--node', '--apply']);
+  const r2 = isolated(['hooks', '--tool', 'claude-code', '--home', h2, '--node', '--apply']);
+  assert.strictEqual(r1.code, 0, r1.err);
+  assert.strictEqual(r2.code, 0, r2.err);
+  assert.deepStrictEqual(
+    JSON.parse(fs.readFileSync(path.join(h1, '.claude', 'settings.json'), 'utf8')).hooks.PreToolUse[0].matcher,
+    JSON.parse(fs.readFileSync(path.join(h2, '.claude', 'settings.json'), 'utf8')).hooks.PreToolUse[0].matcher,
+  );
+});
+
 // ---------- board-reminder.mjs ----------
 
 const BOARD_RULEBOOK = "# Orchestration\n\n- **Board:** this machine's board address is `http://localhost:8377`; write it with `node \"C:/b/local/board.js\"`.\n";
@@ -1112,8 +1621,10 @@ test('review-tier: prompts count as product; uncommitted changes warn', async ()
     assert.match((await run(['review-tier', '--base', 'base', '--repo-dir', d])).out, new RegExp(`^Full: .*${p.replace('.', '\\.')}`, 'm'), p);
   }
   // Every tracked file in the prompt folders counts as product, not only the samples above.
-  const tracked = spawnSync('git', ['ls-files', 'review', 'workflows', 'adapters/claude-code/commands'], { cwd: REPO, encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
-  for (const dir of ['review/', 'workflows/', 'adapters/claude-code/commands/']) assert.ok(tracked.some((p) => p.startsWith(dir)), `tracked files under ${dir}`);
+  // The routine procedures and the sprint assets the generated skills point at are product too.
+  const procs = ['orchestration/board.md', 'orchestration/brief.md', 'orchestration/wrap-up.md', 'orchestration/sprint.md', 'orchestration/standards.md'];
+  const tracked = spawnSync('git', ['ls-files', 'review', 'workflows', 'adapters/claude-code', 'orchestration/sprint', 'core', ...procs], { cwd: REPO, encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
+  for (const dir of ['review/', 'workflows/', 'adapters/claude-code/', 'orchestration/sprint/', 'core/procedures.mjs', ...procs]) assert.ok(tracked.some((p) => p.startsWith(dir)), `tracked files under ${dir}`);
   for (const p of tracked) assert.equal(classify([p]).tier, 'Full', p);
   // The cost-log template the rulebook points at is tracked; the cost logs beside it stay ignored.
   const git = (...a) => spawnSync('git', a, { cwd: REPO, encoding: 'utf8' });
@@ -1476,6 +1987,9 @@ test('help: every dispatched command has a help entry, and every entry is a comm
   const modelsHelp = (await run(['help', 'models'])).out;
   assert.match(modelsHelp, /--family <name>/);
   assert.doesNotMatch(modelsHelp, /Flash slugs only/i);
+  const hooksHelp = (await run(['help', 'hooks'])).out;
+  assert.match(hooksHelp, /--tool <id>/);
+  assert.match(hooksHelp, /--remove/);
   assert.equal((await run(['help', 'nope'])).code, 1);
   const nope = await run(['nope']);
   assert.equal(nope.code, 1);
@@ -1501,11 +2015,13 @@ test('check names the source to edit for a golden rulebook, agent and command', 
   fs.appendFileSync(path.join(gold, 'CLAUDE.md'), 'hand edit\n');
   fs.rmSync(path.join(gold, 'agents', 'refuter.md'));
   fs.rmSync(path.join(gold, 'commands', 'pre-pr-review.md'));
+  fs.appendFileSync(path.join(copy, 'tests', 'golden', 'antigravity', '.gemini', 'config', 'skills', 'sprint', 'SKILL.md'), 'hand edit\n');
   const r = await run(['check', '--repo', copy]);
   assert.equal(r.code, 1);
+  assert.match(r.err, /tests\/golden\/antigravity\/\.gemini\/config\/skills\/sprint\/SKILL\.md: differs from the build at line \d+ \(generated from core\/procedures\.mjs \/ adapters\/antigravity\.mjs; edit those, then run node tools\/orc\.mjs golden\)/);
   assert.match(r.err, /tests\/golden\/claude-code\/\.claude\/CLAUDE\.md: differs from the build at line \d+ \(generated from core\/AGENTS\.md \/ adapters\/claude-code\.notes\.md \/ adapters\/claude-code\.mjs; edit those, then run node tools\/orc\.mjs golden\)/);
   assert.match(r.err, /tests\/golden\/claude-code\/\.claude\/agents\/refuter\.md: missing \(generated from core\/roles\/refuter\.md; run node tools\/orc\.mjs golden\)/);
-  assert.match(r.err, /tests\/golden\/claude-code\/\.claude\/commands\/pre-pr-review\.md: missing \(generated from adapters\/claude-code\.mjs; run node tools\/orc\.mjs golden\)/);
+  assert.match(r.err, /tests\/golden\/claude-code\/\.claude\/commands\/pre-pr-review\.md: missing \(generated from core\/procedures\.mjs \/ adapters\/claude-code\.mjs; run node tools\/orc\.mjs golden\)/);
   // golden repairs every one of them, and check passes again.
   assert.equal((await run(['golden', '--repo', copy])).code, 0);
   assert.equal((await run(['check', '--repo', copy])).code, 0);

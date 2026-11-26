@@ -9,14 +9,15 @@ import { readText } from './text.mjs';
 // The kit copies only the guard of the hook scripts: the board reminder belongs to the board the kit leaves out.
 export const KIT_HOOK_SCRIPTS = ['tools/guard.mjs'];
 
-// The skill files the kit copies, repo-relative; installed under <home>/.claude/.
-export const KIT_SKILLS = ['skills/sprint/SKILL.md'];
+// The generated procedures (core/procedures.mjs) the kit installs: the sprint skill, the same bytes a full install
+// writes, and the review commands the kit has always carried. The other routines and the workflows stay out.
+export const KIT_PROCEDURES = ['sprint', 'pre-pr-review', 'review-verdict', 'calibration-report'];
 
 // The rulebook lines a kit install adds where the Board line would go. The rulebook core asks for a board on every
 // orchestrated task, and the tool notes describe the full setup's hooks and settings; a borrowed machine has less.
 export const KIT_NOTES = [
   '- **Board:** none on this machine (sprint kit). Skip every board write, the board-reminder markers and the cost log; sprint mode waives them anyway.',
-  '- **Sprint kit:** only the Node git guard (`tools/guard.mjs`) is wired; there is no board-reminder hook, so the PowerShell guard and board-reminder lines above do not apply here. No subagent model or effort is set in `settings.json`, so always name `subagent_type` (each roster agent carries its own model). Nothing is pushed unless the user says so: commits stay local.',
+  '- **Sprint kit:** only the Node git guard (`tools/guard.mjs`) is wired; there is no board-reminder hook, so the PowerShell guard and board-reminder lines above do not apply here. Of the skills and commands above, only the `sprint` skill and the `/pre-pr-review`, `/review-verdict` and `/calibration-report` commands are installed. No subagent model or effort is set in `settings.json`, so always name `subagent_type` (each roster agent carries its own model). Nothing is pushed unless the user says so: commits stay local.',
 ];
 
 // Permission presets: build, test, run and package-restore commands per stack. A command with arguments gets the

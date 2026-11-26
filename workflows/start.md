@@ -97,7 +97,7 @@ If the plan was generated or revised, bring the **original** ticket's descriptio
 
 The slug is the ticket title lowercased, non-alphanumeric runs collapsed to single hyphens, trimmed to about 40 characters ("Add CSV export to order history" becomes `add-csv-export-to-order-history`).
 
-```bash
+```
 git fetch origin <BASE> --tags
 git status --short
 git checkout -b <BRANCH> <START_POINT>
@@ -112,7 +112,7 @@ git push -u origin <BRANCH>
 
 Run the `grill` workflow (`workflows/grill.md`) on the plan file before anything is dispatched. Step 6 settled the big calls; this settles the rest, so no builder works from a guess. Any decision that changes scope goes on the ticket the moment it is made, as an added or edited line in the checklist comment. If the developer stops the grill, stop the run: nothing has been dispatched or committed. Report the open questions in Step 16.
 
-**UI mockup.** If a task changes what a page looks like, get a mockup approved before Step 10: one view per screen, light and dark, plus the states the task touches (empty, filled, error, locked, open panel). Publish it where the developer can see it (in Claude Code, a private artifact), revise until approved, and record its link and the approved views in the plan's `## Decisions`. Skip this for tasks with no visual change.
+**UI mockup.** If a task changes what a page looks like, get a mockup approved before Step 10: one view per screen, light and dark, plus the states the task touches (empty, filled, error, locked, open panel). Publish it where the developer can see it (your tool notes say where, when your tool has a place), revise until approved, and record its link and the approved views in the plan's `## Decisions`. Skip this for tasks with no visual change.
 
 ## Step 10 - Build loop
 
@@ -123,7 +123,7 @@ Work the plan's tasks in order, each through the rulebook's build loop:
 3. **`refuter`** reviews the diff against the same spec, with the ticket brief (description and acceptance criteria) plus the decisions the developer made at Step 6 and Step 9 (the plan's `## Decisions`, approved mockup views included) as its Intent item, so a scope cut the developer approved is not reported as SPEC VS INTENT: ACCEPT or REWORK. For a tests-and-docs-only task, name the repo's test conventions (its review rules or testing doc) as the refuter's checklist, so the Light review tier stays reachable. REWORK goes back to the same builder; after two rounds, read the diff yourself and decide.
 4. **Commit and push** after ACCEPT. Run `Build` first; never commit a tree that fails it.
 
-```bash
+```
 git add <the task's files, by name>
 git commit -F <scratch>/commit-msg.txt
 git pull --rebase
@@ -144,7 +144,7 @@ Once every task is committed, run each affected `Test, full` command **once**, i
 
 ## Step 12 - Pre-PR review
 
-Pick the tier by the rulebook's "Pre-PR review tiers" (`node <checkout>/tools/orc.mjs review-tier --base origin/<BASE>` checks the diff condition) and run the review panel, `review/PROCEDURE.md` (in Claude Code, `/pre-pr-review`): `<BRANCH> <BASE> comments` for Light, `<BRANCH> <BASE>` for Full, plus `lite` in lite mode. Give it the plan's list of likely-stale artifacts from Step 4 as intent. Read the full diff yourself as well.
+Pick the tier by the rulebook's "Pre-PR review tiers" (`node <checkout>/tools/orc.mjs review-tier --base origin/<BASE>` checks the diff condition) and run the review panel, `review/PROCEDURE.md` (your tool notes name its command): `<BRANCH> <BASE> comments` for Light, `<BRANCH> <BASE>` for Full, plus `lite` in lite mode. Give it the plan's list of likely-stale artifacts from Step 4 as intent. Read the full diff yourself as well.
 
 ## Step 13 - Resolve findings
 

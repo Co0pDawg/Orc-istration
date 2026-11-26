@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { main } from '../tools/orc.mjs';
+import { main, buildGolden } from '../tools/orc.mjs';
 import { presetRules, detectStacks, removeKitSettings, planKitSettings, kitHookExample, hasGuard, guardStatus, KIT_NOTES, KNOWN_STACKS as KNOWN } from '../tools/lib/sprintkit.mjs';
 import { normalizeEol } from '../tools/lib/frontmatter.mjs';
 
@@ -18,6 +18,8 @@ const tempDir = (name) => fs.mkdtempSync(path.join(os.tmpdir(), `orc-${name}-`))
 // No test reads this machine's ~/.orc: the shared state home is an empty scratch folder, which children inherit.
 process.env.ORC_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'orc-data-'));
 const now = () => new Date(2026, 10, 21, 9, 30, 0);
+// The sprint skill a full claude-code install writes (generated from core/procedures.mjs): the kit installs the same bytes.
+const sprintSkill = async () => (await buildGolden(REPO, 'claude-code'))[0].files.find((f) => f.path === '.claude/skills/sprint/SKILL.md').content;
 
 async function run(argv, { cwd = tempDir('cwd') } = {}) {
   const out = [];
@@ -88,7 +90,9 @@ test('sprint kit: a home with no .claude gets the roster, the skill, the guard a
   for (const f of ['CLAUDE.md', 'AGENTS.md', 'agents/builder.md', 'agents/refuter.md', 'agents/scout.md', 'skills/sprint/SKILL.md', 'tools/guard.mjs', 'settings.json']) assert.ok(files.includes(f), f);
   assert.deepEqual(files.filter((f) => f.includes('board-reminder')), [], 'no board reminder on the machine');
   assert.ok(!files.includes('commands/start.md') && !files.includes('skills/orc-permissions/SKILL.md'), 'sprint kit leaves out personal workflow commands and orc-permissions');
-  assert.equal(fs.readFileSync(path.join(home, '.claude', 'skills', 'sprint', 'SKILL.md'), 'utf8'), fs.readFileSync(path.join(REPO, 'skills', 'sprint', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n'));
+  assert.equal(fs.readFileSync(path.join(home, '.claude', 'skills', 'sprint', 'SKILL.md'), 'utf8'), await sprintSkill(), 'the kit installs the generated sprint skill');
+  // Of the generated procedures the kit carries only the sprint skill and the three review commands.
+  assert.deepEqual(files.filter((f) => f.startsWith('skills/') || f.startsWith('commands/')).sort(), ['commands/calibration-report.md', 'commands/pre-pr-review.md', 'commands/review-verdict.md', 'skills/sprint/SKILL.md']);
   const rulebook = fs.readFileSync(path.join(home, '.claude', 'CLAUDE.md'), 'utf8');
   for (const line of KIT_NOTES) assert.ok(rulebook.includes(`${line}\n`), line);
   assert.match(rulebook, /\*\*Board:\*\* none on this machine \(sprint kit\)/);
@@ -259,8 +263,9 @@ test('sprint kit: refused over a full install (dry run too), home byte-identical
   for (const extra of [[], ['--apply']]) {
     const r = await kit(home, '--stack', 'node', ...extra);
     assert.equal(r.code, 1, extra.join(' ') || 'dry run');
-    assert.match(r.err, /refused: .*\.orc-manifest\.claude-code\.json records a full orc install, not a sprint kit; nothing written\. The full install already has the roster agents/);
-    assert.match(r.err, /For \/sprint, copy .*skills\/sprint to .*skills[\\/]sprint by hand; to switch to a sprint kit, run uninstall/);
+    assert.match(r.err, /refused: .*\.orc-manifest\.claude-code\.json records a full orc install, not a sprint kit; nothing written\. The full install already has the roster agents and the hook scripts \(hooks --node --apply wires the guard\); a full install made before skill generation gets the sprint skill by running install --tool claude-code --apply again \(delete a hand-copied skills\/sprint\/SKILL\.md first, or install keeps it\)/);
+    assert.match(r.err, /To switch to a sprint kit, run uninstall/);
+    assert.doesNotMatch(r.err, /by hand/);
     assert.deepEqual(snapshot(home), before, 'nothing written');
   }
   // The reverse: a plain install over a kit reuses the recorded kit, so it neither deletes nor rewires anything.
@@ -441,7 +446,7 @@ test('sprint kit: an identical file already in place (a hand-copied skill and wi
   const guardFile = path.join(claude, 'tools', 'guard.mjs');
   fs.mkdirSync(path.dirname(skill), { recursive: true });
   fs.mkdirSync(path.dirname(guardFile), { recursive: true });
-  fs.writeFileSync(skill, normalizeEol(fs.readFileSync(path.join(REPO, 'skills', 'sprint', 'SKILL.md'), 'utf8')));
+  fs.writeFileSync(skill, await sprintSkill());
   fs.writeFileSync(guardFile, normalizeEol(fs.readFileSync(path.join(REPO, 'tools', 'guard.mjs'), 'utf8')));
   const settings = { hooks: { PreToolUse: [{ matcher: 'Bash|PowerShell', hooks: [{ type: 'command', command: guardCommand(home), timeout: 10 }] }] } };
   const text = `${JSON.stringify(settings, null, 2)}\n`;

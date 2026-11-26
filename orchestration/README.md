@@ -12,7 +12,7 @@ The cost log records live tasks. To measure a change to the builder or refuter r
 
 Header lines: Date, Project, Branch, Task (ticket or one line), Outcome (shipped / partial / abandoned, and what verification passed).
 
-One table row per dispatch, in dispatch order. A resumed agent (SendMessage rework) is its own row with the token delta, not the cumulative figure the resume notification reports.
+One table row per dispatch, in dispatch order. A resumed agent (a rework sent to the same agent; your tool notes say how to resume one) is its own row with the token delta, not the cumulative figure the resume notification reports.
 
 | Column | Meaning |
 |---|---|
@@ -28,7 +28,7 @@ One table row per dispatch, in dispatch order. A resumed agent (SendMessage rewo
 
 Below the table:
 
-- **Totals** — tokens and wall clock across dispatches, plus a `Orchestrator context: <start>k → <end>k` line read from the status line or `/context` at task start and when the record is written. Thirteen records in the first week all said `unmeasured`, which left the main question (did the orchestrator's share drop?) unanswerable; the line is mandatory from 2026-09-15.
+- **Totals** — tokens and wall clock across dispatches, plus a `Orchestrator context: <start>k → <end>k` line read where the tool notes' "Cost log" line says (the tool's context-size readout) at task start and when the record is written. Thirteen records in the first week all said `unmeasured`, which left the main question (did the orchestrator's share drop?) unanswerable; the line is mandatory from 2026-09-15.
 - **Loop signal** — what the builder→refuter loop actually caught: spec defects found by the builder, refuter must-fixes confirmed vs. rejected, SPEC VS INTENT entries, REWORK rounds. This is the precision/recall analog.
   - **Escaped defects** — one line per defect found after the loop accepted: what it was, who caught it (review panel, teammate, live run, owner), and why the loop missed it. Write `none` when there were none.
 - **Spec misses** — anything the orchestrator's marching orders got wrong that cost a dispatch or a rework round. These are the source material for tightening the marching orders in the rulebook (`core/AGENTS.md`).

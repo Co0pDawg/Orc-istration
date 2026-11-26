@@ -61,7 +61,7 @@ Searched: <secondary-artifacts' Searched: line, verbatim>   <!-- only when secon
 
 **Carry-forward.** Before writing, look for earlier logs of the same branch (`.orc/reviews/*<branch-slug>*.md`). When a new finding matches a row in the most recent earlier log (same file and substantially the same finding), copy that row's verdict instead of `_pending_`. A re-run must not reopen findings the developer already resolved. Only new findings start `_pending_`.
 
-**Metrics.** Then capture the run's metrics (see [metrics.md](metrics.md)): `node <orc checkout>/tools/orc.mjs metrics capture --workflow pre-pr-review --log <the log file> --mode <lite|full> --version <procedure version>`. It prints the report's path. When it exits 1, put its error line under the report and carry on: metrics never block a review.
+**Metrics.** Then capture the run's metrics (see [metrics.md](metrics.md)): `node <orc checkout>/tools/orc.mjs metrics capture --workflow pre-pr-review --log <the log file> --mode <lite|full> --version <procedure version>`. It prints the report's path. Outside Claude Code it prints `metrics: skipped (...)` and exits 0, and the review goes on. When it exits 1, put its error line under the report and carry on: metrics never block a review.
 
 ## Verdicts
 
@@ -100,7 +100,7 @@ When it trips, close with one line offering to run the calibration report. Do no
 
 ### Later triage
 
-For leftovers, corrections and older logs (the Claude Code `/review-verdict` command runs these steps):
+For leftovers, corrections and older logs (the `review-verdict` command or skill runs these steps; your tool notes name it):
 
 1. **Find the log.** Use the branch or file name given, otherwise the most recently modified file in the log folder. If the folder is empty, say so and stop.
 2. **Show what is open.** List every `_pending_` row by its number, every row with a non-canonical verdict, offering to normalize it, and every `(agent)` verdict, offering the developer to confirm or overrule it. With nothing open, summarize the recorded verdicts and stop.
@@ -113,7 +113,7 @@ For leftovers, corrections and older logs (the Claude Code `/review-verdict` com
 
 ### 1. Aggregate
 
-```bash
+```
 node <orc checkout>/tools/orc.mjs calibration [--logs <dir>] [--min-precision <0-1>]
 ```
 

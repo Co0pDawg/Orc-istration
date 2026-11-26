@@ -1,14 +1,15 @@
 import { test } from 'node:test';
-import { isolateHome } from './helpers.mjs';
+import { isolateHome, esc } from './helpers.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse, serialize, normalizeEol } from '../tools/lib/frontmatter.mjs';
+import { parse, serialize, normalizeEol, generatedMarker } from '../tools/lib/frontmatter.mjs';
 import { parseRole } from '../tools/lib/roles.mjs';
 import { serializeToml, parseToml, tomlMultiline } from '../tools/lib/toml.mjs';
-import { main, loadRoles, loadModels, loadAdapters, buildTool, buildGolden, allowedTools, parseAgyModels, firstDiffLine } from '../tools/orc.mjs';
+import { main, loadRoles, loadModels, loadAdapters, loadProcedures, buildTool, buildGolden, allowedTools, parseAgyModels, firstDiffLine, isOrcGenerated } from '../tools/orc.mjs';
+import { PROCEDURES, checkoutLookup } from '../core/procedures.mjs';
 import { knownTools } from '../tools/lib/models.mjs';
 import { spawnSync } from 'node:child_process';
 
@@ -127,6 +128,30 @@ test('copilot enforces the 30,000-character agent body cap', async () => {
   const copilot = adapters.find((a) => a.id === 'copilot');
   const big = roles.map((r) => (r.name === 'scout' ? { ...r, body: 'x'.repeat(30001) } : r));
   assert.match(buildTool(copilot, big, models, agentsMd).errors.join('\n'), /scout\.agent\.md body is 30001 characters/);
+});
+
+test('buildTool: a skill body at or over skillBytes fails the build; a renderProcedure error is reported; a missing catalogue throws', async () => {
+  const { models, agentsMd, adapters } = await buildRepo();
+  const agy = adapters.find((a) => a.id === 'antigravity');
+  // The real Antigravity adapter with its real procedure renderer, held to a smaller cap.
+  const small = { ...agy, limits: { ...agy.limits, skillBytes: 900 } };
+  const board = PROCEDURES.find((p) => p.name === 'board');
+  const bodyBytes = Buffer.byteLength(parse(agy.renderProcedure(board).content).body, 'utf8');
+  assert.ok(bodyBytes > 300 && bodyBytes < 900, `board body is ${bodyBytes} bytes`);
+  assert.deepStrictEqual(buildTool(small, [], models, agentsMd, { procedures: [board] }).errors, []);
+  const atCap = { ...agy, limits: { ...agy.limits, skillBytes: bodyBytes } };
+  assert.deepStrictEqual(buildTool(atCap, [], models, agentsMd, { procedures: [board] }).errors, [`antigravity: .gemini/config/skills/board/SKILL.md body is ${bodyBytes} bytes; the limit is under ${bodyBytes}`]);
+  // A procedure an adapter has no notes for, on both adapters that render them: reported, not thrown, and no file.
+  const stray = { ...board, name: 'stray', title: 'Stray' };
+  for (const id of ['antigravity', 'claude-code']) {
+    const adapter = adapters.find((a) => a.id === id);
+    const built = buildTool(adapter, [], models, agentsMd, { procedures: [stray, board] });
+    assert.deepStrictEqual(built.errors, [`${id}: no notes for procedure stray in adapters/${id}.mjs`]);
+    assert.deepStrictEqual(built.files.filter((f) => f.procedure).map((f) => f.procedure), ['board'], id);
+  }
+  // A checkout with no catalogue: the build stops with the file named.
+  const bare = tempDir('no-catalogue');
+  await assert.rejects(loadProcedures(bare), (e) => e.message === `${path.join(bare, 'core', 'procedures.mjs')} is missing: the procedure catalogue the adapters render skills and commands from`);
 });
 
 test('models.local.json overrides per tool and tier', () => {
@@ -251,12 +276,31 @@ test('antigravity emits only agy 1.5.16 tools, no deprecated tools, read-only ha
         : ['read_file', 'run_command'];
     assert.deepStrictEqual(data.tools, want, `${f.path} tools`);
   }
-  const gap = res.adapter.gaps.find((g) => /listing, searching and URL fetching/i.test(g));
-  assert.ok(gap, 'gaps mentions listing, searching and URL fetching');
+  const missingToolsGaps = res.adapter.gaps.filter((g) => /listing, searching and URL fetching/i.test(g));
+  assert.strictEqual(missingToolsGaps.length, 1, 'gaps mentions listing, searching and URL fetching once');
+  const [gap] = missingToolsGaps;
   assert.match(gap, /run_command/);
   assert.match(gap, /search_web/);
+  assert.match(gap, /sandbox/);
   const rulebook = res.files.find((f) => f.path === '.gemini/AGENTS.md');
+  assert.strictEqual((rulebook.content.match(/listing, searching and URL fetching/gi) ?? []).length, 1, 'generated rulebook includes the missing-tools gap exactly once');
   assert.ok(rulebook.content.includes(gap), 'generated rulebook includes the missing-tools gap');
+  assert.match(rulebook.content, /orc hooks --tool antigravity/);
+  assert.match(rulebook.content, /read-only-role rule.*Claude Code only/i);
+  assert.match(rulebook.content, /allow prints nothing/i);
+  assert.strictEqual((rulebook.content.match(/hook fires in a headless `agy -p` run/g) ?? []).length, 1, 'headless hook behaviour stated once in rulebook');
+});
+
+test('no adapter has duplicate gap entries starting with the same first six words', async () => {
+  const adapters = await loadAdapters(REPO);
+  for (const adapter of adapters) {
+    const seen = new Map();
+    for (const gap of adapter.gaps) {
+      const prefix = gap.trim().toLowerCase().split(/\s+/).slice(0, 6).join(' ');
+      assert.ok(!seen.has(prefix), `${adapter.id}: duplicate gap prefix "${prefix}"`);
+      seen.set(prefix, gap);
+    }
+  }
 });
 
 test('models helper reads agy models output and supports --family', async () => {
@@ -519,22 +563,183 @@ test('claude-code agent frontmatter matches the roster', () => {
   }
 });
 
-test('claude-code review commands: thin wrappers, no machine path, panel files present', async () => {
-  const { roles, models, agentsMd, adapters } = await buildRepo();
-  const cc = adapters.find((a) => a.id === 'claude-code');
-  const cmds = buildTool(cc, roles, models, agentsMd).files.filter((f) => f.path.startsWith('.claude/commands/'));
-  assert.deepEqual(cmds.map((f) => f.path).sort(), ['calibration-report', 'pre-pr-review', 'review-verdict'].map((n) => `.claude/commands/${n}.md`));
-  for (const f of cmds) {
-    const { data, body } = parse(f.content);
-    assert.deepEqual(Object.keys(data), ['description', 'argument-hint', 'allowed-tools'], f.path);
-    assert.match(body, /`ORC_HOME`.*, else the "Setup checkout \(this machine\)" line in the rulebook's tool notes, else `~\/\.claude`/, f.path);
-    assert.match(body, /`CHECKOUT\/review\/(PROCEDURE|calibration)\.md`/, f.path);
-    assert.doesNotMatch(f.content, /[A-Za-z]:[\\/]|\/Users\/|\/home\//, `${f.path} names no machine path`);
+// Tracked files, including intent-added (`git add -N`) new ones.
+const trackedFiles = () => spawnSync('git', ['ls-files', '-z'], { cwd: REPO, encoding: 'utf8' }).stdout.split('\0').filter(Boolean);
+
+test('procedure catalogue: fourteen entries; every source, section and extra is a tracked file', () => {
+  assert.equal(PROCEDURES.length, 14);
+  const kinds = (k) => PROCEDURES.filter((p) => p.kind === k).map((p) => p.name);
+  assert.deepEqual(kinds('routine'), ['board', 'brief', 'wrap-up', 'sprint', 'repo-standards']);
+  assert.deepEqual(kinds('workflow'), ['start', 'grill', 'draft-pr', 'peer-review', 'create', 'fix-ci']);
+  assert.deepEqual(kinds('review'), ['pre-pr-review', 'review-verdict', 'calibration-report']);
+  const tracked = new Set(trackedFiles());
+  for (const p of PROCEDURES) {
+    assert.match(p.name, /^[a-z]+(-[a-z]+)*$/, p.name);
+    assert.ok(p.description && p.title, p.name);
+    assert.ok(tracked.has(p.source.file) && fs.existsSync(path.join(REPO, p.source.file)), `${p.name}: ${p.source.file} is tracked`);
+    if (p.source.section) assert.match(read(path.join(REPO, p.source.file)), new RegExp(`^#+ ${p.source.section}$`, 'm'), `${p.name}: section ${p.source.section}`);
+    for (const e of p.extras) {
+      const ok = e.path.endsWith('/') ? [...tracked].some((t) => t.startsWith(e.path)) : tracked.has(e.path);
+      assert.ok(ok, `${p.name}: extra ${e.path} is tracked`);
+    }
   }
-  // The hand-written commands find the checkout in the same order.
-  for (const n of ['create', 'draft-pr', 'fix-ci', 'grill', 'peer-review', 'start']) {
-    assert.match(read(path.join(REPO, 'adapters', 'claude-code', 'commands', `${n}.md`)), /`ORC_HOME`.*, else the "Setup checkout \(this machine\)" line in the rulebook's tool notes, else `~\/\.claude`/, n);
+  assert.deepEqual(new Set(PROCEDURES.map((p) => p.name)).size, 14, 'names are unique');
+});
+
+test('generated skills and commands: thin wrappers that find the checkout and name a source that exists', async () => {
+  const built = Object.fromEntries((await buildGolden(REPO)).map((r) => [r.adapter.id, r.files]));
+  const expectTools = {
+    start: ['Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit', 'AskUserQuestion', 'Agent', 'SendMessage', 'EnterPlanMode', 'ExitPlanMode'],
+    grill: ['Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit', 'AskUserQuestion', 'Agent'],
+    'draft-pr': ['Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit', 'AskUserQuestion'],
+    'peer-review': ['Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit', 'AskUserQuestion', 'Agent', 'SendMessage'],
+    create: ['Bash', 'Glob', 'Grep', 'Read', 'Write', 'AskUserQuestion'],
+    'fix-ci': ['Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit', 'AskUserQuestion', 'Agent', 'SendMessage'],
+    'pre-pr-review': ['Bash', 'Glob', 'Grep', 'Read', 'Write', 'Edit', 'Agent', 'SendMessage', 'AskUserQuestion'],
+    'review-verdict': ['Bash', 'Glob', 'Grep', 'Read', 'Edit', 'AskUserQuestion'],
+    'calibration-report': ['Bash', 'Glob', 'Grep', 'Read', 'Edit'],
+  };
+  const wrappers = { 'claude-code': [], antigravity: [] };
+  for (const p of PROCEDURES) {
+    const routine = p.kind === 'routine';
+    const cc = built['claude-code'].find((f) => f.path === (routine ? `.claude/skills/${p.name}/SKILL.md` : `.claude/commands/${p.name}.md`));
+    const agy = built.antigravity.find((f) => f.path === `.gemini/config/skills/${p.name}/SKILL.md`);
+    assert.ok(cc && agy, p.name);
+    const ccData = parse(cc.content).data;
+    if (routine) assert.deepEqual(ccData, { name: p.name, description: p.description }, p.name);
+    else {
+      assert.deepEqual(Object.keys(ccData), p.argumentHint ? ['description', 'argument-hint', 'allowed-tools'] : ['description', 'allowed-tools'], p.name);
+      assert.equal(ccData.description, p.description);
+      assert.deepEqual(ccData['allowed-tools'], expectTools[p.name], `${p.name}: today's tool list`);
+      assert.match(parse(cc.content).body, /\*\*Arguments:\*\* "\$ARGUMENTS"/, p.name);
+    }
+    const agyData = parse(agy.content).data;
+    assert.deepEqual(agyData, { name: p.name, description: p.description }, `${p.name}: name equals the folder`);
+    assert.ok(Buffer.byteLength(parse(agy.content).body) < 24000, `${p.name}: Antigravity body under 24,000 bytes`);
+    assert.match(parse(agy.content).body, new RegExp(`slash command \`/${p.name}\``), p.name);
+    wrappers['claude-code'].push([p, cc]);
+    wrappers.antigravity.push([p, agy]);
   }
+  for (const [tool, list] of Object.entries(wrappers)) {
+    for (const [p, f] of list) {
+      const { body } = parse(f.content);
+      assert.equal(body.split('\n')[0], generatedMarker(tool), `${f.path}: the marker is the first body line`);
+      assert.ok(isOrcGenerated(f.content), f.path);
+      assert.ok(body.includes(checkoutLookup(`CHECKOUT/${p.source.file}`)), `${f.path}: the lookup sentence`);
+      assert.ok(body.includes(`\`CHECKOUT/${p.source.file}\``) && fs.existsSync(path.join(REPO, p.source.file)), `${f.path}: names its source`);
+      if (p.source.section) assert.ok(body.includes(`its "${p.source.section}" section`), f.path);
+      for (const e of p.extras) assert.ok(body.includes(`\`CHECKOUT/${e.path}\``), `${f.path}: names ${e.path}`);
+      assert.doesNotMatch(f.content, /[A-Za-z]:[\\/]|\/Users\/|\/home\//, `${f.path} names no machine path`);
+    }
+  }
+  // Each tool writes only under its own root, and no other adapter renders procedures in this slice.
+  assert.ok(built.antigravity.every((f) => f.path.startsWith('.gemini/')), 'no Antigravity file under .claude/');
+  for (const [id, files] of Object.entries(built)) if (!['claude-code', 'antigravity'].includes(id)) assert.ok(files.every((f) => !f.procedure), id);
+  // The thin-wrapper claim: no wrapper is more than a few kilobytes.
+  for (const files of Object.values(wrappers)) for (const [, f] of files) assert.ok(f.content.length < 4000, f.path);
+});
+
+// Claude Code only tool names, and slash names that are not one of the fourteen procedures (a slash after a space,
+// backtick, quote or bracket; a path such as `CHECKOUT/workflows/` or `~/.orc/` is not one).
+function claudeOnlyTerms(text) {
+  const names = new Set(PROCEDURES.map((p) => p.name));
+  const hits = ['AskUserQuestion', 'subagent_type', 'SendMessage', 'TaskStop', 'ArtifactData', 'ToolSearch'].filter((t) => text.includes(t));
+  for (const m of text.matchAll(/(?:^|[\s`'"(\[])\/([a-z][a-z0-9-]*)/gm)) if (!names.has(m[1])) hits.push(`/${m[1]}`);
+  return hits;
+}
+
+test('generated Antigravity skills name no Claude Code only tool or slash command', async () => {
+  const built = (await buildGolden(REPO)).find((r) => r.adapter.id === 'antigravity').files;
+  const skills = built.filter((f) => /^\.gemini\/config\/skills\/[^/]+\/SKILL\.md$/.test(f.path));
+  assert.strictEqual(skills.length, PROCEDURES.length);
+  for (const f of skills) assert.deepStrictEqual(claudeOnlyTerms(f.content), [], f.path);
+  // The scanner itself: each term and a foreign slash name is caught; paths and the procedures' own names are not.
+  assert.deepStrictEqual(claudeOnlyTerms('Ask with `AskUserQuestion`, `subagent_type`, SendMessage, TaskStop, ArtifactData via ToolSearch.'), ['AskUserQuestion', 'subagent_type', 'SendMessage', 'TaskStop', 'ArtifactData', 'ToolSearch']);
+  assert.deepStrictEqual(claudeOnlyTerms('run `/fast`, then /context or (/fewer-permission-prompts)'), ['/fast', '/context', '/fewer-permission-prompts']);
+  assert.deepStrictEqual(claudeOnlyTerms('the slash command `/pre-pr-review`; read `CHECKOUT/workflows/start.md` and ~/.orc/config.json and `.gemini/config/skills/<name>/SKILL.md`'), []);
+  // The wrapper wording for arguments is the one nobody has to verify.
+  const start = skills.find((f) => f.path.includes('/start/'));
+  assert.match(start.content, /On Antigravity this skill is also the slash command `\/start`, and the user's request after the command name gives its arguments\./);
+});
+
+// The neutral sources name no Claude Code only tool: the specific lives in the tool notes or a generated wrapper. A
+// statement that a feature is Claude Code only may stay, as a [file, phrase, reason] entry here; none needs one today.
+test('workflows, review, orchestration and core/AGENTS.md name no Claude Code only tool', () => {
+  const allowed = [];
+  const terms = ['AskUserQuestion', 'SendMessage', 'TaskStop', 'ArtifactData', 'ToolSearch', 'subagent_type', 'model: "sonnet"'];
+  const files = spawnSync('git', ['ls-files', '--', 'workflows/*.md', 'review/*.md', 'orchestration/*.md', 'core/AGENTS.md'], { cwd: REPO, encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
+  assert.ok(['workflows/grill.md', 'review/lanes/code-reviewer.md', 'orchestration/sprint.md', 'core/AGENTS.md'].every((f) => files.includes(f)), 'every folder is scanned');
+  const hits = [];
+  for (const f of files) {
+    if (!fs.existsSync(path.join(REPO, f))) continue;
+    read(path.join(REPO, f)).split('\n').forEach((line, i) => {
+      for (const t of terms) if (line.includes(t) && !allowed.some(([file, phrase]) => file === f && line.includes(phrase))) hits.push(`${f}:${i + 1}: ${t}`);
+    });
+  }
+  assert.deepStrictEqual(hits, []);
+});
+
+// Workflows, review and orchestration procedures run in any shell: no bash fence and no POSIX text tool, except the
+// lines below, each with its reason.
+test('no tracked workflows, review or orchestration Markdown holds a bash fence or a POSIX text tool', () => {
+  const allowed = [
+    // Advice on reading economy (a search with context lines), not a step that runs; the reader picks its own search.
+    ['review/contract.md', /`grep -n -C3`/],
+    // Plain git against a docs repo given by path: git runs the same in any shell.
+    ['review/lanes/secondary-artifacts.md', /^git -C <docs repo> grep -n /],
+    ['review/lanes/secondary-artifacts.md', /^```bash$/],
+  ];
+  const files = spawnSync('git', ['ls-files', '--', 'workflows/*.md', 'review/*.md', 'orchestration/*.md'], { cwd: REPO, encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
+  assert.ok(files.includes('workflows/fix-ci.md') && files.includes('review/lanes/secondary-artifacts.md'), 'subfolders are scanned');
+  const hits = [];
+  for (const f of files) {
+    if (!fs.existsSync(path.join(REPO, f))) continue;
+    read(path.join(REPO, f)).split('\n').forEach((line, i) => {
+      const bad = /^\s*```(bash|sh|shell)\s*$/.test(line) || /\bawk\b|\bsed -|\bwc -|(?<!\bgit )\bgrep -/.test(line);
+      if (bad && !allowed.some(([file, re]) => file === f && re.test(line))) hits.push(`${f}:${i + 1}: ${line.trim().slice(0, 80)}`);
+    });
+  }
+  assert.deepStrictEqual(hits, []);
+});
+
+test('the checkout lookup is one sentence: wrappers, both adapters\' notes, the standards, brief, wrap-up and review procedures', () => {
+  const [before, after] = checkoutLookup('\0').split('\0');
+  const once = new RegExp(`${esc(before)}[^\`]+${esc(after)}`);
+  for (const f of ['adapters/claude-code.notes.md', 'adapters/antigravity.notes.md', 'orchestration/standards.md', 'orchestration/brief.md', 'orchestration/wrap-up.md', 'review/PROCEDURE.md']) {
+    assert.match(read(path.join(REPO, f)), once, f);
+  }
+  assert.doesNotMatch(checkoutLookup('x'), /ORC_[H]OME|~\/\.claude/);
+});
+
+test('no generated or tracked file still finds the checkout through the old environment variable or the Claude home', async () => {
+  // Built from fragments so this file never holds them; the cost logs name neither. The one allowed line is the
+  // README migration note saying the variable is no longer read ([file, phrase the line must hold]).
+  const needles = [['ORC', '_HOME'].join(''), ['else `~/', '.claude`'].join(''), ['`~/', '.claude` when'].join('')];
+  const allowed = [['README.md', `\`${needles[0]}\` is no longer read`]];
+  const hits = [];
+  for (const f of trackedFiles()) {
+    if (!fs.existsSync(path.join(REPO, f))) continue;
+    const buf = fs.readFileSync(path.join(REPO, f));
+    if (buf.includes(0)) continue;
+    for (const line of buf.toString('utf8').split('\n')) {
+      for (const n of needles) if (line.includes(n) && !allowed.some(([file, phrase]) => file === f && line.includes(phrase))) hits.push(`${f}: ${n}`);
+    }
+  }
+  for (const { adapter, files } of await buildGolden(REPO)) {
+    for (const f of files) for (const n of needles) if (f.content.includes(n)) hits.push(`build ${adapter.id}/${f.path}: ${n}`);
+  }
+  assert.deepEqual(hits, []);
+});
+
+test('isOrcGenerated: the marker on the first lines, or on the first body line under front matter', () => {
+  assert.ok(isOrcGenerated(`---\nname: board\ndescription: x\n---\n\n${generatedMarker('claude-code')}\n\n# Board\n`));
+  assert.ok(isOrcGenerated(`${generatedMarker('antigravity')}\nrules\n`));
+  assert.ok(!isOrcGenerated('---\nname: board\ndescription: x\n---\n\n# Board\n\nThis skill exists only where a copy is.\n'));
+  assert.ok(!isOrcGenerated('---\nname: [broken\n'), 'unparseable front matter is not generated');
+  assert.ok(!isOrcGenerated('# my own start\n'));
+});
+
+test('review panel files present', () => {
   for (const f of ['PROCEDURE.md', 'contract.md', 'shared-rules.md', 'selection.md']) assert.ok(fs.existsSync(path.join(REPO, 'review', f)), f);
   const lanes = ['architecture-reviewer', 'code-reviewer', 'code-simplifier', 'comment-analyzer', 'pr-test-analyzer', 'secondary-artifacts', 'silent-failure-hunter', 'ticket-coverage', 'type-design-analyzer', 'ui-test-reviewer'];
   assert.deepEqual(fs.readdirSync(path.join(REPO, 'review', 'lanes')).sort(), lanes.map((l) => `${l}.md`));
@@ -650,10 +855,144 @@ test('install copies the hook scripts for claude-code; status reports them; a ha
   assert.equal(fs.readdirSync(tools).filter((f) => f.startsWith('board-reminder.ps1.orc-backup-')).length, 1);
   assert.equal((await run(['status', '--tool', 'claude-code', '--home', home, '--no-board'])).code, 0);
   for (const s of scripts) assert.ok(fs.existsSync(path.join(tools, s)), s);
-  // Other tools wire no hooks and get no scripts.
-  const agy = tempDir('hookscripts-agy');
-  assert.equal((await run(['install', '--tool', 'antigravity', '--home', agy, '--apply', '--no-board'])).code, 0);
-  assert.ok(!fs.existsSync(path.join(agy, '.gemini', 'tools')));
+  // Tools without hookScripts wire no hooks and get no scripts.
+  const codex = tempDir('hookscripts-codex');
+  assert.strictEqual((await run(['install', '--tool', 'codex', '--home', codex, '--apply', '--no-board'])).code, 0);
+  assert.ok(!fs.existsSync(path.join(codex, '.codex', 'tools')));
+});
+
+test('install copies tools/guard.mjs for antigravity; status compares it; hand copy kept unless --force; uninstall removes it and reminds about orc-guard', async () => {
+  const home = tempDir('hookscripts-agy');
+  const guardPath = path.join(home, '.gemini', 'tools', 'guard.mjs');
+  // Pre-seed a differing hand-copied guard.mjs: install keeps it without --force.
+  fs.mkdirSync(path.dirname(guardPath), { recursive: true });
+  fs.writeFileSync(guardPath, '// old hand copy\n');
+  const first = await run(['install', '--tool', 'antigravity', '--home', home, '--apply', '--no-board']);
+  assert.strictEqual(first.code, 0, first.err);
+  assert.match(first.out, /kept \(hand-copied hook script, differs; --force replaces it, with a backup\): .*guard\.mjs/);
+  assert.strictEqual(fs.readFileSync(guardPath, 'utf8'), '// old hand copy\n');
+  const st1 = await run(['status', '--tool', 'antigravity', '--home', home, '--no-board']);
+  assert.strictEqual(st1.code, 1);
+  assert.match(st1.out, /differs \(first difference at line 1; a hand-copied hook script.*guard\.mjs/);
+
+  // --force replaces it with a backup and records it in the manifest.
+  const forced = await run(['install', '--tool', 'antigravity', '--home', home, '--apply', '--no-board', '--force']);
+  assert.strictEqual(forced.code, 0, forced.err);
+  assert.strictEqual(read(guardPath), read(path.join(REPO, 'tools', 'guard.mjs')));
+  assert.strictEqual(fs.readdirSync(path.dirname(guardPath)).filter((f) => f.startsWith('guard.mjs.orc-backup-')).length, 1);
+  const mf = JSON.parse(fs.readFileSync(path.join(home, '.gemini', '.orc-manifest.antigravity.json'), 'utf8'));
+  assert.ok(mf.files['.gemini/tools/guard.mjs'], 'guard.mjs recorded in antigravity manifest');
+  assert.strictEqual((await run(['status', '--tool', 'antigravity', '--home', home, '--no-board'])).code, 0);
+
+  // The installed copy runs standalone on an Antigravity PreToolUse payload.
+  const repo = path.join(home, 'r');
+  fs.mkdirSync(repo);
+  spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: repo });
+  const hook = spawnSync(process.execPath, [guardPath], {
+    input: JSON.stringify({ cwd: repo, hookEventName: 'PreToolUse', toolCall: { id: 't1', name: 'run_command', args: { CommandLine: 'git commit -m x' } } }),
+    encoding: 'utf8',
+  });
+  assert.strictEqual(hook.status, 0, hook.stderr);
+  assert.strictEqual(JSON.parse(hook.stdout).decision, 'deny');
+
+  // Wire orc-guard in hooks.json: uninstall deletes guard.mjs, so it removes the orc-guard that runs it.
+  assert.strictEqual((await run(['hooks', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
+  const hooksFile = path.join(home, '.gemini', 'config', 'hooks.json');
+  const unDry = await run(['uninstall', '--tool', 'antigravity', '--home', home]);
+  assert.strictEqual(unDry.code, 0, unDry.err);
+  assert.ok(unDry.out.includes(`would remove orc-guard from ${hooksFile} (it runs ${guardPath.replace(/\\/g, '/')}, which this uninstall deletes; other hooks are kept, with a backup)`), unDry.out);
+  assert.ok(Object.hasOwn(JSON.parse(fs.readFileSync(hooksFile, 'utf8')), 'orc-guard'), 'the dry run writes nothing');
+  const unApply = await run(['uninstall', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.strictEqual(unApply.code, 0, unApply.err);
+  assert.ok(!fs.existsSync(guardPath), 'guard.mjs deleted by uninstall');
+  assert.ok(unApply.out.includes(`removed orc-guard from ${hooksFile}`), unApply.out);
+  assert.doesNotMatch(unApply.out, /--remove --apply/);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(hooksFile, 'utf8')), {});
+
+  // With no orc-guard in hooks.json, uninstall prints no reminder.
+  assert.strictEqual((await run(['install', '--tool', 'antigravity', '--home', home, '--apply', '--no-board'])).code, 0);
+  const unClean = await run(['uninstall', '--tool', 'antigravity', '--home', home, '--apply']);
+  assert.strictEqual(unClean.code, 0, unClean.err);
+  assert.doesNotMatch(unClean.out, /--remove --apply|orc-guard/);
+});
+
+// The hooks.json shapes uninstall --tool antigravity meets: another named hook beside orc-guard (as another tool
+// writes it), an orc-guard running another script, an unreadable file, and none.
+test('uninstall --tool antigravity removes only an orc-guard that runs the guard.mjs it deletes; an unreadable hooks.json is a WARN', async () => {
+  const setup = async (hooks) => {
+    const home = tempDir('uninstall-agy-hooks');
+    assert.strictEqual((await run(['install', '--tool', 'antigravity', '--home', home, '--apply', '--no-board'])).code, 0);
+    const hooksFile = path.join(home, '.gemini', 'config', 'hooks.json');
+    if (hooks !== undefined) {
+      fs.mkdirSync(path.dirname(hooksFile), { recursive: true });
+      fs.writeFileSync(hooksFile, typeof hooks === 'function' ? hooks(home) : hooks);
+    }
+    return { home, hooksFile, guard: path.join(home, '.gemini', 'tools', 'guard.mjs') };
+  };
+  const removeCmd = (home) => `node tools/orc.mjs hooks --tool antigravity --home ${home} --remove --apply`;
+  const guardCommand = (home) => `node "${path.join(home, '.gemini', 'tools', 'guard.mjs').replace(/\\/g, '/')}"`;
+  const entry = (command) => ({ PreToolUse: [{ matcher: 'run_command', hooks: [{ type: 'command', command, timeout: 10 }] }] });
+  const other = { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: 'other-tool-hook.cmd' }] }], Stop: [] };
+
+  // Another named hook (a PreToolUse group on `*`) ahead of orc-guard, in a 4-space CRLF file with a BOM: only
+  // orc-guard goes, with a backup, and the BOM and layout stay.
+  const a = await setup((home) => '\ufeff' + JSON.stringify({ 'orca-status': other, 'orc-guard': entry(guardCommand(home)) }, null, 4).replace(/\n/g, '\r\n') + '\r\n');
+  const before = fs.readFileSync(a.hooksFile, 'utf8');
+  const aDry = await run(['uninstall', '--tool', 'antigravity', '--home', a.home]);
+  assert.strictEqual(aDry.code, 0, aDry.err);
+  assert.match(aDry.out, /would remove orc-guard from .*hooks\.json \(it runs .*guard\.mjs, which this uninstall deletes/);
+  assert.strictEqual(fs.readFileSync(a.hooksFile, 'utf8'), before, 'the dry run writes nothing');
+  const aApply = await run(['uninstall', '--tool', 'antigravity', '--home', a.home, '--apply']);
+  assert.strictEqual(aApply.code, 0, aApply.err);
+  assert.strictEqual(aApply.err, '');
+  assert.match(aApply.out, /^backed up: .*hooks\.json\.orc-backup-\d{8}-\d{6}$/m);
+  assert.ok(aApply.out.includes(`removed orc-guard from ${a.hooksFile} (it ran `), aApply.out);
+  assert.strictEqual(fs.readFileSync(a.hooksFile, 'utf8'), '\ufeff' + JSON.stringify({ 'orca-status': other }, null, 4).replace(/\n/g, '\r\n') + '\r\n');
+  const backups = fs.readdirSync(path.dirname(a.hooksFile)).filter((f) => f.startsWith('hooks.json.orc-backup-'));
+  assert.strictEqual(backups.length, 1);
+  assert.strictEqual(fs.readFileSync(path.join(path.dirname(a.hooksFile), backups[0]), 'utf8'), before);
+  assert.ok(!fs.existsSync(a.guard));
+
+  // An orc-guard that runs another script is left alone, and named.
+  const elsewhere = JSON.stringify({ 'orc-guard': entry('node "/opt/elsewhere/guard.mjs"') }, null, 2);
+  const b = await setup(elsewhere);
+  const bApply = await run(['uninstall', '--tool', 'antigravity', '--home', b.home, '--apply']);
+  assert.strictEqual(bApply.code, 0, bApply.err);
+  assert.strictEqual(fs.readFileSync(b.hooksFile, 'utf8'), elsewhere);
+  assert.ok(bApply.out.includes(`note: ${b.hooksFile} still has orc-guard; run ${removeCmd(b.home)} to remove it`), bApply.out);
+  assert.doesNotMatch(bApply.out, /removed orc-guard/);
+
+  // A guard.mjs edited since install is kept by uninstall, so the orc-guard that runs it stays, and is named.
+  const k = await setup((home) => JSON.stringify({ 'orc-guard': entry(guardCommand(home)) }, null, 2));
+  const kBefore = fs.readFileSync(k.hooksFile, 'utf8');
+  fs.appendFileSync(k.guard, '\n// edited by the owner\n');
+  const kApply = await run(['uninstall', '--tool', 'antigravity', '--home', k.home, '--apply']);
+  assert.strictEqual(kApply.code, 0, kApply.err);
+  assert.ok(fs.existsSync(k.guard), 'the edited guard is kept');
+  assert.strictEqual(fs.readFileSync(k.hooksFile, 'utf8'), kBefore);
+  assert.ok(kApply.out.includes(`note: ${k.hooksFile} still has orc-guard; run ${removeCmd(k.home)} to remove it`), kApply.out);
+  assert.doesNotMatch(kApply.out, /removed orc-guard/);
+
+  // An unreadable hooks.json: a WARN naming the file and the command; the uninstall still completes.
+  const c = await setup('{ not json');
+  const cApply = await run(['uninstall', '--tool', 'antigravity', '--home', c.home, '--apply']);
+  assert.strictEqual(cApply.code, 0, cApply.err);
+  assert.match(cApply.err, new RegExp(`^WARN cannot read ${esc(c.hooksFile)} \\(not valid JSON: .+\\); if it still has orc-guard, fix the file and run ${esc(removeCmd(c.home))}$`));
+  assert.ok(!fs.existsSync(c.guard), 'the uninstall went on');
+  assert.match(cApply.out, /removed manifest: /);
+  assert.strictEqual(fs.readFileSync(c.hooksFile, 'utf8'), '{ not json');
+  // The same WARN when there is no manifest to uninstall.
+  const none = await run(['uninstall', '--tool', 'antigravity', '--home', c.home]);
+  assert.strictEqual(none.code, 1);
+  assert.match(none.err, /^WARN cannot read .*hooks\.json \(not valid JSON: [^\n]+\n.*no install manifest at /s);
+
+  // No hooks.json: nothing about orc-guard.
+  const d = await setup(undefined);
+  const dApply = await run(['uninstall', '--tool', 'antigravity', '--home', d.home, '--apply']);
+  assert.strictEqual(dApply.code, 0, dApply.err);
+  assert.strictEqual(dApply.err, '');
+  assert.doesNotMatch(dApply.out, /orc-guard/);
+  assert.ok(!fs.existsSync(d.hooksFile));
 });
 
 test('install --board adds the Board line; without it a warning', async () => {
@@ -771,35 +1110,58 @@ test('install paths for codex, cursor, copilot, opencode', async () => {
   assert.ok(!fs.existsSync(path.join(home, 'project')));
 });
 
-test('install copies Claude Code workflow commands and orc-permissions skill with hand-copy/edit safeguards; uninstall removes unchanged ones', async () => {
-  const home = tempDir('claude-static');
-  const cmds = ['create', 'draft-pr', 'fix-ci', 'grill', 'peer-review', 'start'];
+test('install writes the generated skills and commands with hand-copy/edit safeguards; uninstall removes unchanged ones', async () => {
+  const home = tempDir('claude-generated');
   const claude = path.join(home, '.claude');
-  // Pre-seed a differing hand-copied workflow command (no manifest): install keeps it without --force.
+  const built = new Map((await buildGolden(REPO, 'claude-code'))[0].files.map((f) => [f.path, f.content]));
+  // Hand copies from before generation (no manifest, no marker): an old routine skill and an old workflow command.
+  const oldSkill = '---\nname: board\ndescription: Write an orchestrated task to the live board.\n---\n\n# Board\n\nThis skill exists only where a copy of it is.\n';
+  fs.mkdirSync(path.join(claude, 'skills', 'board'), { recursive: true });
   fs.mkdirSync(path.join(claude, 'commands'), { recursive: true });
+  fs.writeFileSync(path.join(claude, 'skills', 'board', 'SKILL.md'), oldSkill);
   fs.writeFileSync(path.join(claude, 'commands', 'start.md'), '# my own start\n');
   const first = await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board']);
   assert.equal(first.code, 0, first.err);
+  assert.match(first.out, /kept \(hand-copied skill, differs; --force replaces it, with a backup\): .*board[\\/]SKILL\.md/);
   assert.match(first.out, /kept \(hand-copied command, differs; --force replaces it, with a backup\): .*start\.md/);
+  assert.equal(read(path.join(claude, 'skills', 'board', 'SKILL.md')), oldSkill, 'hand-copied skill kept');
   assert.equal(read(path.join(claude, 'commands', 'start.md')), '# my own start\n', 'hand-copied command kept');
-  for (const n of cmds.filter((c) => c !== 'start')) {
-    assert.equal(read(path.join(claude, 'commands', `${n}.md`)), read(path.join(REPO, 'adapters', 'claude-code', 'commands', `${n}.md`)), n);
+  const procFiles = PROCEDURES.map((p) => (p.kind === 'routine' ? `.claude/skills/${p.name}/SKILL.md` : `.claude/commands/${p.name}.md`));
+  assert.equal(procFiles.length, 14);
+  for (const rel of procFiles.filter((r) => !['.claude/skills/board/SKILL.md', '.claude/commands/start.md'].includes(r))) {
+    assert.equal(read(path.join(home, ...rel.split('/'))), built.get(rel), rel);
   }
   const permTarget = path.join(claude, 'skills', 'orc-permissions', 'SKILL.md');
   assert.equal(read(permTarget), read(path.join(REPO, 'adapters', 'claude-code', 'skills', 'orc-permissions', 'SKILL.md')));
   const mf = JSON.parse(fs.readFileSync(path.join(claude, '.orc-manifest.claude-code.json'), 'utf8'));
-  assert.ok(!mf.files['.claude/commands/start.md'], 'kept hand copy is not recorded');
-  assert.ok(mf.files['.claude/commands/grill.md'], 'installed command is recorded');
+  assert.ok(!mf.files['.claude/commands/start.md'] && !mf.files['.claude/skills/board/SKILL.md'], 'kept hand copies are not recorded');
+  assert.ok(mf.files['.claude/commands/grill.md'] && mf.files['.claude/skills/sprint/SKILL.md'], 'generated files are recorded');
   assert.ok(mf.files['.claude/skills/orc-permissions/SKILL.md'], 'orc-permissions skill is recorded');
-  // status reports the hand-copied command as differs, and the rest as same.
+  // status reports the hand copies as differs, and the rest as same.
   const st1 = await run(['status', '--tool', 'claude-code', '--home', home, '--no-board']);
   assert.equal(st1.code, 1);
   assert.match(st1.out, /differs \(first difference at line 1; a hand-copied command, which install --apply keeps: install --apply --force replaces it, with a backup\): .*start\.md/);
+  assert.match(st1.out, /differs \(first difference at line \d+; a hand-copied skill, which install --apply keeps: install --apply --force replaces it, with a backup\): .*board[\\/]SKILL\.md/);
   assert.match(st1.out, /same: .*skills[\\/]orc-permissions[\\/]SKILL\.md/);
-  // --force replaces the hand-copied command with a backup; now status is clean.
+  assert.match(st1.out, /same: .*skills[\\/]wrap-up[\\/]SKILL\.md/);
+  // Deleting a hand copy hands the path over: install writes and records the generated file.
+  fs.rmSync(path.join(claude, 'skills', 'board', 'SKILL.md'));
+  const handed = await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board']);
+  assert.match(handed.out, /applied create: .*board[\\/]SKILL\.md/);
+  assert.equal(read(path.join(claude, 'skills', 'board', 'SKILL.md')), built.get('.claude/skills/board/SKILL.md'));
+  // --force replaces the other hand copy with a backup; now status is clean.
   assert.equal((await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board', '--force'])).code, 0);
-  assert.equal(read(path.join(claude, 'commands', 'start.md')), read(path.join(REPO, 'adapters', 'claude-code', 'commands', 'start.md')));
+  assert.equal(read(path.join(claude, 'commands', 'start.md')), built.get('.claude/commands/start.md'));
   assert.equal((await run(['status', '--tool', 'claude-code', '--home', home, '--no-board'])).code, 0);
+  // A generated file left by an earlier install (it carries the marker) and in no manifest is replaced, not kept.
+  const sprint = path.join(claude, 'skills', 'sprint', 'SKILL.md');
+  fs.writeFileSync(sprint, built.get('.claude/skills/sprint/SKILL.md').replace('# Sprint', '# Sprint (older)'));
+  const mfNow = JSON.parse(fs.readFileSync(path.join(claude, '.orc-manifest.claude-code.json'), 'utf8'));
+  delete mfNow.files['.claude/skills/sprint/SKILL.md'];
+  fs.writeFileSync(path.join(claude, '.orc-manifest.claude-code.json'), JSON.stringify(mfNow));
+  const regen = await run(['install', '--tool', 'claude-code', '--home', home, '--apply', '--no-board']);
+  assert.equal(regen.code, 0, regen.err);
+  assert.match(regen.out, /applied replace: .*sprint[\\/]SKILL\.md/);
   // Hand-editing an installed command refuses re-install without --force and is kept by uninstall without --force.
   const grill = path.join(claude, 'commands', 'grill.md');
   fs.appendFileSync(grill, '\nlocal edit\n');
@@ -813,12 +1175,26 @@ test('install copies Claude Code workflow commands and orc-permissions skill wit
   assert.ok(fs.existsSync(grill), 'edited command kept on uninstall');
   assert.ok(!fs.existsSync(permTarget), 'unchanged orc-permissions skill removed on uninstall');
   assert.ok(!fs.existsSync(path.join(claude, 'commands', 'create.md')), 'unchanged command removed on uninstall');
-  // Clean uninstall with --force leaves nothing installed (other than the earlier backup).
+  assert.ok(!fs.existsSync(path.join(claude, 'skills', 'wrap-up')), 'unchanged skill and its folder removed on uninstall');
+  // Clean uninstall with --force leaves nothing installed (other than the earlier backups).
   assert.equal((await run(['uninstall', '--tool', 'claude-code', '--home', home, '--apply', '--force'])).code, 0);
   assert.ok(!fs.existsSync(grill));
-  // Golden build never includes static files (same as hook scripts).
+  // The golden build has the generated skills and commands, never the static orc-permissions skill.
   const ccGold = (await buildGolden(REPO, 'claude-code'))[0].files.map((f) => f.path);
-  assert.ok(!ccGold.includes('.claude/commands/start.md') && !ccGold.includes('.claude/skills/orc-permissions/SKILL.md'));
+  assert.ok(ccGold.includes('.claude/commands/start.md') && ccGold.includes('.claude/skills/board/SKILL.md') && !ccGold.includes('.claude/skills/orc-permissions/SKILL.md'));
+});
+
+test('install --tool antigravity writes the fourteen generated skills; uninstall removes them', async () => {
+  const home = tempDir('agy-skills');
+  const r = await run(['install', '--tool', 'antigravity', '--home', home, '--apply', '--no-board']);
+  assert.equal(r.code, 0, r.err);
+  const skills = path.join(home, '.gemini', 'config', 'skills');
+  assert.deepEqual(fs.readdirSync(skills).sort(), PROCEDURES.map((p) => p.name).sort());
+  for (const p of PROCEDURES) assert.equal(parse(read(path.join(skills, p.name, 'SKILL.md'))).data.name, p.name);
+  assert.ok(!fs.existsSync(path.join(home, '.claude')), 'nothing under .claude');
+  assert.equal((await run(['status', '--tool', 'antigravity', '--home', home, '--no-board'])).code, 0);
+  assert.equal((await run(['uninstall', '--tool', 'antigravity', '--home', home, '--apply'])).code, 0);
+  assert.ok(!fs.existsSync(skills), 'skills and their folders removed');
 });
 
 test('adapter loaders ignore sub-folders under adapters/ (including adapters/claude-code/ and *.mjs folders)', async () => {
@@ -828,7 +1204,8 @@ test('adapter loaders ignore sub-folders under adapters/ (including adapters/cla
   assert.deepEqual((await loadAdapters(REPO)).map((a) => a.id), expected);
   // Even a subfolder whose name ends in .mjs is ignored.
   const copy = tempDir('adapter-dirs');
-  for (const p of ['adapters', 'tools/lib']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
+  // The adapters import the procedure catalogue (core/procedures.mjs) and tools/lib.
+  for (const p of ['adapters', 'core', 'tools/lib']) fs.cpSync(path.join(REPO, p), path.join(copy, p), { recursive: true });
   fs.mkdirSync(path.join(copy, 'adapters', 'fake.mjs'));
   assert.deepEqual(knownTools(copy), expected);
   assert.deepEqual((await loadAdapters(copy)).map((a) => a.id), expected);
@@ -849,8 +1226,9 @@ test('D3d: an identical hand-copied static file stays unrecorded, is kept after 
   }
   const home = tempDir('static-owner-home');
   const claude = path.join(home, '.claude');
-  const grillSrc = path.join(copy, 'adapters', 'claude-code', 'commands', 'grill.md');
-  const grillDst = path.join(claude, 'commands', 'grill.md');
+  // The static orc-permissions skill (generated skills and commands carry a marker, so install recognises its own output).
+  const grillSrc = path.join(copy, 'adapters', 'claude-code', 'skills', 'orc-permissions', 'SKILL.md');
+  const grillDst = path.join(claude, 'skills', 'orc-permissions', 'SKILL.md');
   const original = read(grillSrc);
   fs.mkdirSync(path.dirname(grillDst), { recursive: true });
   fs.writeFileSync(grillDst, original);
@@ -858,27 +1236,27 @@ test('D3d: an identical hand-copied static file stays unrecorded, is kept after 
   // First install: byte-identical static file with no manifest stays the owner's (not recorded).
   const first = await run(['install', '--tool', 'claude-code', '--repo', copy, '--home', home, '--apply', '--no-board']);
   assert.equal(first.code, 0, first.err);
-  assert.match(first.out, /applied unchanged: .*grill\.md \(already there and in no orc manifest: not recorded, uninstall leaves it\)/);
+  assert.match(first.out, /applied unchanged: .*orc-permissions[\\/]SKILL\.md \(already there and in no orc manifest: not recorded, uninstall leaves it\)/);
   const mf1 = JSON.parse(fs.readFileSync(path.join(claude, '.orc-manifest.claude-code.json'), 'utf8'));
-  assert.equal(mf1.files['.claude/commands/grill.md'], undefined, 'identical pre-existing file is not recorded');
+  assert.equal(mf1.files['.claude/skills/orc-permissions/SKILL.md'], undefined, 'identical pre-existing file is not recorded');
 
   // Later source change: install keeps the unrecorded file without --force, and status flags it as a hand copy.
   fs.appendFileSync(grillSrc, '\nUpdated line.\n');
   const second = await run(['install', '--tool', 'claude-code', '--repo', copy, '--home', home, '--apply', '--no-board']);
   assert.equal(second.code, 0, second.err);
-  assert.match(second.out, /kept \(hand-copied command, differs; --force replaces it, with a backup\): .*grill\.md/);
+  assert.match(second.out, /kept \(hand-copied skill, differs; --force replaces it, with a backup\): .*orc-permissions[\\/]SKILL\.md/);
   assert.equal(read(grillDst), original, 'unrecorded hand copy is not overwritten');
   const st1 = await run(['status', '--tool', 'claude-code', '--repo', copy, '--home', home, '--no-board']);
   assert.equal(st1.code, 1);
-  assert.match(st1.out, /differs \(first difference at line \d+; a hand-copied command, which install --apply keeps: install --apply --force replaces it, with a backup\): .*grill\.md/);
+  assert.match(st1.out, /differs \(first difference at line \d+; a hand-copied skill, which install --apply keeps: install --apply --force replaces it, with a backup\): .*orc-permissions[\\/]SKILL\.md/);
 
   // Handover without --force: delete the file, then install; it is now installed and recorded.
   fs.rmSync(grillDst);
   const third = await run(['install', '--tool', 'claude-code', '--repo', copy, '--home', home, '--apply', '--no-board']);
   assert.equal(third.code, 0, third.err);
-  assert.match(third.out, /applied create: .*grill\.md/);
+  assert.match(third.out, /applied create: .*orc-permissions[\\/]SKILL\.md/);
   assert.equal(read(grillDst), read(grillSrc));
   const mf3 = JSON.parse(fs.readFileSync(path.join(claude, '.orc-manifest.claude-code.json'), 'utf8'));
-  assert.ok(mf3.files['.claude/commands/grill.md'], 'now recorded in manifest');
+  assert.ok(mf3.files['.claude/skills/orc-permissions/SKILL.md'], 'now recorded in manifest');
   assert.equal((await run(['status', '--tool', 'claude-code', '--repo', copy, '--home', home, '--no-board'])).code, 0);
 });

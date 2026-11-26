@@ -12,7 +12,8 @@ export const LIGHT_PATTERNS = [
 
 // Prompts are product in this repo and others: rulebooks, roles, agent and command files, tool folders, profiles,
 // adapter notes and per-tool assets (commands, skills), review panel files, workflows, the standards archive, its
-// setup procedure and the sprint procedure decide behaviour, so they force Full even though most are Markdown.
+// setup procedure, the sprint procedure and its assets, and the routine procedures (board, brief, wrap-up) decide
+// behaviour, so they force Full even though most are Markdown.
 export const PRODUCT_PATTERNS = [
   /(^|\/)(AGENTS|CLAUDE|GEMINI|SKILL)\.md$/i,
   /(^|\/)[^/]+\.agent\.md$/i,
@@ -22,7 +23,8 @@ export const PRODUCT_PATTERNS = [
   /^standards\//,
   /^review\//,
   /^workflows\//,
-  /^orchestration\/(standards|sprint)\.md$/,
+  /^orchestration\/(standards|sprint|board|brief|wrap-up)\.md$/,
+  /^orchestration\/sprint\//,
 ];
 
 export const isLightPath = (p) => {

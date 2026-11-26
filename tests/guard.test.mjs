@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadRoles } from '../tools/orc.mjs';
+import { run as runGuard } from '../tools/guard.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MJS = path.join(REPO, 'tools', 'guard.mjs');
@@ -401,4 +402,175 @@ test('both example files wire the guard on PreToolUse for Bash and PowerShell; s
   assert.deepEqual(example.permissions.deny, ['Read(.env)', 'Read(.env.*)', 'Read(**/.credentials.json)', 'Read(~/.claude/.credentials.json)']);
 });
 
+// ---------- Antigravity PreToolUse payloads ----------
+
+function antigravityPayload(c) {
+  return JSON.stringify({
+    conversationId: 'c',
+    workspacePaths: [R[c.cwd]],
+    hookEventName: 'PreToolUse',
+    cwd: R[c.cwd],
+    toolCall: {
+      id: 't1',
+      name: 'run_command',
+      args: { CommandLine: typeof c.cmd === 'function' ? c.cmd() : c.cmd, WaitMsBeforeAsync: 500, toolSummary: 'cmd' },
+    },
+    stepIdx: 3,
+  });
+}
+
+function judgeAntigravity(c, stdout, stderr, status = 0) {
+  assert.strictEqual(status, 0, `${c.name}: exit ${status}; stderr ${stderr}`);
+  assert.doesNotMatch(stderr ?? '', /git did not answer/, `${c.name}: the guard's git probe timed out`);
+  if (c.expect === 'allow') {
+    assert.strictEqual(stdout.trim(), '', `${c.name}: allow must print nothing, got ${stdout}`);
+    return;
+  }
+  assert.notStrictEqual(stdout.trim(), '', `${c.name}: expected ${c.expect}, got no decision; stderr ${stderr}`);
+  const out = JSON.parse(stdout);
+  assert.deepStrictEqual(Object.keys(out).sort(), ['decision', 'reason'], `${c.name}: Antigravity shape only`);
+  assert.strictEqual(out.decision, c.expect, `${c.name}: ${out.reason}`);
+  assert.match(out.reason, c.reason, c.name);
+  assert.ok(!out.reason.includes('\n'), 'one line');
+}
+
+test('guard.mjs (Antigravity): deny, ask and allow over the payload table for POSIX and Windows splitters', async () => {
+  // Every row with no agent and no tool-specific field runs with the POSIX splitter (linux).
+  const posixCases = CASES.filter((c) => !c.agent && !c.tool && (!c.platform || c.platform === process.platform));
+  assert.ok(posixCases.length > 50, 'covered the POSIX rows');
+  for (const c of posixCases) {
+    const warns = [];
+    const out = runGuard(antigravityPayload(c), envFor(c), (m) => warns.push(m), 'linux');
+    judgeAntigravity(c, out, warns.join('\n'));
+  }
+  // Every PowerShell row with no agent runs with the Windows splitter (win32).
+  const psCases = CASES.filter((c) => !c.agent && c.tool === 'PowerShell');
+  assert.ok(psCases.length > 20, 'covered the PowerShell rows');
+  for (const c of psCases) {
+    const warns = [];
+    const out = runGuard(antigravityPayload(c), envFor(c), (m) => warns.push(m), 'win32');
+    judgeAntigravity(c, out, warns.join('\n'));
+  }
+  // Platform picks the splitter: PowerShell assignment syntax only fires on win32; Bash backslash-newline only on POSIX.
+  const psAssign = antigravityPayload({ cwd: 'main', cmd: '$r = git commit -m x' });
+  assert.strictEqual(JSON.parse(runGuard(psAssign, envFor({}), () => {}, 'win32')).decision, 'deny');
+  assert.strictEqual(runGuard(psAssign, envFor({}), () => {}, 'linux'), '');
+  const bashCont = antigravityPayload({ cwd: 'main', cmd: 'git \\\n  commit -m x' });
+  assert.strictEqual(JSON.parse(runGuard(bashCont, envFor({}), () => {}, 'linux')).decision, 'deny');
+  assert.strictEqual(runGuard(bashCont, envFor({}), () => {}, 'win32'), '');
+  // Subprocess run on the host platform, including the real-shaped Antigravity PreToolUse payload.
+  const hostCases = process.platform === 'win32' ? psCases : posixCases;
+  const failures = hostCases.map((c) => `${c.name}: not run`);
+  let next = 0;
+  const worker = async () => {
+    while (next < hostCases.length) {
+      const i = next++;
+      const c = hostCases[i];
+      try {
+        const r = await viaNodeAsync(antigravityPayload(c), envFor(c));
+        if (r.timedOut) throw new Error(`${c.name}: timed out`);
+        judgeAntigravity(c, r.stdout, r.stderr, r.status);
+        failures[i] = null;
+      } catch (e) {
+        failures[i] = e.message.split('\n')[0];
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(POOL, hostCases.length) }, worker));
+  assert.deepStrictEqual(failures.filter((f) => f !== null), []);
+  // Real-shaped payload (data precondition) through a real subprocess.
+  const realPayload = JSON.stringify({
+    conversationId: 'c',
+    workspacePaths: [R.main],
+    hookEventName: 'PreToolUse',
+    cwd: R.main,
+    toolCall: { id: 't1', name: 'run_command', args: { CommandLine: 'git commit -m x', WaitMsBeforeAsync: 500, toolSummary: 'commit' } },
+    stepIdx: 3,
+  });
+  const realRes = viaNode(realPayload, envFor({}));
+  assert.strictEqual(realRes.status, 0, realRes.stderr);
+  assert.strictEqual(realRes.stderr, '');
+  assert.deepStrictEqual(JSON.parse(realRes.stdout), {
+    decision: 'deny',
+    reason: 'guard: protected-branch: git commit on main is blocked; create a branch first',
+  });
+});
+
+test('guard.mjs (Antigravity): non-run_command allowed, read-only-role gap, and fail-open on unknown payloads', () => {
+  const env = envFor({});
+  // Any Antigravity tool other than run_command is allowed silently, even if args hold a blocked command.
+  for (const name of ['read_file', 'edit_file', 'write_file', 'search_web']) {
+    const p = JSON.stringify({
+      conversationId: 'c',
+      hookEventName: 'PreToolUse',
+      cwd: R.main,
+      toolCall: { id: 't1', name, args: { CommandLine: 'git commit -m x', Path: 'file.txt' } },
+      stepIdx: 1,
+    });
+    const r = viaNode(p, env);
+    assert.strictEqual(r.status, 0, name);
+    assert.strictEqual(r.stdout, '', `${name}: allow prints nothing`);
+    assert.strictEqual(r.stderr, '', `${name}: no stderr warning`);
+  }
+  // Read-only-role gap: denied under Claude Code (refuter on feature branch), allowed under Antigravity (no agent identity).
+  const claudeRefuter = viaNode(payload({ cwd: 'wt', agent: 'refuter', cmd: 'git commit -m x' }), env);
+  assert.strictEqual(JSON.parse(claudeRefuter.stdout).hookSpecificOutput.permissionDecision, 'deny');
+  const agyRefuter = viaNode(JSON.stringify({
+    conversationId: 'c',
+    hookEventName: 'PreToolUse',
+    cwd: R.wt,
+    agent_type: 'refuter',
+    toolCall: { id: 't1', name: 'run_command', args: { CommandLine: 'git commit -m x' } },
+    stepIdx: 1,
+  }), env);
+  assert.strictEqual(agyRefuter.status, 0);
+  assert.strictEqual(agyRefuter.stdout, '', 'read-only-role rule does not apply under Antigravity');
+  assert.strictEqual(agyRefuter.stderr, '');
+  // Missing args.CommandLine on run_command: fail open with one guard stderr line.
+  const noCmdLine = viaNode(JSON.stringify({
+    hookEventName: 'PreToolUse',
+    cwd: R.main,
+    toolCall: { id: 't1', name: 'run_command', args: {} },
+  }), env);
+  assert.strictEqual(noCmdLine.status, 0);
+  assert.strictEqual(noCmdLine.stdout, '');
+  assert.match(noCmdLine.stderr.trim(), /^guard: no toolCall\.args\.CommandLine.*allowed$/);
+  assert.strictEqual(noCmdLine.stderr.trim().split('\n').length, 1);
+  // Payloads of neither shape: fail open with one guard: ... allowed line on stderr.
+  for (const raw of ['{}', '{"foo":"bar"}', 'null', '[]', '{"toolCall":{}}']) {
+    const r = viaNode(raw, env);
+    assert.strictEqual(r.status, 0, raw);
+    assert.strictEqual(r.stdout, '', raw);
+    assert.match(r.stderr.trim(), /^guard: .*allowed$/, raw);
+    assert.strictEqual(r.stderr.trim().split('\n').length, 1, raw);
+  }
+});
+
 after(() => fs.rmSync(R.root, { recursive: true, force: true }));
+
+test('guard.mjs: under ORC_HEADLESS=1 an Antigravity ask is refused; a Claude Code ask and an interactive Antigravity ask are unchanged', () => {
+  const agy = JSON.stringify({ hookEventName: 'PreToolUse', cwd: R.wt, toolCall: { id: 't1', name: 'run_command', args: { CommandLine: 'git add -A' } } });
+  const claude = JSON.stringify({ hook_event_name: 'PreToolUse', cwd: R.wt, tool_name: 'Bash', tool_input: { command: 'git add -A' } });
+  const interactive = JSON.parse(runGuard(agy, {}, () => {}));
+  assert.strictEqual(interactive.decision, 'ask');
+  const headless = JSON.parse(runGuard(agy, { ORC_HEADLESS: '1' }, () => {}));
+  assert.strictEqual(headless.decision, 'deny');
+  assert.match(headless.reason, /^guard: broad-add: .* \(headless run: nobody can answer, so it is refused\)$/);
+  assert.strictEqual(JSON.parse(runGuard(claude, { ORC_HEADLESS: '1' }, () => {})).hookSpecificOutput.permissionDecision, 'ask', 'Claude Code already treats a headless ask as a deny');
+  // An allow stays silent and a deny keeps its reason.
+  const commit = JSON.stringify({ hookEventName: 'PreToolUse', cwd: R.wt, toolCall: { id: 't2', name: 'run_command', args: { CommandLine: 'git status' } } });
+  assert.strictEqual(runGuard(commit, { ORC_HEADLESS: '1' }, () => {}), '');
+});
+
+test('guard.mjs: ~ is USERPROFILE on Windows and HOME elsewhere, when the two differ', () => {
+  // R.root holds the repo on main; the other home holds no repo, so following it would find no branch and allow.
+  const otherHome = fs.mkdtempSync(path.join(os.tmpdir(), 'orc-guard-otherhome-'));
+  const env = process.platform === 'win32' ? { USERPROFILE: R.root, HOME: otherHome } : { HOME: R.root, USERPROFILE: otherHome };
+  for (const cmd of ['cd ~/repo && git commit -m x', 'git -C ~/repo commit -m x']) {
+    const out = runGuard(JSON.stringify({ hook_event_name: 'PreToolUse', cwd: R.wt, tool_name: 'Bash', tool_input: { command: cmd } }), env, () => {});
+    assert.notStrictEqual(out, '', `${cmd}: expected a deny`);
+    assert.strictEqual(JSON.parse(out).hookSpecificOutput.permissionDecision, 'deny', cmd);
+    assert.match(JSON.parse(out).hookSpecificOutput.permissionDecisionReason, /commit on main/, cmd);
+  }
+  fs.rmSync(otherHome, { recursive: true, force: true });
+});
