@@ -59,6 +59,7 @@ Every orchestrated task (any task that dispatches a builder, refuter or debugger
 Spec → builder → refuter → orchestrator reads the diff.
 - REWORK: resume the same builder with the must-fixes, then send a fresh refuter. After 2 rounds, read the diff yourself and decide.
   - When the must-fixes are only tests plus one small guard, you may accept inline instead: rerun the tests after the builder's last edit and every mutant the refuter saw survive, and record that the orchestrator accepted.
+  - Read the evidence for any must-fix the builder says did not reproduce before dropping it. A builder BLOCKED on a fix to its own earlier fix, or on machinery the spec does not name, gets a new spec, not another round.
   - Any SPEC VS INTENT entry makes the refuter's verdict REWORK addressed to your spec, not the builder (its MUST-FIX may be none): fix the spec, then re-dispatch. An ACCEPT never stands with one open.
 - Read-only agents may run in parallel. Never put two writers on the same files. Parallel builders each get their own worktree, split by file ownership; `git apply` the smaller diff onto the main worktree.
 - At most 3 high-tier agents in flight; stage fan-outs 3+3, with the mandatory agent first. After a builder that used >300k tokens, refute inline, use a Mid-tier refuter, or wait.
@@ -71,7 +72,7 @@ Spec → builder → refuter → orchestrator reads the diff.
 - Builders run filtered tests only. The orchestrator runs each full test project once at the end, in the background, while the refuter does its static pass: re-running suites once took ~3 h of a 7 h fix loop.
 - Run full suites by project name, one at a time.
 - Refuters rerun only targeted tests (`--no-build`) and mutation tests (built in their throwaway worktree).
-- If a completion notice is late, read the report file and logs on disk.
+- If a completion notice is late, or a background agent's output has been silent for ~10 min, read its output and logs on disk: agents twice sat for hours on an unanswered permission prompt. Allow the stalled command (the tool notes say how), then resume the agent.
 - If findings conflict, read the code and fixture yourself before speccing a fix.
 - State a cross-cutting rule in one spec; the others reference it. Two specs stating one rule drifted apart within a round.
 - Live-app verification gets its own builder, worktree and DB copy, so it never shares build output with a code builder. At most 2 apps on a shared dev DB. A setup-timeout failure gets 1 rerun, and both results are reported.
