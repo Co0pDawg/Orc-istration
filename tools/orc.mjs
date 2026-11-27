@@ -15,6 +15,7 @@ import { reviewTier } from './lib/reviewtier.mjs';
 import { prSize } from './lib/prsize.mjs';
 import { textCheck } from './lib/textcheck.mjs';
 import { pollUntil } from './lib/poll.mjs';
+import { runGate } from './lib/gate.mjs';
 import { costlog, readBoardExport } from './lib/costlog.mjs';
 import { calibrationReport, DEFAULT_MIN_PRECISION } from './lib/calibration.mjs';
 import { listCases, scoreReport } from './lib/corpus.mjs';
@@ -634,7 +635,7 @@ function stamp(d = new Date()) {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices', 'stack', 'from', 'case', 'report', 'variant', 'models', 'budget-usd', 'runs', 'label', 'author', 'max', 'until', 'model', 'allow', 'state', 'issue', 'family', 'prefer', 'head', 'sensitive', 'max-words', 'max-bytes', 'every'];
+const VALUE_OPTIONS = ['home', 'tool', 'out', 'board', 'board-repo', 'repo', 'profile', 'role', 'base', 'repo-dir', 'session', 'board-export', 'brief', 'timeout', 'logs', 'min-precision', 'workflow', 'transcript', 'log', 'mode', 'version', 'dir', 'prices', 'stack', 'from', 'case', 'report', 'variant', 'models', 'budget-usd', 'runs', 'label', 'author', 'max', 'until', 'model', 'allow', 'state', 'issue', 'family', 'prefer', 'head', 'sensitive', 'max-words', 'max-bytes', 'every', 'shell'];
 
 // Value options that may repeat; each value may also be comma-separated.
 const LIST_OPTIONS = ['profile', 'stack'];
@@ -809,8 +810,8 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     io.err(msg);
     return 1;
   };
-  // `poll ... -- <command> [args...]`: everything after the first `--` is the polled command's argv, never parsed as
-  // orc options (its own `--help` or `-h` included).
+  // `poll ... -- <command> [args...]` and `gate ... -- <command> [args...]`: everything after the first `--` is the
+  // command's argv, never parsed as orc options (its own `--help` or `-h` included).
   const dashes = argv.indexOf('--');
   const polled = dashes < 0 ? null : argv.slice(dashes + 1);
   let opt;
@@ -820,7 +821,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     return fail(e.message);
   }
   const cmd = opt._[0];
-  if (polled && cmd !== 'poll') return fail('`--` applies to poll only (poll --every <seconds> --until <regex> -- <command> [args...])');
+  if (polled && cmd !== 'poll' && cmd !== 'gate') return fail('`--` applies to poll and gate only (poll --every <seconds> --until <regex> -- <command> [args...]; gate -- <command> [args...])');
   if (opt.help || opt._.includes('-h') || cmd === 'help') {
     const topic = cmd === 'help' || cmd === '-h' ? opt._.find((a, i) => i > 0 && a !== '-h') : cmd;
     if (!topic) {
@@ -878,6 +879,7 @@ export async function main(argv, io = { out: console.log, err: console.error, st
   if (queueOnly.length && cmd !== 'queue') return fail(`${queueOnly.map((k) => `--${k}`).join(', ')} apply to queue only`);
   if (opt.until !== undefined && !['queue', 'poll'].includes(cmd)) return fail('--until applies to queue and poll only');
   if (opt.every !== undefined && cmd !== 'poll') return fail('--every applies to poll only');
+  if (opt.shell !== undefined && cmd !== 'gate') return fail('--shell applies to gate only');
   if ((opt.head !== undefined || opt.sensitive !== undefined) && cmd !== 'pr-size') return fail('--head and --sensitive apply to pr-size only');
   if ((opt['max-words'] !== undefined || opt['max-bytes'] !== undefined || opt.ascii) && cmd !== 'text-check') return fail('--max-words, --max-bytes and --ascii apply to text-check only');
   const benchOnly = ['variant', 'models', 'runs', 'keep', 'keep-output'].filter((k) => opt[k] !== undefined);
@@ -1708,6 +1710,27 @@ export async function main(argv, io = { out: console.log, err: console.error, st
     }
     const r = await pollUntil({ argv: polled, everyMs: every * 1000, until, timeoutMs: timeoutSec * 1000, log: io.err });
     if (r.out !== undefined) io.out(r.out);
+    if (r.err) io.err(r.err);
+    return r.code;
+  }
+
+  // gate's usage errors exit 2, not 1, so they cannot pass for a FAIL; a FAIL exits with the command's own code.
+  if (cmd === 'gate') {
+    const usage = 'usage: gate [--dir <dir>] [--out <file>] [--timeout <seconds>] (-- <command> [args...] | --shell "<command line>")';
+    const bad = (msg) => {
+      io.err(msg);
+      return 2;
+    };
+    if (opt._.length !== 1 || Boolean(polled) === (opt.shell !== undefined) || (polled && !polled.length)) return bad(usage);
+    const timeoutSec = parseTimeout(opt.timeout);
+    if (Number.isNaN(timeoutSec)) return bad(TIMEOUT_USAGE(opt.timeout));
+    let r;
+    try {
+      r = await runGate({ argv: polled, shellLine: opt.shell ?? null, dir: path.resolve(opt.dir ?? '.'), out: opt.out, timeoutSec, iso: isoNow, err: io.err });
+    } catch (e) {
+      return fail(`gate: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (r.line) io.out(r.line);
     if (r.err) io.err(r.err);
     return r.code;
   }
