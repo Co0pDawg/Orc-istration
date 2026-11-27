@@ -10,7 +10,7 @@
 
 It is not an autonomous swarm. A person stays in charge: a spec is written before any code, each built change gets an independent review, and nothing counts as done until the orchestrator has read the final diff.
 
-> **Status: developed and used on Claude Code; early on other tools.** The full loop runs day to day only on Claude Code, on the files generated from this repo since 2026-11-18. Codex CLI has completed a live builder, refuter, rework and accept loop, launched both generated roles by name, and passed a native Windows workspace-write probe with MXC. Antigravity CLI is verified by tests and its `agy --help`, with no live run of a generated agent that counts yet, and the other four adapters are verified by tests against each tool's documented format. See [Limits](#limits).
+> **Status: developed and used on Claude Code; early on other tools.** The full loop runs day to day only on Claude Code, on the files generated from this repo since 2026-11-18. Codex CLI has completed a live builder, refuter, rework and accept loop, launched both generated roles by name, and passed a native Windows workspace-write probe with MXC. Antigravity CLI is verified by tests and has run the generated builder headlessly (agy 1.5.16, 2026-11-24), and the other four adapters are verified by tests against each tool's documented format. See [Limits](#limits).
 
 Full documentation lives in the [wiki](https://github.com/Co0pDawg/Orc-istration/wiki).
 
