@@ -17,9 +17,12 @@ rules themselves live in the core rulebook (`core/AGENTS.md`) and the optional p
 - After stopping a builder: on one feature the pause report said the database was untouched; the builder had already upgraded it and left a half-applied mutation. [1 incident]
 - Inline accept of a small rework: on the review-panel port (2026-11-16) the tooling refuter's must-fixes were two missing tests and one path guard. The orchestrator reran the tests after the last edit and both surviving mutants (now red) instead of a second refuter, which saved about 175k tokens.
 
+- Reproduce before fixing, and stop on fixes to fixes: the refuter role already assumed builders reproduce must-fixes, but the builder role never said so. On three tasks the loop went to a third round; on one of them the round-3 refuter found a regression the fix round itself had introduced, and one path-handling bug took three passes to close. [3 incidents]
+
 ## Test runs (learned 2026-09-14 — ~3 h of a 7 h review-fix loop was re-running suites)
 - Full suites once, at the end: on one PR they ran during the review panel, the panel forced code changes, and they ran again. [1 incident]
 - Test filter check: on one fix round the test filter missed two controller test classes; the builder noticed and widened it. [1 incident]
+- Silent agent check: background agents twice sat for hours on an unanswered permission prompt (about 11 hours once, overnight once) before anyone looked. [2 incidents]
 - Contradicting findings: the last one was a fixture artefact and cost only a comment.
 - Cross-cutting rule in one spec: two specs stating it independently drifted apart within one round. [1 incident]
 - Parallel builders by file ownership: zero overlap both times it was used. [2 runs]
