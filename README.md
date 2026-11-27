@@ -204,7 +204,7 @@ Every key and rule: [docs/cli.md](docs/cli.md#shared-state-orc).
 | `adapters/<tool>.mjs`, `.notes.md` | One adapter per tool: format, install paths, gaps, notes |
 | `core/procedures.mjs` | The procedure catalogue: the five routines, six workflows and three review procedures the adapters generate as Claude Code skills and commands and Antigravity skills; add a procedure here |
 | `adapters/claude-code/` | Claude-only static assets: `skills/orc-permissions/` (installed by `install --tool claude-code` and `sync`), plus `settings.example.json` (hooks, status line, plugins and `permissions.deny`) and `hooks.node.example.json` (`hooks --node`) |
-| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `pr-size`, `text-check`, `poll`, `now`, `costlog`, `dispatch`, `doctor`, `bench`, `queue`, `hooks`, `standards`; review panel: `calibration`, `corpus`, `metrics`; `help` |
+| `tools/orc.mjs`, `tools/lib/` | Generator and installer: `build`, `check`, `sync`, `golden`, `install`, `uninstall`, `status`, `models`; method tooling: `brief`, `review-tier`, `pr-size`, `text-check`, `poll`, `gate`, `now`, `costlog`, `dispatch`, `doctor`, `bench`, `queue`, `hooks`, `standards`; review panel: `calibration`, `corpus`, `metrics`; `help` |
 | `tests/` | `npm test`: golden files per tool (`node tools/orc.mjs golden` regenerates them; `check` compares against them), install, check, tooling, standards and review-panel tool tests, the `bench` tests (`tests/bench.test.mjs`, over the replay cases in `tests/fixtures/bench/`) and the `queue` tests (`tests/queue.test.mjs`), and the sprint tests (theme tokens and contrast, the theme picker, `make-story.mjs` and the story page) |
 | `CONTRIBUTING.md` | How to change this repo: sources vs generated files, the edit loop, traps |
 | `LICENSE` | MIT |
@@ -258,6 +258,7 @@ Every command is `node tools/orc.mjs <command>`. Options: `node tools/orc.mjs he
 | `pr-size` | Size a PR diff for `workflows/peer-review.md`: product, test and doc lines, the score, the size tier and one `risk:` line per sensitive path |
 | `text-check` | Count a file's words and bytes and list its non-ASCII lines, exiting 1 over a limit (`workflows/draft-pr.md`) |
 | `poll` | Run a command without a shell every interval until its output matches, as `workflows/fix-ci.md` waits on a CI run |
+| `gate` | Rerun the brief's Must-verify test command fresh in a builder's worktree and print one PASS or FAIL line (PASS needs exit 0 and an unchanged tree), run before every refuter dispatch; `--shell` takes only the orchestrator's own command line, never a builder report |
 | `now` | Print the current local time as ISO 8601 with its offset, the board's timestamp |
 | `costlog` | Draft a cost log from the board |
 | `calibration` | Per-lane precision and recall of the review panel from its run logs |

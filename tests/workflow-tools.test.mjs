@@ -12,6 +12,7 @@ import { main, isoNow } from '../tools/orc.mjs';
 import { score, tierOf, riskPaths } from '../tools/lib/prsize.mjs';
 import { textCheck } from '../tools/lib/textcheck.mjs';
 import { pollUntil } from '../tools/lib/poll.mjs';
+import { gitTop, treeHashes } from '../tools/lib/gate.mjs';
 
 // No test in this file can reach the real home folder.
 isolateHome();
@@ -355,7 +356,7 @@ test('poll CLI: a first-run match prints stdout; the command after -- is never p
     [['poll', '--every', '1', '--until', 'x'], /^usage: poll /],
     [['poll', '--every', '1', '--until', 'x', '--'], /^usage: poll /],
     [['poll', '--every', '1', '--until', 'x', '--timeout', '0', '--', 'node'], /--timeout needs a whole number of seconds from 1 to 86400/],
-    [['status', '--', 'x'], /`--` applies to poll only/],
+    [['status', '--', 'x'], /`--` applies to poll and gate only/],
     [['review-tier', '--every', '1'], /--every applies to poll only/],
     [['review-tier', '--until', 'x'], /--until applies to queue and poll only/],
   ]) {
@@ -363,6 +364,183 @@ test('poll CLI: a first-run match prints stdout; the command after -- is never p
     assert.strictEqual(bad.code, 1, argv.join(' '));
     assert.match(bad.err, re, argv.join(' '));
   }
+});
+
+// ---------- gate ----------
+
+const ISO = String.raw`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}`;
+const HEX = '[0-9a-f]{12}';
+
+// A real repo with a commit, then a tracked edit, a deletion, a CRLF and a binary file changed, and untracked files
+// (one binary, one in a subfolder). Repo-local autocrlf=false keeps the raw bytes in the diff.
+function gateRepo() {
+  const dir = tempDir('gate');
+  git(dir, 'init', '-q', '-b', 'main');
+  git(dir, 'config', 'core.autocrlf', 'false');
+  const put = (rel, data) => {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), data);
+  };
+  put('a.txt', 'one\n');
+  put('gone.txt', 'bye\n');
+  put('crlf.txt', 'x\r\ny\r\n');
+  put('bin.dat', Buffer.from([0, 1, 2, 255, 0, 128]));
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-qm', 'base');
+  put('a.txt', 'one\ntwo\n');
+  fs.rmSync(path.join(dir, 'gone.txt'));
+  put('crlf.txt', 'x\r\nz\r\n');
+  put('bin.dat', Buffer.from([0, 1, 3, 254, 0, 129, 10]));
+  put('new.txt', 'new\r\n');
+  put('sub/new.bin', Buffer.from([255, 0, 254, 13, 10]));
+  return dir;
+}
+
+// The two recipes, read from core/roles/builder.md so the test follows the role's own text.
+function builderRecipes() {
+  const text = fs.readFileSync(path.join(REPO, 'core', 'roles', 'builder.md'), 'utf8');
+  const spans = [...text.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+  const status = spans.find((s) => s.startsWith('git status --porcelain |'));
+  const change = spans.find((s) => s.startsWith('{ git diff HEAD --binary;'));
+  assert.ok(status && change, 'both recipes in core/roles/builder.md');
+  return { status, change };
+}
+
+const bashProbe = spawnSync('bash', ['-c', 'git --version'], { encoding: 'utf8', shell: false });
+const noBash = bashProbe.status === 0 ? false : `bash cannot run git here (${bashProbe.error?.code ?? `exit ${bashProbe.status}`}), so the recipe cannot be compared`;
+
+test('gate hashes a tree exactly as the builder role\'s bash recipe does', { skip: noBash }, () => {
+  const dir = gateRepo();
+  const top = gitTop(dir);
+  assert.ok(top, 'the temp repo is a work tree');
+  const porcelain = git(dir, 'status', '--porcelain');
+  for (const want of [' M a.txt', ' D gone.txt', ' M crlf.txt', ' M bin.dat', '?? new.txt', '?? sub/']) assert.ok(porcelain.includes(want), `${want} in ${porcelain}`);
+  const recipe = builderRecipes();
+  const bash = (line) => {
+    const r = spawnSync('bash', ['-c', line], { cwd: top, encoding: 'utf8', shell: false });
+    assert.strictEqual(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  assert.deepStrictEqual(treeHashes(top), { status: bash(recipe.status), change: bash(recipe.change) });
+  // A content-only edit of an untracked file leaves the status hash and moves the change hash, in both.
+  fs.writeFileSync(path.join(dir, 'new.txt'), 'other\r\n');
+  const after = treeHashes(top);
+  assert.deepStrictEqual(after, { status: bash(recipe.status), change: bash(recipe.change) });
+});
+
+test('gate CLI: PASS on exit 0 with an unchanged tree, the log outside it holding stdout and stderr', async () => {
+  const dir = gateRepo();
+  const hashes = treeHashes(gitTop(dir));
+  const r = await run(['gate', '--dir', dir, '--', process.execPath, '-e', 'console.log("hi " + process.argv[1]); console.error("there")', '--', '--help']);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.strictEqual(r.err, '');
+  const m = new RegExp(`^GATE PASS exit 0 in \\d+\\.\\ds at (${ISO}) tree (${HEX}) log (.+)$`).exec(r.out);
+  assert.ok(m, r.out);
+  assert.ok(Math.abs(Date.parse(m[1]) - Date.now()) < 60000, 'the finish time is now');
+  assert.strictEqual(m[2], hashes.change.slice(0, 12));
+  const log = m[3];
+  assert.strictEqual(path.dirname(log), path.join(os.tmpdir(), 'orc-gate'));
+  assert.match(path.basename(log), /^\d{8}T\d{6}Z-\d+\.log$/);
+  const text = fs.readFileSync(log, 'utf8');
+  assert.match(text, /hi --help/);
+  assert.match(text, /there/);
+  assert.deepStrictEqual(treeHashes(gitTop(dir)), hashes, 'the gate itself leaves the tree alone');
+  fs.rmSync(log);
+});
+
+test('gate CLI: a failing command FAILs with its exit code and the last 20 log lines on stderr', async () => {
+  const dir = gateRepo();
+  const out = path.join(tempDir('gate-log'), 'nested', 'run.log');
+  const script = 'for (let i = 1; i <= 25; i++) console.log("row " + i); process.exit(3)';
+  const r = await run(['gate', '--dir', dir, '--out', out, '--', process.execPath, '-e', script]);
+  assert.strictEqual(r.code, 3);
+  assert.match(r.out, new RegExp(`^GATE FAIL exit 3 in \\d+\\.\\ds at ${ISO} tree ${HEX} log ${esc(out)}$`));
+  assert.strictEqual(r.err, Array.from({ length: 20 }, (_, i) => `row ${i + 6}`).join('\n'));
+  assert.ok(fs.existsSync(out), 'the --out folder is created');
+});
+
+test('gate CLI: a command that exits 0 but changes the tree FAILs with exit 1, also for an untracked file\'s content', async () => {
+  const dir = gateRepo();
+  const out = path.join(tempDir('gate-log'), 'run.log');
+  const touch = await run(['gate', '--dir', dir, '--out', out, '--', process.execPath, '-e', 'require("fs").writeFileSync("probe.tmp", "x")']);
+  assert.strictEqual(touch.code, 1, touch.err);
+  const m = new RegExp(`^GATE FAIL tree changed during the run \\(status (${HEX})→(${HEX}), change (${HEX})→(${HEX})\\) at ${ISO} log ${esc(out)}$`).exec(touch.out);
+  assert.ok(m, touch.out);
+  assert.notStrictEqual(m[1], m[2]);
+  assert.notStrictEqual(m[3], m[4]);
+  const edit = await run(['gate', '--dir', dir, '--out', out, '--', process.execPath, '-e', 'require("fs").writeFileSync("new.txt", "changed")']);
+  assert.strictEqual(edit.code, 1, edit.err);
+  const e = new RegExp(`^GATE FAIL tree changed during the run \\(status (${HEX})→(${HEX}), change (${HEX})→(${HEX})\\)`).exec(edit.out);
+  assert.ok(e, edit.out);
+  assert.strictEqual(e[1], e[2], 'git status is the same');
+  assert.notStrictEqual(e[3], e[4], 'the change hash covers untracked content');
+  // Staging the tracked edit to a.txt changes only `git status` (" M" to "M "); `git diff HEAD` stays the same.
+  const staged = await run(['gate', '--dir', dir, '--out', out, '--', 'git', 'add', 'a.txt']);
+  assert.strictEqual(staged.code, 1, staged.err);
+  const s = new RegExp(`^GATE FAIL tree changed during the run \\(status (${HEX})→(${HEX}), change (${HEX})→(${HEX})\\)`).exec(staged.out);
+  assert.ok(s, staged.out);
+  assert.notStrictEqual(s[1], s[2], 'the status hash sees the staging');
+  assert.strictEqual(s[3], s[4], 'the change hash does not');
+});
+
+test('gate CLI: --timeout kills the command and FAILs with 124', async () => {
+  const dir = gateRepo();
+  const out = path.join(tempDir('gate-log'), 'run.log');
+  const t0 = Date.now();
+  const r = await run(['gate', '--dir', dir, '--out', out, '--timeout', '1', '--', process.execPath, '-e', 'setTimeout(() => {}, 30000)']);
+  assert.strictEqual(r.code, 124, r.err);
+  assert.match(r.out, new RegExp(`^GATE FAIL exit 124 in `));
+  assert.match(r.err, /^gate: timed out after 1s; killing the process tree/);
+  assert.ok(Date.now() - t0 < 15000, 'returned well before the command would have ended');
+});
+
+test('gate CLI: --shell runs one line through the platform shell, pipes included', async () => {
+  const dir = gateRepo();
+  const out = path.join(tempDir('gate-log'), 'run.log');
+  const node = `"${process.execPath}"`;
+  const pass = await run(['gate', '--dir', dir, '--out', out, '--shell', `${node} -e "console.log('piped')" | ${node} -e "process.stdin.pipe(process.stdout)"`]);
+  assert.strictEqual(pass.code, 0, pass.err);
+  assert.match(pass.out, /^GATE PASS exit 0 /);
+  assert.match(fs.readFileSync(out, 'utf8'), /piped/);
+  const fail = await run(['gate', '--dir', dir, '--out', out, '--shell', `${node} -e "process.exit(5)"`]);
+  assert.strictEqual(fail.code, 5);
+  assert.match(fail.out, /^GATE FAIL exit 5 /);
+});
+
+test('gate CLI: usage errors exit 2; outside a work tree or a command that cannot start fail', async () => {
+  const dir = gateRepo();
+  for (const argv of [
+    ['gate'],
+    ['gate', '--dir', dir],
+    ['gate', '--dir', dir, '--'],
+    ['gate', '--dir', dir, '--shell', 'x', '--', 'node'],
+    ['gate', 'extra', '--dir', dir, '--', 'node'],
+  ]) {
+    const bad = await run(argv);
+    assert.strictEqual(bad.code, 2, argv.join(' '));
+    assert.match(bad.err, /^usage: gate /, argv.join(' '));
+    assert.strictEqual(bad.out, '', argv.join(' '));
+  }
+  const slow = await run(['gate', '--dir', dir, '--timeout', '0', '--', 'node']);
+  assert.strictEqual(slow.code, 2);
+  assert.match(slow.err, /--timeout needs a whole number of seconds from 1 to 86400, got 0/);
+  const inTree = path.join(dir, 'logs', 'gate.log');
+  const within = await run(['gate', '--dir', dir, '--out', inTree, '--', process.execPath, '-e', '']);
+  assert.strictEqual(within.code, 2);
+  assert.match(within.err, /^gate: the log .* is inside the work tree /);
+  assert.strictEqual(fs.existsSync(path.join(dir, 'logs')), false, 'nothing written in the tree');
+  const plain = tempDir('gate-nogit');
+  const outside = await run(['gate', '--dir', plain, '--', process.execPath, '-e', '']);
+  assert.strictEqual(outside.code, 1);
+  assert.strictEqual(outside.err, `gate: ${plain} is not in a git work tree`);
+  const out = path.join(tempDir('gate-log'), 'run.log');
+  const gone = await run(['gate', '--dir', dir, '--out', out, '--', path.join(plain, 'no-such-helper')]);
+  assert.strictEqual(gone.code, 127);
+  assert.match(gone.out, /^GATE FAIL exit 127 /);
+  assert.match(gone.err, /^gate: cannot start .*no-such-helper: /);
+  const other = await run(['review-tier', '--shell', 'x']);
+  assert.strictEqual(other.code, 1);
+  assert.match(other.err, /--shell applies to gate only/);
 });
 
 // ---------- now ----------

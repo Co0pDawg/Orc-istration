@@ -141,6 +141,17 @@ export const HELP = {
       '-- <command> [args...]': 'the command and its arguments, run without a shell; exit 1 when it cannot start',
     },
   },
+  gate: {
+    summary: 'Rerun a test command fresh in a worktree and print one GATE PASS or GATE FAIL line; PASS needs exit 0 and a tree the run left unchanged (the builder role\'s status and change hashes)',
+    synopsis: 'gate [--dir <dir>] [--out <file>] [--timeout <seconds>] (-- <command> [args...] | --shell "<command line>")',
+    options: {
+      '--dir <dir>': 'where the command runs; must be inside a git work tree, whose top folder is hashed (default the current folder)',
+      '--out <file>': 'the log of the command\'s stdout and stderr, outside the work tree (default <temp>/orc-gate/<UTC stamp>-<pid>.log)',
+      '--timeout <seconds>': 'kill the process tree after this many seconds: FAIL with exit 124 (1 to 86400; default none)',
+      '-- <command> [args...]': 'the command and its arguments, run without a shell; exit 127 when it cannot start',
+      '--shell "<command line>"': 'one line through the platform shell (%ComSpec% /d /s /c on Windows, /bin/sh -c elsewhere), for npm on Windows and pipes; only the orchestrator\'s own text from its brief, never a builder report',
+    },
+  },
   now: {
     summary: 'Print the current local time as ISO 8601 with its UTC offset, to the second (the board\'s timestamp)',
     synopsis: 'now',
